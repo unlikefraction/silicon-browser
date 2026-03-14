@@ -28,6 +28,8 @@ aes-gcm = "0.10"
 async-trait = "0.1"
 similar = "2"
 zip = { version = "8.2.0", default-features = false, features = ["deflate"] }
+flate2 = "1"
+tar = "0.4"
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"

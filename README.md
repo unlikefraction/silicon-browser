@@ -2,11 +2,24 @@
 
 **The most reliable browser for your AI agent.**
 
-Silicon Browser is a stealth-first, terminal-native headless browser CLI built for AI agents. It combines the ref-based interaction model of [agent-browser](https://github.com/vercel-labs/agent-browser) with comprehensive anti-detection stealth techniques inspired by [CloakBrowser](https://cloakbrowser.dev/), so your agent can browse the real web without getting blocked.
+Silicon Browser is a stealth-first, terminal-native headless browser CLI built for AI agents. It uses [CloakBrowser](https://cloakbrowser.dev/)'s patched Chromium binary (33 C++ source-level patches) as its default browser engine, combined with the ref-based interaction model of [agent-browser](https://github.com/vercel-labs/agent-browser) and 18 additional JavaScript-level stealth evasions for defense-in-depth.
+
+**Two layers of stealth. Zero configuration.**
 
 ## Why Silicon Browser?
 
-Regular headless browsers get flagged by Cloudflare, DataDome, PerimeterX, and every other anti-bot system within milliseconds. Silicon Browser fixes this with **18 stealth evasions** baked in by default:
+Regular headless browsers get flagged by Cloudflare, DataDome, PerimeterX, and every other anti-bot system within milliseconds. Silicon Browser fixes this at two levels:
+
+### Layer 1: CloakBrowser (C++ binary-level patches)
+- **33 Chromium source patches** compiled into the binary -- not JS injection
+- TLS fingerprints (JA3/JA4) naturally match real Chrome
+- Canvas, WebGL, Audio fingerprints spoofed at the engine level
+- CDP input signals eliminated -- programmatic input looks like hardware input
+- `navigator.webdriver` removed at the C++ level
+- Random fingerprint seed per session (`--fingerprint=<seed>` for persistence)
+
+### Layer 2: JavaScript stealth evasions (defense-in-depth)
+On top of CloakBrowser's binary patches, 18 additional JS evasions are injected:
 
 - `navigator.webdriver` -> false (prototype-level patching)
 - Realistic plugin array (5 Chrome plugins)
@@ -59,19 +72,23 @@ This reduces context usage by up to 93% compared to screenshot-based approaches.
 
 ## Stealth Architecture
 
-Silicon Browser applies stealth at three layers:
+Silicon Browser applies stealth at four layers:
 
-### 1. Chrome Launch Flags
+### 1. CloakBrowser Binary (primary)
+A patched Chromium with 33 C++ source-level modifications. Since it IS a real Chromium binary, TLS fingerprints, HTTP/2 settings, and browser internals all match real Chrome. `silicon-browser install` downloads it automatically.
+
+### 2. Chrome Launch Flags
 Anti-automation flags are injected at Chrome startup:
 - `--disable-blink-features=AutomationControlled`
+- `--fingerprint=<random>` (CloakBrowser deterministic fingerprint seed)
 - `--webrtc-ip-handling-policy=disable_non_proxied_udp`
-- `--enable-gpu-rasterization` (avoid SwiftShader WebGL detection)
-- `--disable-infobars` (no "controlled by automation" banner)
+- `--enable-gpu-rasterization`
+- `--disable-infobars`
 
-### 2. JavaScript Injection
-A comprehensive stealth script runs via `Page.addScriptToEvaluateOnNewDocument` **before any page code executes**, patching 18 detection vectors.
+### 3. JavaScript Injection
+18 stealth evasions run via `Page.addScriptToEvaluateOnNewDocument` **before any page code executes** -- defense-in-depth on top of CloakBrowser's binary patches.
 
-### 3. Network Headers
+### 4. Network Headers
 Realistic HTTP headers are set via CDP's `Network.setExtraHTTPHeaders`, including Client Hints (`Sec-Ch-Ua`), Fetch metadata, and proper Accept headers.
 
 ## Configuration
@@ -80,6 +97,9 @@ Realistic HTTP headers are set via CDP's `Network.setExtraHTTPHeaders`, includin
 ```bash
 # Disable stealth (for debugging)
 SILICON_BROWSER_NO_STEALTH=1 silicon-browser open https://example.com
+
+# Pin fingerprint seed (same identity across sessions)
+SILICON_BROWSER_FINGERPRINT=42069 silicon-browser open https://example.com
 
 # Custom user agent
 silicon-browser --user-agent "Mozilla/5.0 ..." open https://example.com
@@ -135,7 +155,11 @@ silicon-browser -p browserless open https://example.com
 | Variable | Description |
 |----------|-------------|
 | `SILICON_BROWSER_NO_STEALTH` | Set to `1` to disable stealth features |
+| `SILICON_BROWSER_FINGERPRINT` | Pin fingerprint seed for CloakBrowser (consistent identity) |
 | `SILICON_BROWSER_USER_AGENT` | Default user agent string |
+| `CLOAKBROWSER_BINARY_PATH` | Use a custom CloakBrowser binary path |
+| `CLOAKBROWSER_CACHE_DIR` | Custom CloakBrowser cache directory |
+| `CLOAKBROWSER_DOWNLOAD_URL` | Custom CloakBrowser download server |
 | `SILICON_BROWSER_PROXY` | Default proxy URL |
 | `SILICON_BROWSER_SESSION` | Default session name |
 | `SILICON_BROWSER_IDLE_TIMEOUT_MS` | Auto-shutdown after inactivity |

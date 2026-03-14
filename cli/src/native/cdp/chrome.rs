@@ -197,14 +197,42 @@ pub fn launch_chrome(options: &LaunchOptions) -> Result<ChromeProcess, String> {
     let chrome_path = match &options.executable_path {
         Some(p) => PathBuf::from(p),
         None => {
-            find_chrome().ok_or("Chrome not found. Run `silicon-browser install` to download Chrome, or use --executable-path.")?
+            find_chrome().ok_or("No browser found. Run `silicon-browser install` to download CloakBrowser + Chrome, or use --executable-path.")?
         }
     };
 
     let ChromeArgs {
-        args,
+        mut args,
         temp_user_data_dir,
     } = build_chrome_args(options)?;
+
+    // CloakBrowser-specific args: --fingerprint for deterministic identity,
+    // plus suppress automation-leaking flags that CloakBrowser handles at C++ level
+    if is_cloakbrowser(&chrome_path) {
+        let stealth_disabled = std::env::var("SILICON_BROWSER_NO_STEALTH").is_ok();
+        if !stealth_disabled {
+            // Generate or use provided fingerprint seed
+            let seed = std::env::var("SILICON_BROWSER_FINGERPRINT")
+                .ok()
+                .and_then(|s| s.parse::<u64>().ok())
+                .unwrap_or_else(|| {
+                    let mut buf = [0u8; 8];
+                    let _ = getrandom::getrandom(&mut buf);
+                    10000 + (u64::from_le_bytes(buf) % 89999)
+                });
+            args.push(format!("--fingerprint={}", seed));
+
+            // CloakBrowser fingerprint configuration
+            args.push("--fingerprint-hardware-concurrency=8".to_string());
+            args.push("--fingerprint-device-memory=8".to_string());
+        }
+
+        // Remove flags that CloakBrowser handles natively / that conflict
+        args.retain(|a| {
+            !a.starts_with("--enable-automation")
+                && !a.starts_with("--enable-unsafe-swiftshader")
+        });
+    }
 
     let cleanup_temp_dir = |dir: &Option<PathBuf>| {
         if let Some(ref d) = dir {
@@ -327,12 +355,17 @@ fn chrome_launch_error(message: &str, stderr_lines: &[String]) -> String {
 }
 
 pub fn find_chrome() -> Option<PathBuf> {
-    // 1. Check Chrome downloaded by `silicon-browser install`
+    // 1. CloakBrowser (preferred — stealth Chromium with C++ level patches)
+    if let Some(p) = crate::install::find_installed_cloakbrowser() {
+        return Some(p);
+    }
+
+    // 2. Check Chrome downloaded by `silicon-browser install`
     if let Some(p) = crate::install::find_installed_chrome() {
         return Some(p);
     }
 
-    // 2. Check system-installed Chrome
+    // 3. Check system-installed Chrome
     #[cfg(target_os = "macos")]
     {
         let candidates = [
@@ -388,12 +421,18 @@ pub fn find_chrome() -> Option<PathBuf> {
         }
     }
 
-    // 3. Fallback: check Playwright's browser cache (for existing installs)
+    // 4. Fallback: check Playwright's browser cache (for existing installs)
     if let Some(p) = find_playwright_chromium() {
         return Some(p);
     }
 
     None
+}
+
+/// Check if a path points to a CloakBrowser binary (not stock Chrome).
+pub fn is_cloakbrowser(path: &Path) -> bool {
+    let path_str = path.to_string_lossy().to_lowercase();
+    path_str.contains("cloakbrowser") || path_str.contains(".cloakbrowser")
 }
 
 pub fn read_devtools_active_port(user_data_dir: &Path) -> Option<(u16, String)> {

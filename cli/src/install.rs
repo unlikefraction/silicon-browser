@@ -7,12 +7,124 @@ use std::process::{exit, Command, Stdio};
 const LAST_KNOWN_GOOD_URL: &str =
     "https://googlechromelabs.github.io/chrome-for-testing/last-known-good-versions-with-downloads.json";
 
+// ---------------------------------------------------------------------------
+// CloakBrowser constants
+// ---------------------------------------------------------------------------
+
+/// CloakBrowser version per platform (they differ).
+#[cfg(target_os = "macos")]
+const CLOAKBROWSER_VERSION: &str = "145.0.7632.109.2";
+#[cfg(target_os = "linux")]
+const CLOAKBROWSER_VERSION: &str = "145.0.7632.159.7";
+#[cfg(target_os = "windows")]
+const CLOAKBROWSER_VERSION: &str = "145.0.7632.109.2";
+#[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "windows")))]
+const CLOAKBROWSER_VERSION: &str = "145.0.7632.109.2";
+
+const CLOAKBROWSER_BASE_URL: &str = "https://cloakbrowser.dev";
+
 pub fn get_browsers_dir() -> PathBuf {
     dirs::home_dir()
         .unwrap_or_else(|| PathBuf::from("."))
         .join(".silicon-browser")
         .join("browsers")
 }
+
+/// Returns the CloakBrowser cache directory (~/.silicon-browser/browsers/cloakbrowser-<version>).
+pub fn get_cloakbrowser_dir() -> PathBuf {
+    get_browsers_dir().join(format!("cloakbrowser-{}", CLOAKBROWSER_VERSION))
+}
+
+// ---------------------------------------------------------------------------
+// CloakBrowser binary discovery
+// ---------------------------------------------------------------------------
+
+/// Find installed CloakBrowser binary. This is the primary browser for silicon-browser.
+pub fn find_installed_cloakbrowser() -> Option<PathBuf> {
+    // 1. Check env override
+    if let Ok(path) = std::env::var("CLOAKBROWSER_BINARY_PATH") {
+        let p = PathBuf::from(&path);
+        if p.exists() {
+            return Some(p);
+        }
+    }
+
+    // 2. Check standard CloakBrowser cache dir (~/.cloakbrowser/)
+    if let Some(home) = dirs::home_dir() {
+        let cache_dir = std::env::var("CLOAKBROWSER_CACHE_DIR")
+            .map(PathBuf::from)
+            .unwrap_or_else(|_| home.join(".cloakbrowser"));
+
+        if let Ok(entries) = fs::read_dir(&cache_dir) {
+            let mut versions: Vec<_> = entries
+                .filter_map(|e| e.ok())
+                .filter(|e| {
+                    e.file_name()
+                        .to_str()
+                        .is_some_and(|n| n.starts_with("chromium-"))
+                })
+                .collect();
+            versions.sort_by_key(|b| std::cmp::Reverse(b.file_name()));
+
+            for entry in versions {
+                if let Some(bin) = cloakbrowser_binary_in_dir(&entry.path()) {
+                    if bin.exists() {
+                        return Some(bin);
+                    }
+                }
+            }
+        }
+    }
+
+    // 3. Check our own browsers dir
+    let our_dir = get_cloakbrowser_dir();
+    if let Some(bin) = cloakbrowser_binary_in_dir(&our_dir) {
+        if bin.exists() {
+            return Some(bin);
+        }
+    }
+
+    None
+}
+
+fn cloakbrowser_binary_in_dir(dir: &Path) -> Option<PathBuf> {
+    #[cfg(target_os = "macos")]
+    {
+        // CloakBrowser on macOS: Chromium.app/Contents/MacOS/Chromium
+        let app = dir.join("Chromium.app/Contents/MacOS/Chromium");
+        if app.exists() {
+            return Some(app);
+        }
+        None
+    }
+
+    #[cfg(target_os = "linux")]
+    {
+        let bin = dir.join("chrome");
+        if bin.exists() {
+            return Some(bin);
+        }
+        None
+    }
+
+    #[cfg(target_os = "windows")]
+    {
+        let bin = dir.join("chrome.exe");
+        if bin.exists() {
+            return Some(bin);
+        }
+        None
+    }
+
+    #[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "windows")))]
+    {
+        None
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Chrome binary discovery (fallback)
+// ---------------------------------------------------------------------------
 
 pub fn find_installed_chrome() -> Option<PathBuf> {
     let browsers_dir = get_browsers_dir();
@@ -120,12 +232,42 @@ fn platform_key() -> &'static str {
         all(target_os = "windows", target_arch = "x86_64"),
     )))]
     {
-        // Compiles on unsupported platforms (e.g. linux aarch64) so the binary
-        // can still be used for other commands like `connect`. The install path
-        // guards against this at runtime before calling platform_key().
         panic!("Unsupported platform for Chrome for Testing download")
     }
 }
+
+/// CloakBrowser platform tag for download URL.
+fn cloakbrowser_platform_tag() -> &'static str {
+    #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
+    {
+        "darwin-arm64"
+    }
+    #[cfg(all(target_os = "macos", target_arch = "x86_64"))]
+    {
+        "darwin-x64"
+    }
+    #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+    {
+        "linux-x64"
+    }
+    #[cfg(all(target_os = "windows", target_arch = "x86_64"))]
+    {
+        "win-x64"
+    }
+    #[cfg(not(any(
+        all(target_os = "macos", target_arch = "aarch64"),
+        all(target_os = "macos", target_arch = "x86_64"),
+        all(target_os = "linux", target_arch = "x86_64"),
+        all(target_os = "windows", target_arch = "x86_64"),
+    )))]
+    {
+        panic!("Unsupported platform for CloakBrowser download")
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Download helpers
+// ---------------------------------------------------------------------------
 
 async fn fetch_download_url() -> Result<(String, String), String> {
     let resp = reqwest::get(LAST_KNOWN_GOOD_URL)
@@ -208,6 +350,10 @@ async fn download_bytes(url: &str) -> Result<Vec<u8>, String> {
     Ok(bytes)
 }
 
+// ---------------------------------------------------------------------------
+// Extraction
+// ---------------------------------------------------------------------------
+
 fn extract_zip(bytes: Vec<u8>, dest: &Path) -> Result<(), String> {
     fs::create_dir_all(dest).map_err(|e| format!("Failed to create directory: {}", e))?;
 
@@ -269,10 +415,60 @@ fn extract_zip(bytes: Vec<u8>, dest: &Path) -> Result<(), String> {
     Ok(())
 }
 
+/// Extract a .tar.gz archive to dest, flattening one level of directory nesting.
+fn extract_tar_gz(bytes: Vec<u8>, dest: &Path) -> Result<(), String> {
+    use flate2::read::GzDecoder;
+    use tar::Archive;
+
+    fs::create_dir_all(dest).map_err(|e| format!("Failed to create directory: {}", e))?;
+
+    let cursor = io::Cursor::new(bytes);
+    let gz = GzDecoder::new(cursor);
+    let mut archive = Archive::new(gz);
+
+    for entry_result in archive
+        .entries()
+        .map_err(|e| format!("Failed to read tar archive: {}", e))?
+    {
+        let mut entry = entry_result.map_err(|e| format!("Failed to read tar entry: {}", e))?;
+        let path = entry
+            .path()
+            .map_err(|e| format!("Failed to get entry path: {}", e))?
+            .to_path_buf();
+
+        let out_path = dest.join(&path);
+
+        // Defense-in-depth: ensure path is inside dest
+        if !out_path.starts_with(dest) {
+            continue;
+        }
+
+        if entry.header().entry_type().is_dir() {
+            fs::create_dir_all(&out_path)
+                .map_err(|e| format!("Failed to create dir {}: {}", out_path.display(), e))?;
+        } else {
+            if let Some(parent) = out_path.parent() {
+                fs::create_dir_all(parent).map_err(|e| {
+                    format!("Failed to create parent dir {}: {}", parent.display(), e)
+                })?;
+            }
+            entry
+                .unpack(&out_path)
+                .map_err(|e| format!("Failed to extract {}: {}", out_path.display(), e))?;
+        }
+    }
+
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// Install commands
+// ---------------------------------------------------------------------------
+
 pub fn run_install(with_deps: bool) {
     if cfg!(all(target_os = "linux", target_arch = "aarch64")) {
         eprintln!(
-            "{} Chrome for Testing does not provide Linux ARM64 builds.",
+            "{} Neither CloakBrowser nor Chrome for Testing provide Linux ARM64 builds.",
             color::error_indicator()
         );
         eprintln!("  Install Chromium from your system package manager instead:");
@@ -297,8 +493,6 @@ pub fn run_install(with_deps: bool) {
         }
     }
 
-    println!("{}", color::cyan("Installing Chrome..."));
-
     let rt = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()
@@ -310,6 +504,99 @@ pub fn run_install(with_deps: bool) {
             );
             exit(1);
         });
+
+    // Step 1: Install CloakBrowser (primary stealth browser)
+    install_cloakbrowser(&rt);
+
+    // Step 2: Install Chrome for Testing (fallback)
+    install_chrome(&rt, is_linux, with_deps);
+}
+
+fn install_cloakbrowser(rt: &tokio::runtime::Runtime) {
+    println!("{}", color::cyan("Installing CloakBrowser (stealth Chromium)..."));
+
+    let dest = get_cloakbrowser_dir();
+
+    if let Some(bin) = cloakbrowser_binary_in_dir(&dest) {
+        if bin.exists() {
+            println!(
+                "{} CloakBrowser {} is already installed",
+                color::success_indicator(),
+                CLOAKBROWSER_VERSION
+            );
+            return;
+        }
+    }
+
+    let tag = cloakbrowser_platform_tag();
+
+    // CloakBrowser uses .tar.gz on macOS/Linux, .zip on Windows
+    let ext = if cfg!(target_os = "windows") {
+        "zip"
+    } else {
+        "tar.gz"
+    };
+
+    let base_url = std::env::var("CLOAKBROWSER_DOWNLOAD_URL")
+        .unwrap_or_else(|_| CLOAKBROWSER_BASE_URL.to_string());
+
+    let url = format!(
+        "{}/chromium-v{}/cloakbrowser-{}.{}",
+        base_url, CLOAKBROWSER_VERSION, tag, ext
+    );
+
+    println!(
+        "  Downloading CloakBrowser {} for {}",
+        CLOAKBROWSER_VERSION, tag
+    );
+    println!("  {}", url);
+
+    let bytes = match rt.block_on(download_bytes(&url)) {
+        Ok(b) => b,
+        Err(e) => {
+            eprintln!(
+                "{} Failed to download CloakBrowser: {}",
+                color::warning_indicator(),
+                e
+            );
+            eprintln!("  Will fall back to Chrome for Testing.");
+            return;
+        }
+    };
+
+    let result = if cfg!(target_os = "windows") {
+        extract_zip(bytes, &dest)
+    } else {
+        extract_tar_gz(bytes, &dest)
+    };
+
+    match result {
+        Ok(()) => {
+            println!(
+                "{} CloakBrowser {} installed successfully",
+                color::success_indicator(),
+                CLOAKBROWSER_VERSION
+            );
+            println!("  Location: {}", dest.display());
+        }
+        Err(e) => {
+            let _ = fs::remove_dir_all(&dest);
+            eprintln!(
+                "{} Failed to extract CloakBrowser: {}",
+                color::warning_indicator(),
+                e
+            );
+            eprintln!("  Will fall back to Chrome for Testing.");
+        }
+    }
+}
+
+fn install_chrome(rt: &tokio::runtime::Runtime, is_linux: bool, with_deps: bool) {
+    println!();
+    println!(
+        "{}",
+        color::cyan("Installing Chrome for Testing (fallback)...")
+    );
 
     let (version, url) = match rt.block_on(fetch_download_url()) {
         Ok(v) => v,
