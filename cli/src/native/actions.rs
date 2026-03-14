@@ -802,6 +802,9 @@ fn launch_options_from_env() -> LaunchOptions {
         proxy: env::var("SILICON_BROWSER_PROXY").ok(),
         proxy_bypass: env::var("SILICON_BROWSER_PROXY_BYPASS").ok(),
         profile: env::var("SILICON_BROWSER_PROFILE").ok(),
+        incognito: env::var("SILICON_BROWSER_INCOGNITO")
+            .map(|v| v == "1" || v == "true")
+            .unwrap_or(false),
         allow_file_access: env::var("SILICON_BROWSER_ALLOW_FILE_ACCESS")
             .map(|v| v == "1" || v == "true")
             .unwrap_or(false),
@@ -991,6 +994,10 @@ async fn handle_launch(cmd: &Value, state: &mut DaemonState) -> Result<Value, St
             .get("profile")
             .and_then(|v| v.as_str())
             .map(|s| s.to_string()),
+        incognito: cmd
+            .get("incognito")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false),
         allow_file_access: cmd
             .get("allowFileAccess")
             .and_then(|v| v.as_bool())

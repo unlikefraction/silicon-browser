@@ -65,6 +65,7 @@ pub struct LaunchOptions {
     pub proxy: Option<String>,
     pub proxy_bypass: Option<String>,
     pub profile: Option<String>,
+    pub incognito: bool,
     pub args: Vec<String>,
     pub allow_file_access: bool,
     pub extensions: Option<Vec<String>>,
@@ -83,6 +84,7 @@ impl Default for LaunchOptions {
             proxy: None,
             proxy_bypass: None,
             profile: None,
+            incognito: false,
             args: Vec::new(),
             allow_file_access: false,
             extensions: None,
@@ -93,6 +95,65 @@ impl Default for LaunchOptions {
             download_path: None,
         }
     }
+}
+
+// ---------------------------------------------------------------------------
+// Profile management
+// ---------------------------------------------------------------------------
+
+/// Returns the base directory for named profiles: ~/.silicon-browser/profiles/
+fn get_profiles_dir() -> PathBuf {
+    dirs::home_dir()
+        .unwrap_or_else(|| PathBuf::from("."))
+        .join(".silicon-browser")
+        .join("profiles")
+}
+
+/// Resolve a profile name/path to an actual directory path.
+///
+/// - Absolute or relative paths (containing `/` or `\`) are used as-is
+/// - Simple names like "work" resolve to ~/.silicon-browser/profiles/work/
+/// - None with incognito=false resolves to the default "silicon" profile
+/// - None with incognito=true returns None (temp dir will be used)
+pub fn resolve_profile(profile: Option<&str>, incognito: bool) -> Option<PathBuf> {
+    if incognito {
+        return None;
+    }
+
+    let name = profile.unwrap_or("silicon");
+
+    // If it looks like a path, use it directly
+    if name.contains('/') || name.contains('\\') || name.starts_with('~') {
+        return Some(PathBuf::from(expand_tilde(name)));
+    }
+
+    // Named profile → ~/.silicon-browser/profiles/<name>/
+    Some(get_profiles_dir().join(name))
+}
+
+/// Get or create a persistent fingerprint seed for a profile directory.
+/// The seed is stored in `<profile_dir>/fingerprint.seed`.
+/// Same profile = same fingerprint identity every time.
+pub fn get_profile_fingerprint_seed(profile_dir: &Path) -> u64 {
+    let seed_path = profile_dir.join("fingerprint.seed");
+
+    // Try to read existing seed
+    if let Ok(contents) = std::fs::read_to_string(&seed_path) {
+        if let Ok(seed) = contents.trim().parse::<u64>() {
+            return seed;
+        }
+    }
+
+    // Generate new seed and persist it
+    let mut buf = [0u8; 8];
+    let _ = getrandom::getrandom(&mut buf);
+    let seed = 10000 + (u64::from_le_bytes(buf) % 89999);
+
+    // Ensure profile dir exists
+    let _ = std::fs::create_dir_all(profile_dir);
+    let _ = std::fs::write(&seed_path, seed.to_string());
+
+    seed
 }
 
 struct ChromeArgs {
@@ -145,15 +206,24 @@ fn build_chrome_args(options: &LaunchOptions) -> Result<ChromeArgs, String> {
         args.push(format!("--proxy-bypass-list={}", bypass));
     }
 
-    let temp_user_data_dir = if let Some(ref profile) = options.profile {
-        let expanded = expand_tilde(profile);
-        args.push(format!("--user-data-dir={}", expanded));
+    // Profile resolution:
+    // - --incognito → temp dir (thrown away on close)
+    // - --profile <name> → ~/.silicon-browser/profiles/<name>/
+    // - --profile /path → use that path directly
+    // - (default) → ~/.silicon-browser/profiles/silicon/
+    let resolved_profile = resolve_profile(options.profile.as_deref(), options.incognito);
+
+    let temp_user_data_dir = if let Some(ref profile_dir) = resolved_profile {
+        std::fs::create_dir_all(profile_dir)
+            .map_err(|e| format!("Failed to create profile dir: {}", e))?;
+        args.push(format!("--user-data-dir={}", profile_dir.display()));
         None
     } else {
+        // Incognito: use a temp dir that gets cleaned up
         let dir =
-            std::env::temp_dir().join(format!("silicon-browser-chrome-{}", uuid::Uuid::new_v4()));
+            std::env::temp_dir().join(format!("silicon-browser-incognito-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&dir)
-            .map_err(|e| format!("Failed to create temp profile dir: {}", e))?;
+            .map_err(|e| format!("Failed to create incognito dir: {}", e))?;
         args.push(format!("--user-data-dir={}", dir.display()));
         Some(dir)
     };
@@ -211,11 +281,17 @@ pub fn launch_chrome(options: &LaunchOptions) -> Result<ChromeProcess, String> {
     if is_cloakbrowser(&chrome_path) {
         let stealth_disabled = std::env::var("SILICON_BROWSER_NO_STEALTH").is_ok();
         if !stealth_disabled {
-            // Generate or use provided fingerprint seed
+            // Fingerprint seed priority:
+            // 1. SILICON_BROWSER_FINGERPRINT env var (explicit override)
+            // 2. Profile-pinned seed (persistent per profile)
+            // 3. Random seed (incognito mode)
+            let resolved_profile = resolve_profile(options.profile.as_deref(), options.incognito);
             let seed = std::env::var("SILICON_BROWSER_FINGERPRINT")
                 .ok()
                 .and_then(|s| s.parse::<u64>().ok())
+                .or_else(|| resolved_profile.as_ref().map(|dir| get_profile_fingerprint_seed(dir)))
                 .unwrap_or_else(|| {
+                    // Incognito: random seed each time
                     let mut buf = [0u8; 8];
                     let _ = getrandom::getrandom(&mut buf);
                     10000 + (u64::from_le_bytes(buf) % 89999)

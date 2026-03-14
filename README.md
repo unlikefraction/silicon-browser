@@ -108,17 +108,32 @@ silicon-browser --user-agent "Mozilla/5.0 ..." open https://example.com
 silicon-browser --proxy "http://user:pass@proxy:8080" open https://example.com
 ```
 
+### Profiles (like a real person's browser)
+Every profile has its own cookies, history, and **pinned fingerprint seed** -- the same profile always looks like the same person to websites.
+
+```bash
+# Default profile is "silicon" — always there, ready to go
+silicon-browser open https://example.com
+
+# Named profiles for different identities
+silicon-browser --profile work open https://example.com
+silicon-browser --profile personal open https://github.com
+
+# Incognito — throwaway session, random fingerprint, no traces
+silicon-browser --incognito open https://example.com
+
+# Profiles stored at ~/.silicon-browser/profiles/<name>/
+# Each profile has its own fingerprint.seed file
+ls ~/.silicon-browser/profiles/
+# silicon/  work/  personal/
+```
+
 ### Sessions
 ```bash
-# Named sessions (persistent state)
+# Named sessions (multiple daemons in parallel)
 silicon-browser --session work open https://example.com
 silicon-browser --session personal open https://other.com
 silicon-browser session list
-```
-
-### Profiles (persistent cookies/storage)
-```bash
-silicon-browser --profile ~/.silicon-browser/profiles/main open https://example.com
 ```
 
 ### Cloud Providers

@@ -315,6 +315,7 @@ fn main() {
         allowed_domains: flags.allowed_domains.as_deref(),
         action_policy: flags.action_policy.as_deref(),
         confirm_actions: flags.confirm_actions.as_deref(),
+        incognito: flags.incognito,
         engine: flags.engine.as_deref(),
     };
     let daemon_result = match ensure_daemon(&flags.session, &daemon_opts) {
@@ -604,6 +605,7 @@ fn main() {
         || flags.cli_headed  // User explicitly set --headed (even if false)
         || flags.executable_path.is_some()
         || flags.profile.is_some()
+        || flags.incognito
         || flags.state.is_some()
         || flags.proxy.is_some()
         || flags.args.is_some()
@@ -634,6 +636,11 @@ fn main() {
         // Add profile path if specified
         if let Some(ref profile_path) = flags.profile {
             cmd_obj.insert("profile".to_string(), json!(profile_path));
+        }
+
+        // Add incognito flag
+        if flags.incognito {
+            cmd_obj.insert("incognito".to_string(), json!(true));
         }
 
         // Add state path if specified

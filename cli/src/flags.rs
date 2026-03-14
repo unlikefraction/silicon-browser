@@ -245,6 +245,7 @@ pub struct Flags {
     pub action_policy: Option<String>,
     pub confirm_actions: Option<String>,
     pub confirm_interactive: bool,
+    pub incognito: bool,
     pub engine: Option<String>,
     pub screenshot_dir: Option<String>,
     pub screenshot_quality: Option<u32>,
@@ -354,6 +355,7 @@ pub fn parse_flags(args: &[String]) -> Flags {
             .or(config.confirm_actions),
         confirm_interactive: env_var_is_truthy("SILICON_BROWSER_CONFIRM_INTERACTIVE")
             || config.confirm_interactive.unwrap_or(false),
+        incognito: env_var_is_truthy("SILICON_BROWSER_INCOGNITO"),
         engine: env::var("SILICON_BROWSER_ENGINE").ok().or(config.engine),
         screenshot_dir: env::var("SILICON_BROWSER_SCREENSHOT_DIR")
             .ok()
@@ -506,6 +508,9 @@ pub fn parse_flags(args: &[String]) -> Flags {
                 if consumed {
                     i += 1;
                 }
+            }
+            "--incognito" => {
+                flags.incognito = true;
             }
             "--device" => {
                 if let Some(d) = args.get(i + 1) {
@@ -661,6 +666,7 @@ pub fn clean_args(args: &[String]) -> Vec<String> {
         "--annotate",
         "--content-boundaries",
         "--confirm-interactive",
+        "--incognito",
     ];
     // Global flags that always take a value (need to skip the next arg too)
     const GLOBAL_FLAGS_WITH_VALUE: &[&str] = &[

@@ -233,6 +233,7 @@ pub struct DaemonOptions<'a> {
     pub allowed_domains: Option<&'a [String]>,
     pub action_policy: Option<&'a str>,
     pub confirm_actions: Option<&'a str>,
+    pub incognito: bool,
     pub engine: Option<&'a str>,
 }
 
@@ -296,6 +297,9 @@ fn apply_daemon_env(cmd: &mut Command, session: &str, opts: &DaemonOptions) {
     }
     if let Some(ca) = opts.confirm_actions {
         cmd.env("SILICON_BROWSER_CONFIRM_ACTIONS", ca);
+    }
+    if opts.incognito {
+        cmd.env("SILICON_BROWSER_INCOGNITO", "1");
     }
     if let Some(engine) = opts.engine {
         cmd.env("SILICON_BROWSER_ENGINE", engine);

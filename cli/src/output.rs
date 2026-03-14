@@ -2575,6 +2575,10 @@ Options:
   --action-policy <path>     Action policy JSON file (or SILICON_BROWSER_ACTION_POLICY)
   --confirm-actions <list>   Categories requiring confirmation (or SILICON_BROWSER_CONFIRM_ACTIONS)
   --confirm-interactive      Interactive confirmation prompts; auto-denies if stdin is not a TTY (or SILICON_BROWSER_CONFIRM_INTERACTIVE)
+  --profile <name>           Browser profile (default: "silicon"). Persistent cookies, fingerprint, state.
+                             Named profiles stored in ~/.silicon-browser/profiles/<name>/
+                             Also accepts absolute paths (or SILICON_BROWSER_PROFILE)
+  --incognito                Throwaway session — no persistent profile, random fingerprint
   --engine <name>            Browser engine: chrome (default), lightpanda (or SILICON_BROWSER_ENGINE)
   --config <path>            Use a custom config file (or SILICON_BROWSER_CONFIG env)
   --debug                    Debug output
