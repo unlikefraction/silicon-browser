@@ -5,6 +5,7 @@ mod flags;
 mod install;
 mod native;
 mod output;
+mod profile;
 #[cfg(test)]
 mod test_utils;
 mod validation;
@@ -223,6 +224,12 @@ fn main() {
     if clean.first().map(|s| s.as_str()) == Some("install") {
         let with_deps = args.iter().any(|a| a == "--with-deps" || a == "-d");
         run_install(with_deps);
+        return;
+    }
+
+    // Handle profile commands (doesn't need daemon)
+    if clean.first().map(|s| s.as_str()) == Some("profile") {
+        profile::run_profile_command(&clean[1..]);
         return;
     }
 
