@@ -476,16 +476,96 @@ pub fn get_stealth_script() -> &'static str {
 })();"##
 }
 
+/// Lightweight stealth script for CloakBrowser. CloakBrowser already handles
+/// webdriver, plugins, languages, hardwareConcurrency, deviceMemory, platform,
+/// WebGL, canvas, audio, and screen at the C++ level. We only patch things
+/// the binary doesn't cover: window.chrome object, Permissions API,
+/// Notification.permission, CDP artifact cleanup, and navigator.connection.
+///
+/// IMPORTANT: We do NOT touch navigator.webdriver, plugins, or WebGL here —
+/// CloakBrowser's native patches are undetectable, our JS overrides are not.
+pub fn get_cloakbrowser_stealth_script() -> &'static str {
+    r##"(function() {
+    'use strict';
+
+    // (g) window.chrome — create a convincing chrome object
+    try {
+        if (!window.chrome) { window.chrome = {}; }
+        if (!window.chrome.app) {
+            window.chrome.app = {
+                isInstalled: false,
+                InstallState: { DISABLED: 'disabled', INSTALLED: 'installed', NOT_INSTALLED: 'not_installed' },
+                RunningState: { CANNOT_RUN: 'cannot_run', READY_TO_RUN: 'ready_to_run', RUNNING: 'running' },
+                getDetails: () => null, getIsInstalled: () => false,
+            };
+        }
+        if (!window.chrome.runtime) {
+            window.chrome.runtime = {
+                OnInstalledReason: { CHROME_UPDATE: 'chrome_update', INSTALL: 'install', SHARED_MODULE_UPDATE: 'shared_module_update', UPDATE: 'update' },
+                OnRestartRequiredReason: { APP_UPDATE: 'app_update', OS_UPDATE: 'os_update', PERIODIC: 'periodic' },
+                PlatformArch: { ARM: 'arm', ARM64: 'arm64', MIPS: 'mips', MIPS64: 'mips64', X86_32: 'x86-32', X86_64: 'x86-64' },
+                PlatformNaclArch: { ARM: 'arm', MIPS: 'mips', MIPS64: 'mips64', X86_32: 'x86-32', X86_64: 'x86-64' },
+                PlatformOs: { ANDROID: 'android', CROS: 'cros', FUCHSIA: 'fuchsia', LINUX: 'linux', MAC: 'mac', OPENBSD: 'openbsd', WIN: 'win' },
+                RequestUpdateCheckStatus: { NO_UPDATE: 'no_update', THROTTLED: 'throttled', UPDATE_AVAILABLE: 'update_available' },
+                connect: () => { throw new TypeError('Error in invocation of runtime.connect'); },
+                sendMessage: () => { throw new TypeError('Error in invocation of runtime.sendMessage'); },
+                id: undefined,
+            };
+        }
+        if (!window.chrome.loadTimes) {
+            window.chrome.loadTimes = function() {
+                return { commitLoadTime: Date.now()/1000-0.5, connectionInfo:'h2', finishDocumentLoadTime: Date.now()/1000-0.1, finishLoadTime: Date.now()/1000-0.05, firstPaintAfterLoadTime:0, firstPaintTime: Date.now()/1000-0.3, navigationType:'Other', npnNegotiatedProtocol:'h2', requestTime: Date.now()/1000-1, startLoadTime: Date.now()/1000-0.8, wasAlternateProtocolAvailable:false, wasFetchedViaSpdy:true, wasNpnNegotiated:true };
+            };
+        }
+        if (!window.chrome.csi) {
+            window.chrome.csi = function() {
+                return { onloadT: Date.now(), pageT: Date.now()-performance.timing.navigationStart, startE: performance.timing.navigationStart, tran: 15 };
+            };
+        }
+    } catch (_) {}
+
+    // (h) Permissions API — return "prompt" for notification
+    try {
+        const oq = Permissions.prototype.query;
+        Permissions.prototype.query = function(p) {
+            if (p && p.name === 'notifications') return Promise.resolve({ state: 'prompt', onchange: null });
+            return oq.call(this, p);
+        };
+    } catch (_) {}
+
+    // (n) Notification.permission — return "default"
+    try {
+        Object.defineProperty(Notification, 'permission', { get: () => 'default', configurable: true });
+    } catch (_) {}
+
+    // (p) Remove CDP artifacts
+    try {
+        for (const key of Object.keys(window)) {
+            if (/^cdc_/.test(key) || /^_cdc_/.test(key)) { try { delete window[key]; } catch (_) {} }
+        }
+        for (const key of Object.keys(document)) {
+            if (/^(\$cdc_|\$wdc_)/.test(key)) { try { delete document[key]; } catch (_) {} }
+        }
+    } catch (_) {}
+
+    // (m) navigator.connection — mock if missing
+    try {
+        if (!navigator.connection) {
+            const ci = { rtt:50, downlink:10, effectiveType:'4g', saveData:false, onchange:null, addEventListener:()=>{}, removeEventListener:()=>{}, dispatchEvent:()=>true };
+            Object.defineProperty(navigator, 'connection', { get: () => ci, configurable: true });
+        }
+    } catch (_) {}
+
+})();"##
+}
+
 /// Returns a realistic, recent Chrome user agent string suitable for macOS.
 pub fn get_default_user_agent() -> &'static str {
     "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
 }
 
 /// Returns default HTTP headers that a real Chrome browser would send.
-///
-/// These should be applied via `Network.setExtraHTTPHeaders` or equivalent so
-/// that the automated session's requests are indistinguishable from a
-/// human-operated Chrome instance.
+/// Used only when running stock Chrome (not CloakBrowser).
 pub fn get_stealth_headers() -> Vec<(&'static str, &'static str)> {
     vec![
         ("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7"),
@@ -494,6 +574,21 @@ pub fn get_stealth_headers() -> Vec<(&'static str, &'static str)> {
         ("Sec-Ch-Ua", "\"Google Chrome\";v=\"131\", \"Chromium\";v=\"131\", \"Not_A Brand\";v=\"24\""),
         ("Sec-Ch-Ua-Mobile", "?0"),
         ("Sec-Ch-Ua-Platform", "\"macOS\""),
+        ("Sec-Fetch-Dest", "document"),
+        ("Sec-Fetch-Mode", "navigate"),
+        ("Sec-Fetch-Site", "none"),
+        ("Sec-Fetch-User", "?1"),
+        ("Upgrade-Insecure-Requests", "1"),
+    ]
+}
+
+/// Minimal headers for CloakBrowser — only things the binary doesn't set.
+/// Does NOT include Sec-Ch-Ua (CloakBrowser sets its own matching the actual version).
+pub fn get_cloakbrowser_headers() -> Vec<(&'static str, &'static str)> {
+    vec![
+        ("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7"),
+        ("Accept-Language", "en-US,en;q=0.9"),
+        ("Accept-Encoding", "gzip, deflate, br, zstd"),
         ("Sec-Fetch-Dest", "document"),
         ("Sec-Fetch-Mode", "navigate"),
         ("Sec-Fetch-Site", "none"),

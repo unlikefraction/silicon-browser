@@ -252,13 +252,18 @@ impl BrowserManager {
                 .await;
         }
 
-        // Stealth: always set a user-agent (use default stealth UA if none provided)
+        // User-agent: only override if user explicitly provided one.
+        // When CloakBrowser is the engine, it sets its own UA matching its actual
+        // Chromium version — overriding it would create a detectable mismatch.
+        // Only apply default stealth UA for stock Chrome (no CloakBrowser).
         {
             let stealth_disabled = std::env::var("SILICON_BROWSER_NO_STEALTH").is_ok();
+            let using_cloakbrowser = crate::install::find_installed_cloakbrowser().is_some();
             let ua = user_agent
                 .as_deref()
                 .or_else(|| {
-                    if stealth_disabled {
+                    // Only set a fake UA for stock Chrome, never for CloakBrowser
+                    if stealth_disabled || using_cloakbrowser {
                         None
                     } else {
                         Some(super::stealth::get_default_user_agent())
@@ -427,7 +432,15 @@ impl BrowserManager {
         // Stealth: inject anti-detection script before any page loads
         let stealth_disabled = std::env::var("SILICON_BROWSER_NO_STEALTH").is_ok();
         if !stealth_disabled {
-            let stealth_script = super::stealth::get_stealth_script();
+            let using_cloakbrowser = crate::install::find_installed_cloakbrowser().is_some();
+
+            // CloakBrowser: lightweight script (only patches what C++ doesn't cover)
+            // Stock Chrome: full 18-evasion stealth script
+            let stealth_script = if using_cloakbrowser {
+                super::stealth::get_cloakbrowser_stealth_script()
+            } else {
+                super::stealth::get_stealth_script()
+            };
             let _ = self
                 .client
                 .send_command(
@@ -437,8 +450,13 @@ impl BrowserManager {
                 )
                 .await;
 
-            // Set extra HTTP headers to mimic real Chrome
-            let headers = super::stealth::get_stealth_headers();
+            // CloakBrowser: minimal headers (no Sec-Ch-Ua — the binary sets its own)
+            // Stock Chrome: full headers including Sec-Ch-Ua
+            let headers = if using_cloakbrowser {
+                super::stealth::get_cloakbrowser_headers()
+            } else {
+                super::stealth::get_stealth_headers()
+            };
             let mut header_map = serde_json::Map::new();
             for (key, value) in &headers {
                 header_map.insert(key.to_string(), json!(value));
