@@ -44,31 +44,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "agent-browser"
-version = "0.20.1"
-dependencies = [
- "aes-gcm",
- "async-trait",
- "base64",
- "dirs",
- "futures-util",
- "getrandom 0.2.17",
- "image",
- "libc",
- "reqwest",
- "serde",
- "serde_json",
- "sha2",
- "similar",
- "tokio",
- "tokio-tungstenite",
- "url",
- "uuid",
- "windows-sys 0.52.0",
- "zip",
-]
-
-[[package]]
 name = "aligned"
 version = "0.4.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1782,6 +1757,31 @@ checksum = "c4db69cba1110affc0e9f7bcd48bbf87b3f4fc7c61fc9155afd4c469eb3d6c1b"
 dependencies = [
  "errno",
  "libc",
+]
+
+[[package]]
+name = "silicon-browser"
+version = "0.20.1"
+dependencies = [
+ "aes-gcm",
+ "async-trait",
+ "base64",
+ "dirs",
+ "futures-util",
+ "getrandom 0.2.17",
+ "image",
+ "libc",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "sha2",
+ "similar",
+ "tokio",
+ "tokio-tungstenite",
+ "url",
+ "uuid",
+ "windows-sys 0.52.0",
+ "zip",
 ]
 
 [[package]]

@@ -30,7 +30,7 @@ pub async fn run_daemon(session: &str) {
         let _ = fs::remove_file(&socket_path);
     }
 
-    if let Ok(days_str) = env::var("AGENT_BROWSER_STATE_EXPIRE_DAYS") {
+    if let Ok(days_str) = env::var("SILICON_BROWSER_STATE_EXPIRE_DAYS") {
         if let Ok(days) = days_str.parse::<u64>() {
             if days > 0 {
                 let _ = state::state_clean(days);
@@ -39,7 +39,7 @@ pub async fn run_daemon(session: &str) {
     }
 
     let mut stream_client: Option<Arc<RwLock<Option<Arc<CdpClient>>>>> = None;
-    if let Ok(port_str) = env::var("AGENT_BROWSER_STREAM_PORT") {
+    if let Ok(port_str) = env::var("SILICON_BROWSER_STREAM_PORT") {
         if let Ok(port) = port_str.parse::<u16>() {
             if port > 0 {
                 match StreamServer::start_without_client(port, session.to_string()).await {
@@ -60,7 +60,7 @@ pub async fn run_daemon(session: &str) {
 
     // Auto-shutdown the daemon after this many ms of inactivity (no commands received).
     // Disabled when unset or 0.
-    let idle_timeout_ms = env::var("AGENT_BROWSER_IDLE_TIMEOUT_MS")
+    let idle_timeout_ms = env::var("SILICON_BROWSER_IDLE_TIMEOUT_MS")
         .ok()
         .and_then(|s| s.parse::<u64>().ok())
         .filter(|&ms| ms > 0);
@@ -335,7 +335,7 @@ async fn shutdown_signal() {
 }
 
 fn get_daemon_socket_dir() -> PathBuf {
-    if let Ok(dir) = env::var("AGENT_BROWSER_SOCKET_DIR") {
+    if let Ok(dir) = env::var("SILICON_BROWSER_SOCKET_DIR") {
         if !dir.is_empty() {
             return PathBuf::from(dir);
         }
@@ -343,15 +343,15 @@ fn get_daemon_socket_dir() -> PathBuf {
 
     if let Ok(xdg) = env::var("XDG_RUNTIME_DIR") {
         if !xdg.is_empty() {
-            return PathBuf::from(xdg).join("agent-browser");
+            return PathBuf::from(xdg).join("silicon-browser");
         }
     }
 
     if let Some(home) = dirs::home_dir() {
-        return home.join(".agent-browser");
+        return home.join(".silicon-browser");
     }
 
-    std::env::temp_dir().join("agent-browser")
+    std::env::temp_dir().join("silicon-browser")
 }
 
 #[cfg(windows)]

@@ -30,13 +30,13 @@ Compares the accessibility tree between two points in time using a line-level te
 
 ```bash
 # Compare against the last snapshot taken in this session
-agent-browser diff snapshot
+silicon-browser diff snapshot
 
 # Compare against a saved baseline file
-agent-browser diff snapshot --baseline before.txt
+silicon-browser diff snapshot --baseline before.txt
 
 # Scope to a specific part of the page
-agent-browser diff snapshot --selector "#main" --compact
+silicon-browser diff snapshot --selector "#main" --compact
 ```
 
 Without `--baseline`, the command automatically compares against the most recent snapshot taken in the current session. This is the primary use case for agents verifying that an action had the intended effect.
@@ -71,13 +71,13 @@ Compares the current page screenshot against a baseline image at the pixel level
 
 ```bash
 # Basic visual diff
-agent-browser diff screenshot --baseline before.png
+silicon-browser diff screenshot --baseline before.png
 
 # Save diff image to a specific path
-agent-browser diff screenshot --baseline before.png --output diff.png
+silicon-browser diff screenshot --baseline before.png --output diff.png
 
 # Adjust threshold and scope to element
-agent-browser diff screenshot --baseline before.png --threshold 0.2 --selector "#hero"
+silicon-browser diff screenshot --baseline before.png --threshold 0.2 --selector "#hero"
 ```
 
 ### Options
@@ -107,13 +107,13 @@ Compares two pages by navigating to each in sequence and diffing the results.
 
 ```bash
 # Compare two URLs (snapshot diff)
-agent-browser diff url https://staging.example.com https://prod.example.com
+silicon-browser diff url https://staging.example.com https://prod.example.com
 
 # Include visual comparison
-agent-browser diff url https://v1.example.com https://v2.example.com --screenshot
+silicon-browser diff url https://v1.example.com https://v2.example.com --screenshot
 
 # Full-page screenshot comparison
-agent-browser diff url https://v1.example.com https://v2.example.com --screenshot --full
+silicon-browser diff url https://v1.example.com https://v2.example.com --screenshot --full
 ```
 
 The command navigates to the first URL, captures state, then navigates to the second URL and captures again. Snapshot diff is always included. Screenshot diff requires the `--screenshot` flag.
@@ -143,9 +143,9 @@ After completion, the browser remains on the second URL.
 The most common use case: confirm that an action (click, fill, submit) changed the page as expected.
 
 ```bash
-agent-browser snapshot -i          # Take interactive-only snapshot (baseline)
-agent-browser fill @e3 "test@example.com"
-agent-browser diff snapshot        # Compare current snapshot to the baseline
+silicon-browser snapshot -i          # Take interactive-only snapshot (baseline)
+silicon-browser fill @e3 "test@example.com"
+silicon-browser diff snapshot        # Compare current snapshot to the baseline
 ```
 
 ### Monitoring for changes
@@ -154,10 +154,10 @@ Periodically compare a page against a saved baseline to detect updates.
 
 ```bash
 # Save baseline
-agent-browser open https://example.com && agent-browser snapshot > baseline.txt
+silicon-browser open https://example.com && silicon-browser snapshot > baseline.txt
 
 # Later, check for changes
-agent-browser open https://example.com && agent-browser diff snapshot --baseline baseline.txt
+silicon-browser open https://example.com && silicon-browser diff snapshot --baseline baseline.txt
 ```
 
 ### Visual regression testing
@@ -165,9 +165,9 @@ agent-browser open https://example.com && agent-browser diff snapshot --baseline
 Compare screenshots before and after a deploy to catch unintended visual changes.
 
 ```bash
-agent-browser open https://staging.example.com && agent-browser screenshot baseline.png
+silicon-browser open https://staging.example.com && silicon-browser screenshot baseline.png
 # ... deploy happens ...
-agent-browser open https://staging.example.com && agent-browser diff screenshot --baseline baseline.png
+silicon-browser open https://staging.example.com && silicon-browser diff screenshot --baseline baseline.png
 ```
 
 ### Comparing environments
@@ -175,5 +175,5 @@ agent-browser open https://staging.example.com && agent-browser diff screenshot 
 Diff staging against production to verify parity.
 
 ```bash
-agent-browser diff url https://staging.example.com https://prod.example.com --screenshot
+silicon-browser diff url https://staging.example.com https://prod.example.com --screenshot
 ```

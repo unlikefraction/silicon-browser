@@ -1,4 +1,4 @@
-# agent-browser Daemon Benchmarks
+# silicon-browser Daemon Benchmarks
 
 Compares command latency and system metrics between the **Node.js daemon** (published npm version) and the **Rust native daemon** (built from source), running inside a [Vercel Sandbox](https://vercel.com/docs/sandbox) microVM.
 
@@ -61,7 +61,7 @@ pnpm bench -- --vcpus 16               # more vCPUs (faster Rust build)
 
 1. Creates a Vercel Sandbox (Amazon Linux, configurable vCPUs)
 2. Installs Chromium system dependencies
-3. **Phase 1 -- Node.js daemon**: installs `agent-browser` from npm (last version with the Node daemon), runs all scenarios, collects metrics
+3. **Phase 1 -- Node.js daemon**: installs `silicon-browser` from npm (last version with the Node daemon), runs all scenarios, collects metrics
 4. **Phase 2 -- Rust native daemon**: installs Rust toolchain, clones the repo, runs `cargo build --release`, replaces the binary, runs the same scenarios, collects metrics
 5. Prints comparison tables and optionally writes `results.json`
 

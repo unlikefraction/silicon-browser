@@ -7,57 +7,57 @@ export const metadata = pageMetadata("commands")
 ## Core
 
 ```bash
-agent-browser open <url>              # Navigate (aliases: goto, navigate)
-agent-browser click <sel>             # Click element (--new-tab to open in new tab)
-agent-browser dblclick <sel>          # Double-click
-agent-browser fill <sel> <text>       # Clear and fill
-agent-browser type <sel> <text>       # Type into element
-agent-browser press <key>             # Press key (Enter, Tab, Control+a) (alias: key)
-agent-browser keyboard type <text>    # Type at current focus (no selector needed)
-agent-browser keyboard inserttext <text>  # Insert text without key events
-agent-browser keydown <key>           # Hold key down
-agent-browser keyup <key>             # Release key
-agent-browser hover <sel>             # Hover element
-agent-browser focus <sel>             # Focus element
-agent-browser select <sel> <val>      # Select dropdown option
-agent-browser check <sel>             # Check checkbox
-agent-browser uncheck <sel>           # Uncheck checkbox
-agent-browser scroll <dir> [px]       # Scroll (up/down/left/right, --selector <sel>)
-agent-browser scrollintoview <sel>    # Scroll element into view
-agent-browser drag <src> <dst>        # Drag and drop
-agent-browser upload <sel> <files>    # Upload files
-agent-browser screenshot [path]       # Screenshot (--full for full page)
-agent-browser screenshot --annotate   # Annotated screenshot with numbered element labels
-agent-browser screenshot --screenshot-dir ./shots    # Save to custom directory
-agent-browser screenshot --screenshot-format jpeg --screenshot-quality 80
-agent-browser pdf <path>              # Save page as PDF
-agent-browser snapshot                # Accessibility tree with refs
-agent-browser eval <js>               # Run JavaScript
-agent-browser connect <port|url>      # Connect to browser via CDP
-agent-browser close                   # Close browser (aliases: quit, exit)
+silicon-browser open <url>              # Navigate (aliases: goto, navigate)
+silicon-browser click <sel>             # Click element (--new-tab to open in new tab)
+silicon-browser dblclick <sel>          # Double-click
+silicon-browser fill <sel> <text>       # Clear and fill
+silicon-browser type <sel> <text>       # Type into element
+silicon-browser press <key>             # Press key (Enter, Tab, Control+a) (alias: key)
+silicon-browser keyboard type <text>    # Type at current focus (no selector needed)
+silicon-browser keyboard inserttext <text>  # Insert text without key events
+silicon-browser keydown <key>           # Hold key down
+silicon-browser keyup <key>             # Release key
+silicon-browser hover <sel>             # Hover element
+silicon-browser focus <sel>             # Focus element
+silicon-browser select <sel> <val>      # Select dropdown option
+silicon-browser check <sel>             # Check checkbox
+silicon-browser uncheck <sel>           # Uncheck checkbox
+silicon-browser scroll <dir> [px]       # Scroll (up/down/left/right, --selector <sel>)
+silicon-browser scrollintoview <sel>    # Scroll element into view
+silicon-browser drag <src> <dst>        # Drag and drop
+silicon-browser upload <sel> <files>    # Upload files
+silicon-browser screenshot [path]       # Screenshot (--full for full page)
+silicon-browser screenshot --annotate   # Annotated screenshot with numbered element labels
+silicon-browser screenshot --screenshot-dir ./shots    # Save to custom directory
+silicon-browser screenshot --screenshot-format jpeg --screenshot-quality 80
+silicon-browser pdf <path>              # Save page as PDF
+silicon-browser snapshot                # Accessibility tree with refs
+silicon-browser eval <js>               # Run JavaScript
+silicon-browser connect <port|url>      # Connect to browser via CDP
+silicon-browser close                   # Close browser (aliases: quit, exit)
 ```
 
 ## Get info
 
 ```bash
-agent-browser get text <sel>          # Get text content
-agent-browser get html <sel>          # Get innerHTML
-agent-browser get value <sel>         # Get input value
-agent-browser get attr <sel> <attr>   # Get attribute
-agent-browser get title               # Get page title
-agent-browser get url                 # Get current URL
-agent-browser get cdp-url             # Get CDP WebSocket URL
-agent-browser get count <sel>         # Count matching elements
-agent-browser get box <sel>           # Get bounding box
-agent-browser get styles <sel>        # Get computed styles
+silicon-browser get text <sel>          # Get text content
+silicon-browser get html <sel>          # Get innerHTML
+silicon-browser get value <sel>         # Get input value
+silicon-browser get attr <sel> <attr>   # Get attribute
+silicon-browser get title               # Get page title
+silicon-browser get url                 # Get current URL
+silicon-browser get cdp-url             # Get CDP WebSocket URL
+silicon-browser get count <sel>         # Count matching elements
+silicon-browser get box <sel>           # Get bounding box
+silicon-browser get styles <sel>        # Get computed styles
 ```
 
 ## Check state
 
 ```bash
-agent-browser is visible <sel>        # Check if visible
-agent-browser is enabled <sel>        # Check if enabled
-agent-browser is checked <sel>        # Check if checked
+silicon-browser is visible <sel>        # Check if visible
+silicon-browser is enabled <sel>        # Check if enabled
+silicon-browser is checked <sel>        # Check if checked
 ```
 
 ## Find elements
@@ -65,16 +65,16 @@ agent-browser is checked <sel>        # Check if checked
 Semantic locators with actions (`click`, `fill`, `type`, `hover`, `focus`, `check`, `uncheck`, `text`):
 
 ```bash
-agent-browser find role <role> <action> [value]
-agent-browser find text <text> <action>
-agent-browser find label <label> <action> [value]
-agent-browser find placeholder <ph> <action> [value]
-agent-browser find alt <text> <action>
-agent-browser find title <text> <action>
-agent-browser find testid <id> <action> [value]
-agent-browser find first <sel> <action> [value]
-agent-browser find last <sel> <action> [value]
-agent-browser find nth <n> <sel> <action> [value]
+silicon-browser find role <role> <action> [value]
+silicon-browser find text <text> <action>
+silicon-browser find label <label> <action> [value]
+silicon-browser find placeholder <ph> <action> [value]
+silicon-browser find alt <text> <action>
+silicon-browser find title <text> <action>
+silicon-browser find testid <id> <action> [value]
+silicon-browser find first <sel> <action> [value]
+silicon-browser find last <sel> <action> [value]
+silicon-browser find nth <n> <sel> <action> [value]
 ```
 
 Options:
@@ -85,145 +85,145 @@ Options:
 Examples:
 
 ```bash
-agent-browser find role button click --name "Submit"
-agent-browser find label "Email" fill "test@test.com"
-agent-browser find alt "Logo" click
-agent-browser find first ".item" click
-agent-browser find last ".item" text
-agent-browser find nth 2 ".card" hover
+silicon-browser find role button click --name "Submit"
+silicon-browser find label "Email" fill "test@test.com"
+silicon-browser find alt "Logo" click
+silicon-browser find first ".item" click
+silicon-browser find last ".item" text
+silicon-browser find nth 2 ".card" hover
 ```
 
 ## Wait
 
 ```bash
-agent-browser wait <selector>         # Wait for element
-agent-browser wait <ms>               # Wait for time
-agent-browser wait --text "Welcome"   # Wait for text (substring match)
-agent-browser wait --url "**/dash"    # Wait for URL pattern
-agent-browser wait --load networkidle # Wait for load state
-agent-browser wait --fn "condition"   # Wait for JS condition
-agent-browser wait --download [path]  # Wait for download
-agent-browser wait --fn "!document.body.innerText.includes('Loading...')"  # Wait for text to disappear
-agent-browser wait "#spinner" --state hidden           # Wait for element to disappear
+silicon-browser wait <selector>         # Wait for element
+silicon-browser wait <ms>               # Wait for time
+silicon-browser wait --text "Welcome"   # Wait for text (substring match)
+silicon-browser wait --url "**/dash"    # Wait for URL pattern
+silicon-browser wait --load networkidle # Wait for load state
+silicon-browser wait --fn "condition"   # Wait for JS condition
+silicon-browser wait --download [path]  # Wait for download
+silicon-browser wait --fn "!document.body.innerText.includes('Loading...')"  # Wait for text to disappear
+silicon-browser wait "#spinner" --state hidden           # Wait for element to disappear
 ```
 
 ## Downloads
 
 ```bash
-agent-browser download <sel> <path>   # Click element to trigger download
-agent-browser wait --download [path]  # Wait for any download to complete
+silicon-browser download <sel> <path>   # Click element to trigger download
+silicon-browser wait --download [path]  # Wait for any download to complete
 ```
 
-Use `--download-path <dir>` (or `AGENT_BROWSER_DOWNLOAD_PATH` env) to set a default download directory. Without it, downloads go to a temporary directory that is deleted when the browser closes.
+Use `--download-path <dir>` (or `SILICON_BROWSER_DOWNLOAD_PATH` env) to set a default download directory. Without it, downloads go to a temporary directory that is deleted when the browser closes.
 
 ## Mouse
 
 ```bash
-agent-browser mouse move <x> <y>      # Move mouse
-agent-browser mouse down [button]     # Press button
-agent-browser mouse up [button]       # Release button
-agent-browser mouse wheel <dy> [dx]   # Scroll wheel
+silicon-browser mouse move <x> <y>      # Move mouse
+silicon-browser mouse down [button]     # Press button
+silicon-browser mouse up [button]       # Release button
+silicon-browser mouse wheel <dy> [dx]   # Scroll wheel
 ```
 
 ## Clipboard
 
 ```bash
-agent-browser clipboard read                      # Read text from clipboard
-agent-browser clipboard write "Hello, World!"     # Write text to clipboard
-agent-browser clipboard copy                      # Copy current selection (Ctrl+C)
-agent-browser clipboard paste                     # Paste from clipboard (Ctrl+V)
+silicon-browser clipboard read                      # Read text from clipboard
+silicon-browser clipboard write "Hello, World!"     # Write text to clipboard
+silicon-browser clipboard copy                      # Copy current selection (Ctrl+C)
+silicon-browser clipboard paste                     # Paste from clipboard (Ctrl+V)
 ```
 
 ## Settings
 
 ```bash
-agent-browser set viewport <w> <h> [scale]  # Set viewport size (scale for retina, e.g. 2)
-agent-browser set device <name>       # Emulate device ("iPhone 14")
-agent-browser set geo <lat> <lng>     # Set geolocation
-agent-browser set offline [on|off]    # Toggle offline mode
-agent-browser set headers <json>      # Extra HTTP headers
-agent-browser set credentials <u> <p> # HTTP basic auth
-agent-browser set media [dark|light]  # Emulate color scheme (persists for session)
+silicon-browser set viewport <w> <h> [scale]  # Set viewport size (scale for retina, e.g. 2)
+silicon-browser set device <name>       # Emulate device ("iPhone 14")
+silicon-browser set geo <lat> <lng>     # Set geolocation
+silicon-browser set offline [on|off]    # Toggle offline mode
+silicon-browser set headers <json>      # Extra HTTP headers
+silicon-browser set credentials <u> <p> # HTTP basic auth
+silicon-browser set media [dark|light]  # Emulate color scheme (persists for session)
 ```
 
 Use `--color-scheme` for persistent dark/light mode across all commands:
 
 ```bash
-agent-browser --color-scheme dark open https://example.com
+silicon-browser --color-scheme dark open https://example.com
 ```
 
 ## Cookies & storage
 
 ```bash
-agent-browser cookies                 # Get all cookies
-agent-browser cookies set <name> <val> # Set cookie
-agent-browser cookies clear           # Clear cookies
+silicon-browser cookies                 # Get all cookies
+silicon-browser cookies set <name> <val> # Set cookie
+silicon-browser cookies clear           # Clear cookies
 
-agent-browser storage local           # Get all localStorage
-agent-browser storage local <key>     # Get specific key
-agent-browser storage local set <k> <v>  # Set value
-agent-browser storage local clear     # Clear all
+silicon-browser storage local           # Get all localStorage
+silicon-browser storage local <key>     # Get specific key
+silicon-browser storage local set <k> <v>  # Set value
+silicon-browser storage local clear     # Clear all
 
-agent-browser storage session         # Same for sessionStorage
+silicon-browser storage session         # Same for sessionStorage
 ```
 
 ## Network
 
 ```bash
-agent-browser network route <url>              # Intercept requests
-agent-browser network route <url> --abort      # Block requests
-agent-browser network route <url> --body <json>  # Mock response
-agent-browser network unroute [url]            # Remove routes
-agent-browser network requests                 # View tracked requests
-agent-browser network requests --clear         # Clear request log
-agent-browser network requests --filter <pat>  # Filter by URL pattern
+silicon-browser network route <url>              # Intercept requests
+silicon-browser network route <url> --abort      # Block requests
+silicon-browser network route <url> --body <json>  # Mock response
+silicon-browser network unroute [url]            # Remove routes
+silicon-browser network requests                 # View tracked requests
+silicon-browser network requests --clear         # Clear request log
+silicon-browser network requests --filter <pat>  # Filter by URL pattern
 ```
 
 ## Tabs & frames
 
 ```bash
-agent-browser tab                     # List tabs
-agent-browser tab new [url]           # New tab
-agent-browser tab <n>                 # Switch to tab
-agent-browser tab close [n]           # Close tab
-agent-browser window new              # Open new browser window
-agent-browser frame <sel>             # Switch to iframe
-agent-browser frame main              # Back to main frame
+silicon-browser tab                     # List tabs
+silicon-browser tab new [url]           # New tab
+silicon-browser tab <n>                 # Switch to tab
+silicon-browser tab close [n]           # Close tab
+silicon-browser window new              # Open new browser window
+silicon-browser frame <sel>             # Switch to iframe
+silicon-browser frame main              # Back to main frame
 ```
 
 ## Dialogs
 
 ```bash
-agent-browser dialog accept [text]    # Accept dialog (with optional prompt text)
-agent-browser dialog dismiss          # Dismiss dialog
+silicon-browser dialog accept [text]    # Accept dialog (with optional prompt text)
+silicon-browser dialog dismiss          # Dismiss dialog
 ```
 
 ## Debug
 
 ```bash
-agent-browser trace start [path]      # Start trace
-agent-browser trace stop [path]       # Stop and save trace
-agent-browser profiler start          # Start Chrome DevTools profiling
-agent-browser profiler stop [path]    # Stop and save profile (.json)
-agent-browser record start <path>     # Start video recording (WebM)
-agent-browser record stop             # Stop and save video
-agent-browser record restart <path>   # Stop current and start new recording
-agent-browser console                 # View console messages
-agent-browser console --clear         # Clear console log
-agent-browser errors                  # View page errors
-agent-browser errors --clear          # Clear error log
-agent-browser highlight <sel>         # Highlight element
-agent-browser inspect                 # Open Chrome DevTools for the active page
+silicon-browser trace start [path]      # Start trace
+silicon-browser trace stop [path]       # Stop and save trace
+silicon-browser profiler start          # Start Chrome DevTools profiling
+silicon-browser profiler stop [path]    # Stop and save profile (.json)
+silicon-browser record start <path>     # Start video recording (WebM)
+silicon-browser record stop             # Stop and save video
+silicon-browser record restart <path>   # Stop current and start new recording
+silicon-browser console                 # View console messages
+silicon-browser console --clear         # Clear console log
+silicon-browser errors                  # View page errors
+silicon-browser errors --clear          # Clear error log
+silicon-browser highlight <sel>         # Highlight element
+silicon-browser inspect                 # Open Chrome DevTools for the active page
 ```
 
 ## Auth vault
 
 ```bash
-agent-browser auth save <name> [opts]    # Save auth profile
-agent-browser auth login <name>          # Login using saved credentials
-agent-browser auth list                  # List saved profiles (names and URLs only)
-agent-browser auth show <name>           # Show profile metadata (no passwords)
-agent-browser auth delete <name>         # Delete a saved profile
+silicon-browser auth save <name> [opts]    # Save auth profile
+silicon-browser auth login <name>          # Login using saved credentials
+silicon-browser auth list                  # List saved profiles (names and URLs only)
+silicon-browser auth show <name>           # Show profile metadata (no passwords)
+silicon-browser auth delete <name>         # Delete a saved profile
 ```
 
 Save options:
@@ -237,9 +237,9 @@ Save options:
 - `--submit-selector <sel>` -- custom CSS selector for submit button
 
 ```bash
-echo "pass" | agent-browser auth save github --url https://github.com/login --username user --password-stdin
-agent-browser auth login github
-agent-browser auth list
+echo "pass" | silicon-browser auth save github --url https://github.com/login --username user --password-stdin
+silicon-browser auth login github
+silicon-browser auth list
 ```
 
 ## Confirmation
@@ -247,44 +247,44 @@ agent-browser auth list
 When `--confirm-actions` is set, certain action categories return a `confirmation_required` response instead of executing immediately. Use `confirm` or `deny` to approve or reject the action.
 
 ```bash
-agent-browser confirm <confirmation-id>  # Approve a pending action
-agent-browser deny <confirmation-id>     # Deny a pending action
+silicon-browser confirm <confirmation-id>  # Approve a pending action
+silicon-browser deny <confirmation-id>     # Deny a pending action
 ```
 
 Pending confirmations auto-deny after 60 seconds.
 
 ```bash
-agent-browser --confirm-actions eval,download eval "document.title"
+silicon-browser --confirm-actions eval,download eval "document.title"
 # Returns confirmation_required with ID
-agent-browser confirm c_8f3a1234
+silicon-browser confirm c_8f3a1234
 ```
 
 ## State management
 
 ```bash
-agent-browser state save <path>       # Save auth state to file
-agent-browser state load <path>       # Load auth state from file
-agent-browser state list              # List saved state files
-agent-browser state show <file>       # Show state summary
-agent-browser state rename <old> <new> # Rename state file
-agent-browser state clear [name]      # Clear states for session name
-agent-browser state clear --all       # Clear all saved states
-agent-browser state clean --older-than <days>  # Delete old states
+silicon-browser state save <path>       # Save auth state to file
+silicon-browser state load <path>       # Load auth state from file
+silicon-browser state list              # List saved state files
+silicon-browser state show <file>       # Show state summary
+silicon-browser state rename <old> <new> # Rename state file
+silicon-browser state clear [name]      # Clear states for session name
+silicon-browser state clear --all       # Clear all saved states
+silicon-browser state clean --older-than <days>  # Delete old states
 ```
 
 ## Sessions
 
 ```bash
-agent-browser session                 # Show current session name
-agent-browser session list            # List active sessions
+silicon-browser session                 # Show current session name
+silicon-browser session list            # List active sessions
 ```
 
 ## Navigation
 
 ```bash
-agent-browser back                    # Go back
-agent-browser forward                 # Go forward
-agent-browser reload                  # Reload page
+silicon-browser back                    # Go back
+silicon-browser forward                 # Go forward
+silicon-browser reload                  # Reload page
 ```
 
 ## Global options
@@ -308,9 +308,9 @@ agent-browser reload                  # Reload page
 --json                   # JSON output (for scripts)
 --full, -f               # Full page screenshot
 --annotate               # Annotated screenshot with numbered element labels
---screenshot-dir <path>   # Default screenshot output directory (or AGENT_BROWSER_SCREENSHOT_DIR)
---screenshot-quality <n>  # JPEG quality 0-100 (or AGENT_BROWSER_SCREENSHOT_QUALITY)
---screenshot-format <fmt> # Format: png (default), jpeg (or AGENT_BROWSER_SCREENSHOT_FORMAT)
+--screenshot-dir <path>   # Default screenshot output directory (or SILICON_BROWSER_SCREENSHOT_DIR)
+--screenshot-quality <n>  # JPEG quality 0-100 (or SILICON_BROWSER_SCREENSHOT_QUALITY)
+--screenshot-format <fmt> # Format: png (default), jpeg (or SILICON_BROWSER_SCREENSHOT_FORMAT)
 --headed                 # Show browser window (not headless)
 --cdp <port|url>         # Connect via Chrome DevTools Protocol (port or WebSocket URL)
 --auto-connect           # Auto-discover and connect to running Chrome
@@ -331,9 +331,9 @@ agent-browser reload                  # Reload page
 Chain commands with `&&` in a single shell invocation. The browser persists via a background daemon, so chaining works naturally and is more efficient than separate calls:
 
 ```bash
-agent-browser open example.com && agent-browser wait --load networkidle && agent-browser snapshot -i
-agent-browser fill @e1 "user@example.com" && agent-browser fill @e2 "pass" && agent-browser click @e3
-agent-browser open example.com && agent-browser wait --load networkidle && agent-browser screenshot page.png
+silicon-browser open example.com && silicon-browser wait --load networkidle && silicon-browser snapshot -i
+silicon-browser fill @e1 "user@example.com" && silicon-browser fill @e2 "pass" && silicon-browser click @e3
+silicon-browser open example.com && silicon-browser wait --load networkidle && silicon-browser screenshot page.png
 ```
 
 Use `&&` when you don't need to read intermediate output. Run commands separately when you need to parse output first (e.g., snapshot to discover refs, then interact with those refs).
@@ -343,9 +343,9 @@ Use `&&` when you don't need to read intermediate output. Run commands separatel
 Open local files (PDFs, HTML) using `file://` URLs:
 
 ```bash
-agent-browser --allow-file-access open file:///path/to/document.pdf
-agent-browser --allow-file-access open file:///path/to/page.html
-agent-browser screenshot output.png
+silicon-browser --allow-file-access open file:///path/to/document.pdf
+silicon-browser --allow-file-access open file:///path/to/page.html
+silicon-browser screenshot output.png
 ```
 
 The `--allow-file-access` flag enables JavaScript to access other local files. Chromium only.

@@ -30,7 +30,7 @@ pub fn recording_start(state: &mut RecordingState, path: &str) -> Result<Value, 
         .unwrap_or_default()
         .as_millis();
 
-    let temp_dir = std::env::temp_dir().join(format!("agent-browser-recording-{}", timestamp));
+    let temp_dir = std::env::temp_dir().join(format!("silicon-browser-recording-{}", timestamp));
     let _ = std::fs::create_dir_all(&temp_dir);
 
     state.active = true;

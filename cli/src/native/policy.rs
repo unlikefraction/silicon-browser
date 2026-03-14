@@ -30,7 +30,7 @@ pub struct ActionPolicy {
     confirm: Option<Vec<String>>,
 }
 
-/// Confirmation categories parsed from AGENT_BROWSER_CONFIRM_ACTIONS.
+/// Confirmation categories parsed from SILICON_BROWSER_CONFIRM_ACTIONS.
 #[derive(Debug, Clone)]
 pub struct ConfirmActions {
     pub categories: HashSet<String>,
@@ -38,7 +38,7 @@ pub struct ConfirmActions {
 
 impl ConfirmActions {
     pub fn from_env() -> Option<Self> {
-        let val = env::var("AGENT_BROWSER_CONFIRM_ACTIONS").ok()?;
+        let val = env::var("SILICON_BROWSER_CONFIRM_ACTIONS").ok()?;
         if val.is_empty() {
             return None;
         }
@@ -71,11 +71,11 @@ impl ActionPolicy {
         Ok(policy)
     }
 
-    /// Load policy if AGENT_BROWSER_ACTION_POLICY env var is set.
-    /// Falls back to AGENT_BROWSER_POLICY for backwards compatibility.
+    /// Load policy if SILICON_BROWSER_ACTION_POLICY env var is set.
+    /// Falls back to SILICON_BROWSER_POLICY for backwards compatibility.
     pub fn load_if_exists() -> Option<Self> {
-        let path = env::var("AGENT_BROWSER_ACTION_POLICY")
-            .or_else(|_| env::var("AGENT_BROWSER_POLICY"))
+        let path = env::var("SILICON_BROWSER_ACTION_POLICY")
+            .or_else(|_| env::var("SILICON_BROWSER_POLICY"))
             .ok()?;
         Self::load(&path).ok()
     }
@@ -206,8 +206,8 @@ mod tests {
 
     #[test]
     fn test_confirm_actions_from_env() {
-        let _guard = EnvGuard::new(&["AGENT_BROWSER_CONFIRM_ACTIONS"]);
-        _guard.set("AGENT_BROWSER_CONFIRM_ACTIONS", "navigate,click,fill");
+        let _guard = EnvGuard::new(&["SILICON_BROWSER_CONFIRM_ACTIONS"]);
+        _guard.set("SILICON_BROWSER_CONFIRM_ACTIONS", "navigate,click,fill");
         let ca = ConfirmActions::from_env().unwrap();
         assert!(ca.requires_confirmation("navigate"));
         assert!(ca.requires_confirmation("click"));

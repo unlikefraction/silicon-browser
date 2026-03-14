@@ -252,15 +252,28 @@ impl BrowserManager {
                 .await;
         }
 
-        if let Some(ref ua) = user_agent {
-            let _ = manager
-                .client
-                .send_command(
-                    "Emulation.setUserAgentOverride",
-                    Some(json!({ "userAgent": ua })),
-                    Some(&session_id),
-                )
-                .await;
+        // Stealth: always set a user-agent (use default stealth UA if none provided)
+        {
+            let stealth_disabled = std::env::var("SILICON_BROWSER_NO_STEALTH").is_ok();
+            let ua = user_agent
+                .as_deref()
+                .or_else(|| {
+                    if stealth_disabled {
+                        None
+                    } else {
+                        Some(super::stealth::get_default_user_agent())
+                    }
+                });
+            if let Some(ua) = ua {
+                let _ = manager
+                    .client
+                    .send_command(
+                        "Emulation.setUserAgentOverride",
+                        Some(json!({ "userAgent": ua })),
+                        Some(&session_id),
+                    )
+                    .await;
+            }
         }
 
         if let Some(ref scheme) = color_scheme {
@@ -410,6 +423,36 @@ impl BrowserManager {
         self.client
             .send_command_no_params("Network.enable", Some(session_id))
             .await?;
+
+        // Stealth: inject anti-detection script before any page loads
+        let stealth_disabled = std::env::var("SILICON_BROWSER_NO_STEALTH").is_ok();
+        if !stealth_disabled {
+            let stealth_script = super::stealth::get_stealth_script();
+            let _ = self
+                .client
+                .send_command(
+                    "Page.addScriptToEvaluateOnNewDocument",
+                    Some(json!({ "source": stealth_script })),
+                    Some(session_id),
+                )
+                .await;
+
+            // Set extra HTTP headers to mimic real Chrome
+            let headers = super::stealth::get_stealth_headers();
+            let mut header_map = serde_json::Map::new();
+            for (key, value) in &headers {
+                header_map.insert(key.to_string(), json!(value));
+            }
+            let _ = self
+                .client
+                .send_command(
+                    "Network.setExtraHTTPHeaders",
+                    Some(json!({ "headers": header_map })),
+                    Some(session_id),
+                )
+                .await;
+        }
+
         Ok(())
     }
 

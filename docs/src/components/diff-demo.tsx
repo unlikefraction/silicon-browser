@@ -216,14 +216,14 @@ export function DiffDemo() {
         </div>
         <Terminal>
           <div className="opacity-60 mb-2">
-            <CommandLine>agent-browser snapshot -i</CommandLine>
+            <CommandLine>silicon-browser snapshot -i</CommandLine>
             <CommandLine>
-              agent-browser fill @e3 &quot;test@example.com&quot;
+              silicon-browser fill @e3 &quot;test@example.com&quot;
             </CommandLine>
-            <CommandLine>agent-browser click @e4</CommandLine>
+            <CommandLine>silicon-browser click @e4</CommandLine>
           </div>
           <div className="mb-3">
-            <CommandLine>agent-browser diff snapshot</CommandLine>
+            <CommandLine>silicon-browser diff snapshot</CommandLine>
           </div>
           <div
             className="border-t pt-3"
@@ -252,7 +252,7 @@ export function DiffDemo() {
         <Terminal>
           <div className="mb-3">
             <CommandLine>
-              agent-browser diff screenshot --baseline before-deploy.png
+              silicon-browser diff screenshot --baseline before-deploy.png
             </CommandLine>
           </div>
           <div
@@ -263,7 +263,7 @@ export function DiffDemo() {
               &#x2717; 2.37% pixels differ
             </div>
             <div className="opacity-50">
-              Diff image: ~/.agent-browser/tmp/diffs/diff-1708473621.png
+              Diff image: ~/.silicon-browser/tmp/diffs/diff-1708473621.png
             </div>
             <div className="opacity-50">
               <span className="text-red-400">1,137</span> different /{" "}

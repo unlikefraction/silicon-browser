@@ -4,11 +4,11 @@ export const metadata = pageMetadata("engines/chrome")
 
 # Chrome
 
-Chrome (and Chromium) is the default browser engine. agent-browser discovers, launches, and manages the Chrome process automatically via the Chrome DevTools Protocol (CDP).
+Chrome (and Chromium) is the default browser engine. silicon-browser discovers, launches, and manages the Chrome process automatically via the Chrome DevTools Protocol (CDP).
 
 ## Binary Discovery
 
-When no `--executable-path` is provided, agent-browser searches for Chrome in this order:
+When no `--executable-path` is provided, silicon-browser searches for Chrome in this order:
 
 <table>
   <thead>
@@ -45,20 +45,20 @@ When no `--executable-path` is provided, agent-browser searches for Chrome in th
   </tbody>
 </table>
 
-If Chrome is not found, run `agent-browser install` to download Chrome from Chrome for Testing.
+If Chrome is not found, run `silicon-browser install` to download Chrome from Chrome for Testing.
 
 ## Usage
 
 Chrome is the default engine -- no `--engine` flag is needed:
 
 ```bash
-agent-browser open example.com
+silicon-browser open example.com
 ```
 
 To be explicit:
 
 ```bash
-agent-browser --engine chrome open example.com
+silicon-browser --engine chrome open example.com
 ```
 
 ## Custom Binary
@@ -66,14 +66,14 @@ agent-browser --engine chrome open example.com
 Point to any Chromium-based browser with `--executable-path`:
 
 ```bash
-agent-browser --executable-path /path/to/chromium open example.com
+silicon-browser --executable-path /path/to/chromium open example.com
 ```
 
 Or via environment variable:
 
 ```bash
-export AGENT_BROWSER_EXECUTABLE_PATH=/path/to/chromium
-agent-browser open example.com
+export SILICON_BROWSER_EXECUTABLE_PATH=/path/to/chromium
+silicon-browser open example.com
 ```
 
 ## Chrome-Specific Features
@@ -99,7 +99,7 @@ These features are available only with Chrome:
 In Docker, CI runners, or other sandboxed environments, Chrome's user namespace sandbox may need to be disabled:
 
 ```bash
-agent-browser --args "--no-sandbox" open example.com
+silicon-browser --args "--no-sandbox" open example.com
 ```
 
-agent-browser automatically adds `--no-sandbox` when it detects a container environment (Docker, Podman, running as root).
+silicon-browser automatically adds `--no-sandbox` when it detects a container environment (Docker, Podman, running as root).

@@ -1,7 +1,7 @@
 /**
  * Benchmark scenarios for comparing Node.js daemon vs Rust native daemon.
  *
- * Each scenario defines CLI commands run via `sandbox.runCommand("agent-browser", args)`.
+ * Each scenario defines CLI commands run via `sandbox.runCommand("silicon-browser", args)`.
  * Setup/teardown commands run once and are not timed.
  * The `commands` array is timed over N iterations.
  */

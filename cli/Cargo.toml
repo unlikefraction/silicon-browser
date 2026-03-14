@@ -1,13 +1,13 @@
 [package]
-name = "agent-browser"
+name = "silicon-browser"
 version = "0.20.1"
 edition = "2021"
-description = "Fast browser automation CLI for AI agents"
+description = "The most reliable browser for your AI agent — stealth-first, terminal-native"
 license = "Apache-2.0"
-repository = "https://github.com/vercel-labs/agent-browser"
-homepage = "https://agent-browser.dev"
+repository = "https://github.com/unlikefraction/silicon-browser"
+homepage = "https://github.com/unlikefraction/silicon-browser"
 readme = "../README.md"
-keywords = ["browser", "automation", "ai", "cdp", "chrome"]
+keywords = ["browser", "automation", "ai", "stealth", "chrome"]
 categories = ["command-line-utilities", "web-programming"]
 
 [dependencies]

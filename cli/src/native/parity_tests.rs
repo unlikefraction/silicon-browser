@@ -9,7 +9,7 @@ use serde_json::{json, Value};
 
 use super::actions::{execute_command, DaemonState};
 
-const ENCRYPTION_KEY_ENV: &str = "AGENT_BROWSER_ENCRYPTION_KEY";
+const ENCRYPTION_KEY_ENV: &str = "SILICON_BROWSER_ENCRYPTION_KEY";
 
 struct TestKeyGuard {
     _lock: std::sync::MutexGuard<'static, ()>,

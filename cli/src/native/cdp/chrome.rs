@@ -120,6 +120,12 @@ fn build_chrome_args(options: &LaunchOptions) -> Result<ChromeArgs, String> {
         "--use-mock-keychain".to_string(),
     ];
 
+    // Stealth: add anti-detection Chrome flags
+    let stealth_disabled = std::env::var("SILICON_BROWSER_NO_STEALTH").is_ok();
+    if !stealth_disabled {
+        args.extend(super::super::stealth::get_stealth_chrome_args());
+    }
+
     let has_extensions = options
         .extensions
         .as_ref()
@@ -145,7 +151,7 @@ fn build_chrome_args(options: &LaunchOptions) -> Result<ChromeArgs, String> {
         None
     } else {
         let dir =
-            std::env::temp_dir().join(format!("agent-browser-chrome-{}", uuid::Uuid::new_v4()));
+            std::env::temp_dir().join(format!("silicon-browser-chrome-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&dir)
             .map_err(|e| format!("Failed to create temp profile dir: {}", e))?;
         args.push(format!("--user-data-dir={}", dir.display()));
@@ -171,7 +177,8 @@ fn build_chrome_args(options: &LaunchOptions) -> Result<ChromeArgs, String> {
         .any(|a| a.starts_with("--start-maximized") || a.starts_with("--window-size="));
 
     if !has_window_size && options.headless && !has_extensions {
-        args.push("--window-size=1280,720".to_string());
+        // Stealth: use 1920x1080 (common real resolution) instead of 1280x720
+        args.push("--window-size=1920,1080".to_string());
     }
 
     args.extend(options.args.iter().cloned());
@@ -190,7 +197,7 @@ pub fn launch_chrome(options: &LaunchOptions) -> Result<ChromeProcess, String> {
     let chrome_path = match &options.executable_path {
         Some(p) => PathBuf::from(p),
         None => {
-            find_chrome().ok_or("Chrome not found. Run `agent-browser install` to download Chrome, or use --executable-path.")?
+            find_chrome().ok_or("Chrome not found. Run `silicon-browser install` to download Chrome, or use --executable-path.")?
         }
     };
 
@@ -320,7 +327,7 @@ fn chrome_launch_error(message: &str, stderr_lines: &[String]) -> String {
 }
 
 pub fn find_chrome() -> Option<PathBuf> {
-    // 1. Check Chrome downloaded by `agent-browser install`
+    // 1. Check Chrome downloaded by `silicon-browser install`
     if let Some(p) = crate::install::find_installed_chrome() {
         return Some(p);
     }
@@ -829,7 +836,7 @@ mod tests {
     #[test]
     fn test_chrome_process_drop_cleans_temp_dir() {
         let dir = std::env::temp_dir().join(format!(
-            "agent-browser-chrome-drop-test-{}",
+            "silicon-browser-chrome-drop-test-{}",
             uuid::Uuid::new_v4()
         ));
         let _ = std::fs::create_dir_all(&dir);

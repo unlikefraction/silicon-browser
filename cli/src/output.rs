@@ -54,11 +54,11 @@ fn print_with_boundaries(content: &str, origin: Option<&str>, opts: &OutputOptio
         let origin_str = origin.unwrap_or("unknown");
         let nonce = get_boundary_nonce();
         println!(
-            "--- AGENT_BROWSER_PAGE_CONTENT nonce={} origin={} ---",
+            "--- SILICON_BROWSER_PAGE_CONTENT nonce={} origin={} ---",
             nonce, origin_str
         );
         println!("{}", content);
-        println!("--- END_AGENT_BROWSER_PAGE_CONTENT nonce={} ---", nonce);
+        println!("--- END_SILICON_BROWSER_PAGE_CONTENT nonce={} ---", nonce);
     } else {
         println!("{}", content);
     }
@@ -840,8 +840,8 @@ pub fn print_response_with_opts(resp: &Response, action: Option<&str>, opts: &Ou
                 .unwrap_or("");
             println!("Confirmation required:");
             println!("  {}: {}", category, description);
-            println!("  Run: agent-browser confirm {}", cid);
-            println!("  Or:  agent-browser deny {}", cid);
+            println!("  Run: silicon-browser confirm {}", cid);
+            println!("  Or:  silicon-browser deny {}", cid);
             return;
         }
         if data
@@ -872,9 +872,9 @@ pub fn print_command_help(command: &str) -> bool {
         // === Navigation ===
         "open" | "goto" | "navigate" => {
             r##"
-agent-browser open - Navigate to a URL
+silicon-browser open - Navigate to a URL
 
-Usage: agent-browser open <url>
+Usage: silicon-browser open <url>
 
 Navigates the browser to the specified URL. If no protocol is provided,
 https:// is automatically prepended.
@@ -888,18 +888,18 @@ Global Options:
   --headed             Show browser window
 
 Examples:
-  agent-browser open example.com
-  agent-browser open https://github.com
-  agent-browser open localhost:3000
-  agent-browser open api.example.com --headers '{"Authorization": "Bearer token"}'
+  silicon-browser open example.com
+  silicon-browser open https://github.com
+  silicon-browser open localhost:3000
+  silicon-browser open api.example.com --headers '{"Authorization": "Bearer token"}'
     # ^ Headers only sent to api.example.com, not other domains
 "##
         }
         "back" => {
             r##"
-agent-browser back - Navigate back in history
+silicon-browser back - Navigate back in history
 
-Usage: agent-browser back
+Usage: silicon-browser back
 
 Goes back one page in the browser history, equivalent to clicking
 the browser's back button.
@@ -909,14 +909,14 @@ Global Options:
   --session <name>     Use specific session
 
 Examples:
-  agent-browser back
+  silicon-browser back
 "##
         }
         "forward" => {
             r##"
-agent-browser forward - Navigate forward in history
+silicon-browser forward - Navigate forward in history
 
-Usage: agent-browser forward
+Usage: silicon-browser forward
 
 Goes forward one page in the browser history, equivalent to clicking
 the browser's forward button.
@@ -926,14 +926,14 @@ Global Options:
   --session <name>     Use specific session
 
 Examples:
-  agent-browser forward
+  silicon-browser forward
 "##
         }
         "reload" => {
             r##"
-agent-browser reload - Reload the current page
+silicon-browser reload - Reload the current page
 
-Usage: agent-browser reload
+Usage: silicon-browser reload
 
 Reloads the current page, equivalent to pressing F5 or clicking
 the browser's reload button.
@@ -943,16 +943,16 @@ Global Options:
   --session <name>     Use specific session
 
 Examples:
-  agent-browser reload
+  silicon-browser reload
 "##
         }
 
         // === Core Actions ===
         "click" => {
             r##"
-agent-browser click - Click an element
+silicon-browser click - Click an element
 
-Usage: agent-browser click <selector> [--new-tab]
+Usage: silicon-browser click <selector> [--new-tab]
 
 Clicks on the specified element. The selector can be a CSS selector,
 XPath, or an element reference from snapshot (e.g., @e1).
@@ -966,18 +966,18 @@ Global Options:
   --session <name>     Use specific session
 
 Examples:
-  agent-browser click "#submit-button"
-  agent-browser click @e1
-  agent-browser click "button.primary"
-  agent-browser click "//button[@type='submit']"
-  agent-browser click @e3 --new-tab
+  silicon-browser click "#submit-button"
+  silicon-browser click @e1
+  silicon-browser click "button.primary"
+  silicon-browser click "//button[@type='submit']"
+  silicon-browser click @e3 --new-tab
 "##
         }
         "dblclick" => {
             r##"
-agent-browser dblclick - Double-click an element
+silicon-browser dblclick - Double-click an element
 
-Usage: agent-browser dblclick <selector>
+Usage: silicon-browser dblclick <selector>
 
 Double-clicks on the specified element. Useful for text selection
 or triggering double-click handlers.
@@ -987,15 +987,15 @@ Global Options:
   --session <name>     Use specific session
 
 Examples:
-  agent-browser dblclick "#editable-text"
-  agent-browser dblclick @e5
+  silicon-browser dblclick "#editable-text"
+  silicon-browser dblclick @e5
 "##
         }
         "fill" => {
             r##"
-agent-browser fill - Clear and fill an input field
+silicon-browser fill - Clear and fill an input field
 
-Usage: agent-browser fill <selector> <text>
+Usage: silicon-browser fill <selector> <text>
 
 Clears the input field and fills it with the specified text.
 This replaces any existing content in the field.
@@ -1005,16 +1005,16 @@ Global Options:
   --session <name>     Use specific session
 
 Examples:
-  agent-browser fill "#email" "user@example.com"
-  agent-browser fill @e3 "Hello World"
-  agent-browser fill "input[name='search']" "query"
+  silicon-browser fill "#email" "user@example.com"
+  silicon-browser fill @e3 "Hello World"
+  silicon-browser fill "input[name='search']" "query"
 "##
         }
         "type" => {
             r##"
-agent-browser type - Type text into an element
+silicon-browser type - Type text into an element
 
-Usage: agent-browser type <selector> <text>
+Usage: silicon-browser type <selector> <text>
 
 Types text into the specified element character by character.
 Unlike fill, this does not clear existing content first.
@@ -1024,20 +1024,20 @@ Global Options:
   --session <name>     Use specific session
 
 Examples:
-  agent-browser type "#search" "hello"
-  agent-browser type @e2 "additional text"
+  silicon-browser type "#search" "hello"
+  silicon-browser type @e2 "additional text"
 
 See Also:
   For typing into contenteditable editors (Lexical, ProseMirror, etc.)
   without a selector, use 'keyboard type' instead:
-    agent-browser keyboard type "# My Heading"
+    silicon-browser keyboard type "# My Heading"
 "##
         }
         "hover" => {
             r##"
-agent-browser hover - Hover over an element
+silicon-browser hover - Hover over an element
 
-Usage: agent-browser hover <selector>
+Usage: silicon-browser hover <selector>
 
 Moves the mouse to hover over the specified element. Useful for
 triggering hover states or dropdown menus.
@@ -1047,15 +1047,15 @@ Global Options:
   --session <name>     Use specific session
 
 Examples:
-  agent-browser hover "#dropdown-trigger"
-  agent-browser hover @e4
+  silicon-browser hover "#dropdown-trigger"
+  silicon-browser hover @e4
 "##
         }
         "focus" => {
             r##"
-agent-browser focus - Focus an element
+silicon-browser focus - Focus an element
 
-Usage: agent-browser focus <selector>
+Usage: silicon-browser focus <selector>
 
 Sets keyboard focus to the specified element.
 
@@ -1064,15 +1064,15 @@ Global Options:
   --session <name>     Use specific session
 
 Examples:
-  agent-browser focus "#input-field"
-  agent-browser focus @e2
+  silicon-browser focus "#input-field"
+  silicon-browser focus @e2
 "##
         }
         "check" => {
             r##"
-agent-browser check - Check a checkbox
+silicon-browser check - Check a checkbox
 
-Usage: agent-browser check <selector>
+Usage: silicon-browser check <selector>
 
 Checks a checkbox element. If already checked, no action is taken.
 
@@ -1081,15 +1081,15 @@ Global Options:
   --session <name>     Use specific session
 
 Examples:
-  agent-browser check "#terms-checkbox"
-  agent-browser check @e7
+  silicon-browser check "#terms-checkbox"
+  silicon-browser check @e7
 "##
         }
         "uncheck" => {
             r##"
-agent-browser uncheck - Uncheck a checkbox
+silicon-browser uncheck - Uncheck a checkbox
 
-Usage: agent-browser uncheck <selector>
+Usage: silicon-browser uncheck <selector>
 
 Unchecks a checkbox element. If already unchecked, no action is taken.
 
@@ -1098,15 +1098,15 @@ Global Options:
   --session <name>     Use specific session
 
 Examples:
-  agent-browser uncheck "#newsletter-opt-in"
-  agent-browser uncheck @e8
+  silicon-browser uncheck "#newsletter-opt-in"
+  silicon-browser uncheck @e8
 "##
         }
         "select" => {
             r##"
-agent-browser select - Select a dropdown option
+silicon-browser select - Select a dropdown option
 
-Usage: agent-browser select <selector> <value...>
+Usage: silicon-browser select <selector> <value...>
 
 Selects one or more options in a <select> dropdown by value.
 
@@ -1115,16 +1115,16 @@ Global Options:
   --session <name>     Use specific session
 
 Examples:
-  agent-browser select "#country" "US"
-  agent-browser select @e5 "option2"
-  agent-browser select "#menu" "opt1" "opt2" "opt3"
+  silicon-browser select "#country" "US"
+  silicon-browser select @e5 "option2"
+  silicon-browser select "#menu" "opt1" "opt2" "opt3"
 "##
         }
         "drag" => {
             r##"
-agent-browser drag - Drag and drop
+silicon-browser drag - Drag and drop
 
-Usage: agent-browser drag <source> <target>
+Usage: silicon-browser drag <source> <target>
 
 Drags an element from source to target location.
 
@@ -1133,15 +1133,15 @@ Global Options:
   --session <name>     Use specific session
 
 Examples:
-  agent-browser drag "#draggable" "#drop-zone"
-  agent-browser drag @e1 @e2
+  silicon-browser drag "#draggable" "#drop-zone"
+  silicon-browser drag @e1 @e2
 "##
         }
         "upload" => {
             r##"
-agent-browser upload - Upload files
+silicon-browser upload - Upload files
 
-Usage: agent-browser upload <selector> <files...>
+Usage: silicon-browser upload <selector> <files...>
 
 Uploads one or more files to a file input element.
 
@@ -1150,15 +1150,15 @@ Global Options:
   --session <name>     Use specific session
 
 Examples:
-  agent-browser upload "#file-input" ./document.pdf
-  agent-browser upload @e3 ./image1.png ./image2.png
+  silicon-browser upload "#file-input" ./document.pdf
+  silicon-browser upload @e3 ./image1.png ./image2.png
 "##
         }
         "download" => {
             r##"
-agent-browser download - Download a file by clicking an element
+silicon-browser download - Download a file by clicking an element
 
-Usage: agent-browser download <selector> <path>
+Usage: silicon-browser download <selector> <path>
 
 Clicks an element that triggers a download and saves the file to the specified path.
 
@@ -1171,18 +1171,18 @@ Global Options:
   --session <name>     Use specific session
 
 Examples:
-  agent-browser download "#download-btn" ./file.pdf
-  agent-browser download @e5 ./report.xlsx
-  agent-browser download "a[href$='.zip']" ./archive.zip
+  silicon-browser download "#download-btn" ./file.pdf
+  silicon-browser download @e5 ./report.xlsx
+  silicon-browser download "a[href$='.zip']" ./archive.zip
 "##
         }
 
         // === Keyboard ===
         "press" | "key" => {
             r##"
-agent-browser press - Press a key or key combination
+silicon-browser press - Press a key or key combination
 
-Usage: agent-browser press <key>
+Usage: silicon-browser press <key>
 
 Presses a key or key combination. Supports special keys and modifiers.
 
@@ -1202,18 +1202,18 @@ Global Options:
   --session <name>     Use specific session
 
 Examples:
-  agent-browser press Enter
-  agent-browser press Tab
-  agent-browser press Control+a
-  agent-browser press Control+Shift+s
-  agent-browser press Escape
+  silicon-browser press Enter
+  silicon-browser press Tab
+  silicon-browser press Control+a
+  silicon-browser press Control+Shift+s
+  silicon-browser press Escape
 "##
         }
         "keydown" => {
             r##"
-agent-browser keydown - Press a key down (without release)
+silicon-browser keydown - Press a key down (without release)
 
-Usage: agent-browser keydown <key>
+Usage: silicon-browser keydown <key>
 
 Presses a key down without releasing it. Use keyup to release.
 Useful for holding modifier keys.
@@ -1223,15 +1223,15 @@ Global Options:
   --session <name>     Use specific session
 
 Examples:
-  agent-browser keydown Shift
-  agent-browser keydown Control
+  silicon-browser keydown Shift
+  silicon-browser keydown Control
 "##
         }
         "keyup" => {
             r##"
-agent-browser keyup - Release a key
+silicon-browser keyup - Release a key
 
-Usage: agent-browser keyup <key>
+Usage: silicon-browser keyup <key>
 
 Releases a key that was pressed with keydown.
 
@@ -1240,15 +1240,15 @@ Global Options:
   --session <name>     Use specific session
 
 Examples:
-  agent-browser keyup Shift
-  agent-browser keyup Control
+  silicon-browser keyup Shift
+  silicon-browser keyup Control
 "##
         }
         "keyboard" => {
             r##"
-agent-browser keyboard - Raw keyboard input (no selector needed)
+silicon-browser keyboard - Raw keyboard input (no selector needed)
 
-Usage: agent-browser keyboard <subcommand> <text>
+Usage: silicon-browser keyboard <subcommand> <text>
 
 Sends keyboard input to whatever element currently has focus.
 Unlike 'type' which requires a selector, 'keyboard' operates on
@@ -1268,25 +1268,25 @@ Global Options:
   --session <name>     Use specific session
 
 Examples:
-  agent-browser keyboard type "Hello, World!"
-  agent-browser keyboard type "# My Heading"
-  agent-browser keyboard inserttext "pasted content"
+  silicon-browser keyboard type "Hello, World!"
+  silicon-browser keyboard type "# My Heading"
+  silicon-browser keyboard inserttext "pasted content"
 
 Use Cases:
   # Type into a Lexical/ProseMirror contenteditable editor:
-  agent-browser click "[contenteditable]"
-  agent-browser keyboard type "# My Heading"
-  agent-browser press Enter
-  agent-browser keyboard type "Some paragraph text"
+  silicon-browser click "[contenteditable]"
+  silicon-browser keyboard type "# My Heading"
+  silicon-browser press Enter
+  silicon-browser keyboard type "Some paragraph text"
 "##
         }
 
         // === Scroll ===
         "scroll" => {
             r##"
-agent-browser scroll - Scroll the page
+silicon-browser scroll - Scroll the page
 
-Usage: agent-browser scroll [direction] [amount] [options]
+Usage: silicon-browser scroll [direction] [amount] [options]
 
 Scrolls the page or a specific element in the specified direction.
 
@@ -1302,18 +1302,18 @@ Global Options:
   --session <name>     Use specific session
 
 Examples:
-  agent-browser scroll
-  agent-browser scroll down 500
-  agent-browser scroll up 200
-  agent-browser scroll left 100
-  agent-browser scroll down 500 --selector "div.scroll-container"
+  silicon-browser scroll
+  silicon-browser scroll down 500
+  silicon-browser scroll up 200
+  silicon-browser scroll left 100
+  silicon-browser scroll down 500 --selector "div.scroll-container"
 "##
         }
         "scrollintoview" | "scrollinto" => {
             r##"
-agent-browser scrollintoview - Scroll element into view
+silicon-browser scrollintoview - Scroll element into view
 
-Usage: agent-browser scrollintoview <selector>
+Usage: silicon-browser scrollintoview <selector>
 
 Scrolls the page until the specified element is visible in the viewport.
 
@@ -1324,17 +1324,17 @@ Global Options:
   --session <name>     Use specific session
 
 Examples:
-  agent-browser scrollintoview "#footer"
-  agent-browser scrollintoview @e15
+  silicon-browser scrollintoview "#footer"
+  silicon-browser scrollintoview @e15
 "##
         }
 
         // === Wait ===
         "wait" => {
             r##"
-agent-browser wait - Wait for condition
+silicon-browser wait - Wait for condition
 
-Usage: agent-browser wait <selector|ms|option>
+Usage: silicon-browser wait <selector|ms|option>
 
 Waits for an element to appear, a timeout, or other conditions.
 
@@ -1361,24 +1361,24 @@ Global Options:
   --session <name>     Use specific session
 
 Examples:
-  agent-browser wait "#loading-spinner"
-  agent-browser wait 2000
-  agent-browser wait --url "**/dashboard"
-  agent-browser wait --load networkidle
-  agent-browser wait --fn "window.appReady === true"
-  agent-browser wait --text "Welcome back"
-  agent-browser wait --download ./file.pdf
-  agent-browser wait --download ./report.xlsx --timeout 30000
-  agent-browser wait --fn "!document.body.innerText.includes('Loading...')"
+  silicon-browser wait "#loading-spinner"
+  silicon-browser wait 2000
+  silicon-browser wait --url "**/dashboard"
+  silicon-browser wait --load networkidle
+  silicon-browser wait --fn "window.appReady === true"
+  silicon-browser wait --text "Welcome back"
+  silicon-browser wait --download ./file.pdf
+  silicon-browser wait --download ./report.xlsx --timeout 30000
+  silicon-browser wait --fn "!document.body.innerText.includes('Loading...')"
 "##
         }
 
         // === Screenshot/PDF ===
         "screenshot" => {
             r##"
-agent-browser screenshot - Take a screenshot
+silicon-browser screenshot - Take a screenshot
 
-Usage: agent-browser screenshot [selector] [path]
+Usage: silicon-browser screenshot [selector] [path]
 
 Captures a screenshot of the current page. If no path is provided,
 saves to a temporary directory with a generated filename.
@@ -1391,32 +1391,32 @@ Options:
                        With --json, annotations are included in the response.
                        Supported on Chromium and Lightpanda.
   --screenshot-dir <path>  Default output directory for screenshots
-                       (or AGENT_BROWSER_SCREENSHOT_DIR env)
+                       (or SILICON_BROWSER_SCREENSHOT_DIR env)
   --screenshot-quality <0-100>  JPEG quality (0-100, only applies to jpeg format)
-                       (or AGENT_BROWSER_SCREENSHOT_QUALITY env)
+                       (or SILICON_BROWSER_SCREENSHOT_QUALITY env)
   --screenshot-format <fmt>  Image format: png (default) or jpeg
-                       (or AGENT_BROWSER_SCREENSHOT_FORMAT env)
+                       (or SILICON_BROWSER_SCREENSHOT_FORMAT env)
 
 Global Options:
   --json               Output as JSON
   --session <name>     Use specific session
 
 Examples:
-  agent-browser screenshot
-  agent-browser screenshot ./screenshot.png
-  agent-browser screenshot --full ./full-page.png
-  agent-browser screenshot --annotate              # Labeled screenshot + legend
-  agent-browser screenshot --annotate ./page.png   # Save annotated screenshot
-  agent-browser screenshot --annotate --json       # JSON output with annotations
-  agent-browser screenshot --screenshot-dir ./shots # Save to custom directory
-  agent-browser screenshot --screenshot-format jpeg --screenshot-quality 80
+  silicon-browser screenshot
+  silicon-browser screenshot ./screenshot.png
+  silicon-browser screenshot --full ./full-page.png
+  silicon-browser screenshot --annotate              # Labeled screenshot + legend
+  silicon-browser screenshot --annotate ./page.png   # Save annotated screenshot
+  silicon-browser screenshot --annotate --json       # JSON output with annotations
+  silicon-browser screenshot --screenshot-dir ./shots # Save to custom directory
+  silicon-browser screenshot --screenshot-format jpeg --screenshot-quality 80
 "##
         }
         "pdf" => {
             r##"
-agent-browser pdf - Save page as PDF
+silicon-browser pdf - Save page as PDF
 
-Usage: agent-browser pdf <path>
+Usage: silicon-browser pdf <path>
 
 Saves the current page as a PDF file.
 
@@ -1425,17 +1425,17 @@ Global Options:
   --session <name>     Use specific session
 
 Examples:
-  agent-browser pdf ./page.pdf
-  agent-browser pdf ~/Documents/report.pdf
+  silicon-browser pdf ./page.pdf
+  silicon-browser pdf ~/Documents/report.pdf
 "##
         }
 
         // === Snapshot ===
         "snapshot" => {
             r##"
-agent-browser snapshot - Get accessibility tree snapshot
+silicon-browser snapshot - Get accessibility tree snapshot
 
-Usage: agent-browser snapshot [options]
+Usage: silicon-browser snapshot [options]
 
 Returns an accessibility tree representation of the page with element
 references (like @e1, @e2) that can be used in subsequent commands.
@@ -1453,20 +1453,20 @@ Global Options:
   --session <name>     Use specific session
 
 Examples:
-  agent-browser snapshot
-  agent-browser snapshot -i
-  agent-browser snapshot -i -C         # Interactive + cursor-interactive elements
-  agent-browser snapshot --compact --depth 5
-  agent-browser snapshot -s "#main-content"
+  silicon-browser snapshot
+  silicon-browser snapshot -i
+  silicon-browser snapshot -i -C         # Interactive + cursor-interactive elements
+  silicon-browser snapshot --compact --depth 5
+  silicon-browser snapshot -s "#main-content"
 "##
         }
 
         // === Eval ===
         "eval" => {
             r##"
-agent-browser eval - Execute JavaScript
+silicon-browser eval - Execute JavaScript
 
-Usage: agent-browser eval [options] <script>
+Usage: silicon-browser eval [options] <script>
 
 Executes JavaScript code in the browser context and returns the result.
 
@@ -1479,13 +1479,13 @@ Global Options:
   --session <name>     Use specific session
 
 Examples:
-  agent-browser eval "document.title"
-  agent-browser eval "window.location.href"
-  agent-browser eval "document.querySelectorAll('a').length"
-  agent-browser eval -b "ZG9jdW1lbnQudGl0bGU="
+  silicon-browser eval "document.title"
+  silicon-browser eval "window.location.href"
+  silicon-browser eval "document.querySelectorAll('a').length"
+  silicon-browser eval -b "ZG9jdW1lbnQudGl0bGU="
 
   # Read from stdin with heredoc
-  cat <<'EOF' | agent-browser eval --stdin
+  cat <<'EOF' | silicon-browser eval --stdin
   const links = document.querySelectorAll('a');
   links.length;
   EOF
@@ -1495,9 +1495,9 @@ Examples:
         // === Close ===
         "close" | "quit" | "exit" => {
             r##"
-agent-browser close - Close the browser
+silicon-browser close - Close the browser
 
-Usage: agent-browser close
+Usage: silicon-browser close
 
 Closes the browser instance for the current session.
 
@@ -1508,36 +1508,36 @@ Global Options:
   --session <name>     Use specific session
 
 Examples:
-  agent-browser close
-  agent-browser close --session mysession
+  silicon-browser close
+  silicon-browser close --session mysession
 "##
         }
 
         // === Inspect ===
         "inspect" => {
             r##"
-agent-browser inspect - Open Chrome DevTools for the active page
+silicon-browser inspect - Open Chrome DevTools for the active page
 
 Starts a local WebSocket proxy and opens Chrome's DevTools frontend in your
 default browser. The proxy routes DevTools traffic through the daemon's
-existing CDP connection, so both DevTools and agent-browser commands work
+existing CDP connection, so both DevTools and silicon-browser commands work
 simultaneously.
 
-Usage: agent-browser inspect
+Usage: silicon-browser inspect
 
 Examples:
-  agent-browser open example.com
-  agent-browser inspect          # opens DevTools in your browser
-  agent-browser click "Submit"   # commands still work while DevTools is open
+  silicon-browser open example.com
+  silicon-browser inspect          # opens DevTools in your browser
+  silicon-browser click "Submit"   # commands still work while DevTools is open
 "##
         }
 
         // === Get ===
         "get" => {
             r##"
-agent-browser get - Retrieve information from elements or page
+silicon-browser get - Retrieve information from elements or page
 
-Usage: agent-browser get <subcommand> [args]
+Usage: silicon-browser get <subcommand> [args]
 
 Retrieves various types of information from elements or the page.
 
@@ -1558,25 +1558,25 @@ Global Options:
   --session <name>     Use specific session
 
 Examples:
-  agent-browser get text @e1
-  agent-browser get html "#content"
-  agent-browser get value "#email-input"
-  agent-browser get attr "#link" href
-  agent-browser get title
-  agent-browser get url
-  agent-browser get count "li.item"
-  agent-browser get box "#header"
-  agent-browser get styles "button"
-  agent-browser get styles @e1
+  silicon-browser get text @e1
+  silicon-browser get html "#content"
+  silicon-browser get value "#email-input"
+  silicon-browser get attr "#link" href
+  silicon-browser get title
+  silicon-browser get url
+  silicon-browser get count "li.item"
+  silicon-browser get box "#header"
+  silicon-browser get styles "button"
+  silicon-browser get styles @e1
 "##
         }
 
         // === Is ===
         "is" => {
             r##"
-agent-browser is - Check element state
+silicon-browser is - Check element state
 
-Usage: agent-browser is <subcommand> <selector>
+Usage: silicon-browser is <subcommand> <selector>
 
 Checks the state of an element and returns true/false.
 
@@ -1590,18 +1590,18 @@ Global Options:
   --session <name>     Use specific session
 
 Examples:
-  agent-browser is visible "#modal"
-  agent-browser is enabled "#submit-btn"
-  agent-browser is checked "#agree-checkbox"
+  silicon-browser is visible "#modal"
+  silicon-browser is enabled "#submit-btn"
+  silicon-browser is checked "#agree-checkbox"
 "##
         }
 
         // === Find ===
         "find" => {
             r##"
-agent-browser find - Find and interact with elements by locator
+silicon-browser find - Find and interact with elements by locator
 
-Usage: agent-browser find <locator> <value> [action] [text]
+Usage: silicon-browser find <locator> <value> [action] [text]
 
 Finds elements using semantic locators and optionally performs an action.
 
@@ -1629,22 +1629,22 @@ Global Options:
   --session <name>     Use specific session
 
 Examples:
-  agent-browser find role button click --name Submit
-  agent-browser find text "Sign In" click
-  agent-browser find label "Email" fill "user@example.com"
-  agent-browser find placeholder "Search..." type "query"
-  agent-browser find testid "login-form" click
-  agent-browser find first "li.item" click
-  agent-browser find nth 2 ".card" hover
+  silicon-browser find role button click --name Submit
+  silicon-browser find text "Sign In" click
+  silicon-browser find label "Email" fill "user@example.com"
+  silicon-browser find placeholder "Search..." type "query"
+  silicon-browser find testid "login-form" click
+  silicon-browser find first "li.item" click
+  silicon-browser find nth 2 ".card" hover
 "##
         }
 
         // === Mouse ===
         "mouse" => {
             r##"
-agent-browser mouse - Low-level mouse operations
+silicon-browser mouse - Low-level mouse operations
 
-Usage: agent-browser mouse <subcommand> [args]
+Usage: silicon-browser mouse <subcommand> [args]
 
 Performs low-level mouse operations for precise control.
 
@@ -1659,21 +1659,21 @@ Global Options:
   --session <name>     Use specific session
 
 Examples:
-  agent-browser mouse move 100 200
-  agent-browser mouse down
-  agent-browser mouse up
-  agent-browser mouse down right
-  agent-browser mouse wheel 100
-  agent-browser mouse wheel -50 0
+  silicon-browser mouse move 100 200
+  silicon-browser mouse down
+  silicon-browser mouse up
+  silicon-browser mouse down right
+  silicon-browser mouse wheel 100
+  silicon-browser mouse wheel -50 0
 "##
         }
 
         // === Set ===
         "set" => {
             r##"
-agent-browser set - Configure browser settings
+silicon-browser set - Configure browser settings
 
-Usage: agent-browser set <setting> [args]
+Usage: silicon-browser set <setting> [args]
 
 Configures various browser settings and emulation options.
 
@@ -1692,24 +1692,24 @@ Global Options:
   --session <name>     Use specific session
 
 Examples:
-  agent-browser set viewport 1920 1080
-  agent-browser set viewport 1920 1080 2    # 2x retina
-  agent-browser set device "iPhone 12"
-  agent-browser set geo 37.7749 -122.4194
-  agent-browser set offline on
-  agent-browser set headers '{"X-Custom": "value"}'
-  agent-browser set credentials admin secret123
-  agent-browser set media dark
-  agent-browser set media light reduced-motion
+  silicon-browser set viewport 1920 1080
+  silicon-browser set viewport 1920 1080 2    # 2x retina
+  silicon-browser set device "iPhone 12"
+  silicon-browser set geo 37.7749 -122.4194
+  silicon-browser set offline on
+  silicon-browser set headers '{"X-Custom": "value"}'
+  silicon-browser set credentials admin secret123
+  silicon-browser set media dark
+  silicon-browser set media light reduced-motion
 "##
         }
 
         // === Network ===
         "network" => {
             r##"
-agent-browser network - Network interception and monitoring
+silicon-browser network - Network interception and monitoring
 
-Usage: agent-browser network <subcommand> [args]
+Usage: silicon-browser network <subcommand> [args]
 
 Intercept, mock, or monitor network requests.
 
@@ -1727,21 +1727,21 @@ Global Options:
   --session <name>     Use specific session
 
 Examples:
-  agent-browser network route "**/api/*" --abort
-  agent-browser network route "**/data.json" --body '{"mock": true}'
-  agent-browser network unroute
-  agent-browser network requests
-  agent-browser network requests --filter "api"
-  agent-browser network requests --clear
+  silicon-browser network route "**/api/*" --abort
+  silicon-browser network route "**/data.json" --body '{"mock": true}'
+  silicon-browser network unroute
+  silicon-browser network requests
+  silicon-browser network requests --filter "api"
+  silicon-browser network requests --clear
 "##
         }
 
         // === Storage ===
         "storage" => {
             r##"
-agent-browser storage - Manage web storage
+silicon-browser storage - Manage web storage
 
-Usage: agent-browser storage <type> [operation] [key] [value]
+Usage: silicon-browser storage <type> [operation] [key] [value]
 
 Manage localStorage and sessionStorage.
 
@@ -1759,20 +1759,20 @@ Global Options:
   --session <name>     Use specific session
 
 Examples:
-  agent-browser storage local
-  agent-browser storage local get authToken
-  agent-browser storage local set theme "dark"
-  agent-browser storage local clear
-  agent-browser storage session get userId
+  silicon-browser storage local
+  silicon-browser storage local get authToken
+  silicon-browser storage local set theme "dark"
+  silicon-browser storage local clear
+  silicon-browser storage session get userId
 "##
         }
 
         // === Cookies ===
         "cookies" => {
             r##"
-agent-browser cookies - Manage browser cookies
+silicon-browser cookies - Manage browser cookies
 
-Usage: agent-browser cookies [operation] [args]
+Usage: silicon-browser cookies [operation] [args]
 
 Manage browser cookies for the current context.
 
@@ -1799,34 +1799,34 @@ Global Options:
 
 Examples:
   # Simple cookie for current page
-  agent-browser cookies set session_id "abc123"
+  silicon-browser cookies set session_id "abc123"
 
   # Set cookie for a URL before loading it (useful for authentication)
-  agent-browser cookies set session_id "abc123" --url https://app.example.com
+  silicon-browser cookies set session_id "abc123" --url https://app.example.com
 
   # Set secure, httpOnly cookie with domain and path
-  agent-browser cookies set auth_token "xyz789" --domain example.com --path /api --httpOnly --secure
+  silicon-browser cookies set auth_token "xyz789" --domain example.com --path /api --httpOnly --secure
 
   # Set cookie with SameSite policy
-  agent-browser cookies set tracking_consent "yes" --sameSite Strict
+  silicon-browser cookies set tracking_consent "yes" --sameSite Strict
 
   # Set cookie with expiration (Unix timestamp)
-  agent-browser cookies set temp_token "temp123" --expires 1735689600
+  silicon-browser cookies set temp_token "temp123" --expires 1735689600
 
   # Get all cookies
-  agent-browser cookies
+  silicon-browser cookies
 
   # Clear all cookies
-  agent-browser cookies clear
+  silicon-browser cookies clear
 "##
         }
 
         // === Tabs ===
         "tab" => {
             r##"
-agent-browser tab - Manage browser tabs
+silicon-browser tab - Manage browser tabs
 
-Usage: agent-browser tab [operation] [args]
+Usage: silicon-browser tab [operation] [args]
 
 Manage browser tabs in the current window.
 
@@ -1841,22 +1841,22 @@ Global Options:
   --session <name>     Use specific session
 
 Examples:
-  agent-browser tab
-  agent-browser tab list
-  agent-browser tab new
-  agent-browser tab new https://example.com
-  agent-browser tab 2
-  agent-browser tab close
-  agent-browser tab close 1
+  silicon-browser tab
+  silicon-browser tab list
+  silicon-browser tab new
+  silicon-browser tab new https://example.com
+  silicon-browser tab 2
+  silicon-browser tab close
+  silicon-browser tab close 1
 "##
         }
 
         // === Window ===
         "window" => {
             r##"
-agent-browser window - Manage browser windows
+silicon-browser window - Manage browser windows
 
-Usage: agent-browser window <operation>
+Usage: silicon-browser window <operation>
 
 Manage browser windows.
 
@@ -1868,16 +1868,16 @@ Global Options:
   --session <name>     Use specific session
 
 Examples:
-  agent-browser window new
+  silicon-browser window new
 "##
         }
 
         // === Frame ===
         "frame" => {
             r##"
-agent-browser frame - Switch frame context
+silicon-browser frame - Switch frame context
 
-Usage: agent-browser frame <selector|main>
+Usage: silicon-browser frame <selector|main>
 
 Switch to an iframe or back to the main frame.
 
@@ -1890,18 +1890,18 @@ Global Options:
   --session <name>     Use specific session
 
 Examples:
-  agent-browser frame "#embed-iframe"
-  agent-browser frame "iframe[name='content']"
-  agent-browser frame main
+  silicon-browser frame "#embed-iframe"
+  silicon-browser frame "iframe[name='content']"
+  silicon-browser frame main
 "##
         }
 
         // === Auth ===
         "auth" => {
             r##"
-agent-browser auth - Manage authentication profiles
+silicon-browser auth - Manage authentication profiles
 
-Usage: agent-browser auth <subcommand> [args]
+Usage: silicon-browser auth <subcommand> [args]
 
 Subcommands:
   save <name>              Save credentials for a login profile
@@ -1924,23 +1924,23 @@ Global Options:
   --session <name>         Use specific session
 
 Examples:
-  echo "pass" | agent-browser auth save github --url https://github.com/login --username user --password-stdin
-  agent-browser auth save github --url https://github.com/login --username user --password pass
-  agent-browser auth login github
-  agent-browser auth list
-  agent-browser auth show github
-  agent-browser auth delete github
+  echo "pass" | silicon-browser auth save github --url https://github.com/login --username user --password-stdin
+  silicon-browser auth save github --url https://github.com/login --username user --password pass
+  silicon-browser auth login github
+  silicon-browser auth list
+  silicon-browser auth show github
+  silicon-browser auth delete github
 "##
         }
 
         // === Confirm/Deny ===
         "confirm" | "deny" => {
             r##"
-agent-browser confirm/deny - Approve or deny pending actions
+silicon-browser confirm/deny - Approve or deny pending actions
 
 Usage:
-  agent-browser confirm <confirmation-id>
-  agent-browser deny <confirmation-id>
+  silicon-browser confirm <confirmation-id>
+  silicon-browser deny <confirmation-id>
 
 When --confirm-actions is set, certain action categories return a
 confirmation_required response with a confirmation ID. Use confirm/deny
@@ -1949,17 +1949,17 @@ to approve or reject the action.
 Pending confirmations auto-deny after 60 seconds.
 
 Examples:
-  agent-browser confirm c_8f3a1234
-  agent-browser deny c_8f3a1234
+  silicon-browser confirm c_8f3a1234
+  silicon-browser deny c_8f3a1234
 "##
         }
 
         // === Dialog ===
         "dialog" => {
             r##"
-agent-browser dialog - Handle browser dialogs
+silicon-browser dialog - Handle browser dialogs
 
-Usage: agent-browser dialog <response> [text]
+Usage: silicon-browser dialog <response> [text]
 
 Respond to browser dialogs (alert, confirm, prompt).
 
@@ -1972,18 +1972,18 @@ Global Options:
   --session <name>     Use specific session
 
 Examples:
-  agent-browser dialog accept
-  agent-browser dialog accept "my input"
-  agent-browser dialog dismiss
+  silicon-browser dialog accept
+  silicon-browser dialog accept "my input"
+  silicon-browser dialog dismiss
 "##
         }
 
         // === Trace ===
         "trace" => {
             r##"
-agent-browser trace - Record execution trace
+silicon-browser trace - Record execution trace
 
-Usage: agent-browser trace <operation> [path]
+Usage: silicon-browser trace <operation> [path]
 
 Record a Chrome DevTools trace for debugging.
 
@@ -1996,19 +1996,19 @@ Global Options:
   --session <name>     Use specific session
 
 Examples:
-  agent-browser trace start
-  agent-browser trace start ./my-trace
-  agent-browser trace stop
-  agent-browser trace stop ./debug-trace.zip
+  silicon-browser trace start
+  silicon-browser trace start ./my-trace
+  silicon-browser trace stop
+  silicon-browser trace stop ./debug-trace.zip
 "##
         }
 
         // === Profile (CDP Tracing) ===
         "profiler" => {
             r##"
-agent-browser profiler - Record Chrome DevTools performance profile
+silicon-browser profiler - Record Chrome DevTools performance profile
 
-Usage: agent-browser profiler <operation> [options]
+Usage: silicon-browser profiler <operation> [options]
 
 Record a performance profile using Chrome DevTools Protocol (CDP) Tracing.
 The output JSON file can be loaded into Chrome DevTools Performance panel,
@@ -2028,14 +2028,14 @@ Global Options:
 
 Examples:
   # Basic profiling
-  agent-browser profiler start
-  agent-browser navigate https://example.com
-  agent-browser click "#button"
-  agent-browser profiler stop ./trace.json
+  silicon-browser profiler start
+  silicon-browser navigate https://example.com
+  silicon-browser click "#button"
+  silicon-browser profiler stop ./trace.json
 
   # With custom categories
-  agent-browser profiler start --categories "devtools.timeline,v8.execute,blink.user_timing"
-  agent-browser profiler stop ./custom-trace.json
+  silicon-browser profiler start --categories "devtools.timeline,v8.execute,blink.user_timing"
+  silicon-browser profiler stop ./custom-trace.json
 
 The output file can be viewed in:
   - Chrome DevTools: Performance panel > Load profile
@@ -2046,11 +2046,11 @@ The output file can be viewed in:
         // === Record (video) ===
         "record" => {
             r##"
-agent-browser record - Record browser session to video
+silicon-browser record - Record browser session to video
 
-Usage: agent-browser record start <path.webm> [url]
-       agent-browser record stop
-       agent-browser record restart <path.webm> [url]
+Usage: silicon-browser record start <path.webm> [url]
+       silicon-browser record stop
+       silicon-browser record restart <path.webm> [url]
 
 Record the browser to a WebM video file.
 Creates a fresh browser context but preserves cookies and localStorage.
@@ -2067,26 +2067,26 @@ Global Options:
 
 Examples:
   # Record from current page (preserves login state)
-  agent-browser open https://app.example.com/dashboard
-  agent-browser snapshot -i            # Explore and plan
-  agent-browser record start ./demo.webm
-  agent-browser click @e3              # Execute planned actions
-  agent-browser record stop
+  silicon-browser open https://app.example.com/dashboard
+  silicon-browser snapshot -i            # Explore and plan
+  silicon-browser record start ./demo.webm
+  silicon-browser click @e3              # Execute planned actions
+  silicon-browser record stop
 
   # Or specify a different URL
-  agent-browser record start ./demo.webm https://example.com
+  silicon-browser record start ./demo.webm https://example.com
 
   # Restart recording with a new file (stops previous, starts new)
-  agent-browser record restart ./take2.webm
+  silicon-browser record restart ./take2.webm
 "##
         }
 
         // === Console/Errors ===
         "console" => {
             r##"
-agent-browser console - View console logs
+silicon-browser console - View console logs
 
-Usage: agent-browser console [--clear]
+Usage: silicon-browser console [--clear]
 
 View browser console output (log, warn, error, info).
 
@@ -2098,15 +2098,15 @@ Global Options:
   --session <name>     Use specific session
 
 Examples:
-  agent-browser console
-  agent-browser console --clear
+  silicon-browser console
+  silicon-browser console --clear
 "##
         }
         "errors" => {
             r##"
-agent-browser errors - View page errors
+silicon-browser errors - View page errors
 
-Usage: agent-browser errors [--clear]
+Usage: silicon-browser errors [--clear]
 
 View JavaScript errors and uncaught exceptions.
 
@@ -2118,17 +2118,17 @@ Global Options:
   --session <name>     Use specific session
 
 Examples:
-  agent-browser errors
-  agent-browser errors --clear
+  silicon-browser errors
+  silicon-browser errors --clear
 "##
         }
 
         // === Highlight ===
         "highlight" => {
             r##"
-agent-browser highlight - Highlight an element
+silicon-browser highlight - Highlight an element
 
-Usage: agent-browser highlight <selector>
+Usage: silicon-browser highlight <selector>
 
 Visually highlights an element on the page for debugging.
 
@@ -2137,17 +2137,17 @@ Global Options:
   --session <name>     Use specific session
 
 Examples:
-  agent-browser highlight "#target-element"
-  agent-browser highlight @e5
+  silicon-browser highlight "#target-element"
+  silicon-browser highlight @e5
 "##
         }
 
         // === Clipboard ===
         "clipboard" => {
             r##"
-agent-browser clipboard - Read and write clipboard
+silicon-browser clipboard - Read and write clipboard
 
-Usage: agent-browser clipboard <operation> [text]
+Usage: silicon-browser clipboard <operation> [text]
 
 Read from or write to the browser clipboard.
 
@@ -2162,19 +2162,19 @@ Global Options:
   --session <name>     Use specific session
 
 Examples:
-  agent-browser clipboard read
-  agent-browser clipboard write "Hello, World!"
-  agent-browser clipboard copy
-  agent-browser clipboard paste
+  silicon-browser clipboard read
+  silicon-browser clipboard write "Hello, World!"
+  silicon-browser clipboard copy
+  silicon-browser clipboard paste
 "##
         }
 
         // === State ===
         "state" => {
             r##"
-agent-browser state - Manage browser state
+silicon-browser state - Manage browser state
 
-Usage: agent-browser state <operation> [args]
+Usage: silicon-browser state <operation> [args]
 
 Save, restore, list, and manage browser state (cookies, localStorage, sessionStorage).
 
@@ -2189,11 +2189,11 @@ Operations:
 
 Automatic State Persistence:
   Use --session-name to auto-save/restore state across restarts:
-  agent-browser --session-name myapp open https://example.com
-  Or set AGENT_BROWSER_SESSION_NAME environment variable.
+  silicon-browser --session-name myapp open https://example.com
+  Or set SILICON_BROWSER_SESSION_NAME environment variable.
 
 State Encryption:
-  Set AGENT_BROWSER_ENCRYPTION_KEY (64-char hex) for AES-256-GCM encryption.
+  Set SILICON_BROWSER_ENCRYPTION_KEY (64-char hex) for AES-256-GCM encryption.
   Generate a key: openssl rand -hex 32
 
 Global Options:
@@ -2201,22 +2201,22 @@ Global Options:
   --session <name>     Use specific session
 
 Examples:
-  agent-browser state save ./auth-state.json
-  agent-browser state load ./auth-state.json
-  agent-browser state list
-  agent-browser state show myapp-default.json
-  agent-browser state rename old-name new-name
-  agent-browser state clear --all
-  agent-browser state clean --older-than 7
+  silicon-browser state save ./auth-state.json
+  silicon-browser state load ./auth-state.json
+  silicon-browser state list
+  silicon-browser state show myapp-default.json
+  silicon-browser state rename old-name new-name
+  silicon-browser state clear --all
+  silicon-browser state clean --older-than 7
 "##
         }
 
         // === Session ===
         "session" => {
             r##"
-agent-browser session - Manage sessions
+silicon-browser session - Manage sessions
 
-Usage: agent-browser session [operation]
+Usage: silicon-browser session [operation]
 
 Manage isolated browser sessions. Each session has its own browser
 instance with separate cookies, storage, and state.
@@ -2226,25 +2226,25 @@ Operations:
   list                 List all active sessions
 
 Environment:
-  AGENT_BROWSER_SESSION    Default session name
+  SILICON_BROWSER_SESSION    Default session name
 
 Global Options:
   --json               Output as JSON
   --session <name>     Use specific session
 
 Examples:
-  agent-browser session
-  agent-browser session list
-  agent-browser --session test open example.com
+  silicon-browser session
+  silicon-browser session list
+  silicon-browser --session test open example.com
 "##
         }
 
         // === Install ===
         "install" => {
             r##"
-agent-browser install - Install browser binaries
+silicon-browser install - Install browser binaries
 
-Usage: agent-browser install [--with-deps]
+Usage: silicon-browser install [--with-deps]
 
 Downloads and installs browser binaries required for automation.
 
@@ -2252,17 +2252,17 @@ Options:
   -d, --with-deps      Also install system dependencies (Linux only)
 
 Examples:
-  agent-browser install
-  agent-browser install --with-deps
+  silicon-browser install
+  silicon-browser install --with-deps
 "##
         }
 
         // === Connect ===
         "connect" => {
             r##"
-agent-browser connect - Connect to browser via CDP
+silicon-browser connect - Connect to browser via CDP
 
-Usage: agent-browser connect <port|url>
+Usage: silicon-browser connect <port|url>
 
 Connects to a running browser instance via Chrome DevTools Protocol (CDP).
 This allows controlling browsers, Electron apps, or remote browser services.
@@ -2283,26 +2283,26 @@ Global Options:
 Examples:
   # Connect to local Chrome with remote debugging
   # Start Chrome: google-chrome --remote-debugging-port=9222
-  agent-browser connect 9222
+  silicon-browser connect 9222
 
   # Connect using WebSocket URL from /json/version endpoint
-  agent-browser connect "ws://localhost:9222/devtools/browser/abc123"
+  silicon-browser connect "ws://localhost:9222/devtools/browser/abc123"
 
   # Connect to remote browser service
-  agent-browser connect "wss://browser-service.example.com/cdp?token=xyz"
+  silicon-browser connect "wss://browser-service.example.com/cdp?token=xyz"
 
   # After connecting, run commands normally
-  agent-browser snapshot
-  agent-browser click @e1
+  silicon-browser snapshot
+  silicon-browser click @e1
 "##
         }
 
         // === iOS Commands ===
         "tap" => {
             r##"
-agent-browser tap - Tap an element (touch gesture)
+silicon-browser tap - Tap an element (touch gesture)
 
-Usage: agent-browser tap <selector>
+Usage: silicon-browser tap <selector>
 
 Taps an element. This is an alias for 'click' that provides semantic clarity
 for touch-based interfaces like iOS Safari.
@@ -2312,16 +2312,16 @@ Options:
   --session <name>     Use specific session
 
 Examples:
-  agent-browser tap "#submit-button"
-  agent-browser tap @e1
-  agent-browser -p ios tap "button:has-text('Sign In')"
+  silicon-browser tap "#submit-button"
+  silicon-browser tap @e1
+  silicon-browser -p ios tap "button:has-text('Sign In')"
 "##
         }
         "swipe" => {
             r##"
-agent-browser swipe - Swipe gesture (iOS)
+silicon-browser swipe - Swipe gesture (iOS)
 
-Usage: agent-browser swipe <direction> [distance]
+Usage: silicon-browser swipe <direction> [distance]
 
 Performs a swipe gesture on iOS Safari. The direction determines
 which way the content moves (swipe up scrolls down, etc.).
@@ -2335,16 +2335,16 @@ Options:
   --session <name>     Use specific session
 
 Examples:
-  agent-browser -p ios swipe up
-  agent-browser -p ios swipe down 500
-  agent-browser -p ios swipe left
+  silicon-browser -p ios swipe up
+  silicon-browser -p ios swipe down 500
+  silicon-browser -p ios swipe left
 "##
         }
         "device" => {
             r##"
-agent-browser device - Manage iOS simulators
+silicon-browser device - Manage iOS simulators
 
-Usage: agent-browser device <subcommand>
+Usage: silicon-browser device <subcommand>
 
 Subcommands:
   list    List available iOS simulators
@@ -2354,14 +2354,14 @@ Options:
   --session <name>     Use specific session
 
 Examples:
-  agent-browser device list
-  agent-browser -p ios device list
+  silicon-browser device list
+  silicon-browser -p ios device list
 "##
         }
 
         "diff" => {
             r##"
-agent-browser diff - Compare page states
+silicon-browser diff - Compare page states
 
 Subcommands:
 
@@ -2371,7 +2371,7 @@ Subcommands:
 
 Snapshot Diff:
 
-  Usage: agent-browser diff snapshot [options]
+  Usage: silicon-browser diff snapshot [options]
 
   Options:
     -b, --baseline <file>    Compare against a saved snapshot file
@@ -2383,7 +2383,7 @@ Snapshot Diff:
 
 Screenshot Diff:
 
-  Usage: agent-browser diff screenshot --baseline <file> [options]
+  Usage: silicon-browser diff screenshot --baseline <file> [options]
 
   Options:
     -b, --baseline <file>    Baseline image to compare against (required)
@@ -2394,7 +2394,7 @@ Screenshot Diff:
 
 URL Diff:
 
-  Usage: agent-browser diff url <url1> <url2> [options]
+  Usage: silicon-browser diff url <url1> <url2> [options]
 
   Options:
     --screenshot             Also compare screenshots (default: snapshot only)
@@ -2409,12 +2409,12 @@ Global Options:
   --session <name>     Use specific session
 
 Examples:
-  agent-browser diff snapshot
-  agent-browser diff snapshot --baseline before.txt
-  agent-browser diff screenshot --baseline before.png
-  agent-browser diff screenshot --baseline before.png --output diff.png --threshold 0.2
-  agent-browser diff url https://staging.example.com https://prod.example.com
-  agent-browser diff url https://v1.example.com https://v2.example.com --screenshot
+  silicon-browser diff snapshot
+  silicon-browser diff snapshot --baseline before.txt
+  silicon-browser diff screenshot --baseline before.png
+  silicon-browser diff screenshot --baseline before.png --output diff.png --threshold 0.2
+  silicon-browser diff url https://staging.example.com https://prod.example.com
+  silicon-browser diff url https://v1.example.com https://v2.example.com --screenshot
 "##
         }
 
@@ -2427,9 +2427,9 @@ Examples:
 pub fn print_help() {
     println!(
         r#"
-agent-browser - fast browser automation CLI for AI agents
+silicon-browser - fast browser automation CLI for AI agents
 
-Usage: agent-browser <command> [args] [options]
+Usage: silicon-browser <command> [args] [options]
 
 Core Commands:
   open <url>                 Navigate to URL
@@ -2463,24 +2463,24 @@ Navigation:
   forward                    Go forward
   reload                     Reload page
 
-Get Info:  agent-browser get <what> [selector]
+Get Info:  silicon-browser get <what> [selector]
   text, html, value, attr <name>, title, url, count, box, styles, cdp-url
 
-Check State:  agent-browser is <what> <selector>
+Check State:  silicon-browser is <what> <selector>
   visible, enabled, checked
 
-Find Elements:  agent-browser find <locator> <value> <action> [text]
+Find Elements:  silicon-browser find <locator> <value> <action> [text]
   role, text, label, placeholder, alt, title, testid, first, last, nth
 
-Mouse:  agent-browser mouse <action> [args]
+Mouse:  silicon-browser mouse <action> [args]
   move <x> <y>, down [btn], up [btn], wheel <dy> [dx]
 
-Browser Settings:  agent-browser set <setting> [value]
+Browser Settings:  silicon-browser set <setting> [value]
   viewport <w> <h>, device <name>, geo <lat> <lng>
   offline [on|off], headers <json>, credentials <user> <pass>
   media [dark|light] [reduced-motion]
 
-Network:  agent-browser network <action>
+Network:  silicon-browser network <action>
   route <url> [--abort|--body <json>]
   unroute [url]
   requests [--clear] [--filter <pattern>]
@@ -2535,25 +2535,25 @@ Snapshot Options:
 
 Authentication:
   --profile <path>           Persist login sessions across restarts (cookies, IndexedDB, cache)
-                             (or AGENT_BROWSER_PROFILE env)
+                             (or SILICON_BROWSER_PROFILE env)
   --session-name <name>      Auto-save/restore cookies and localStorage by name
-                             (or AGENT_BROWSER_SESSION_NAME env)
+                             (or SILICON_BROWSER_SESSION_NAME env)
   --state <path>             Load saved auth state (cookies + storage) from JSON file
-                             (or AGENT_BROWSER_STATE env)
+                             (or SILICON_BROWSER_STATE env)
   --auto-connect             Connect to a running Chrome to reuse its auth state
-                             Tip: agent-browser --auto-connect state save ./auth.json
+                             Tip: silicon-browser --auto-connect state save ./auth.json
   --headers <json>           HTTP headers scoped to URL's origin (e.g., Authorization bearer token)
 
 Options:
-  --session <name>           Isolated session (or AGENT_BROWSER_SESSION env)
-  --executable-path <path>   Custom browser executable (or AGENT_BROWSER_EXECUTABLE_PATH)
+  --session <name>           Isolated session (or SILICON_BROWSER_SESSION env)
+  --executable-path <path>   Custom browser executable (or SILICON_BROWSER_EXECUTABLE_PATH)
   --extension <path>         Load browser extensions (repeatable)
-  --args <args>              Browser launch args, comma or newline separated (or AGENT_BROWSER_ARGS)
+  --args <args>              Browser launch args, comma or newline separated (or SILICON_BROWSER_ARGS)
                              e.g., --args "--no-sandbox,--disable-blink-features=AutomationControlled"
-  --user-agent <ua>          Custom User-Agent (or AGENT_BROWSER_USER_AGENT)
-  --proxy <server>           Proxy server URL (or AGENT_BROWSER_PROXY)
+  --user-agent <ua>          Custom User-Agent (or SILICON_BROWSER_USER_AGENT)
+  --proxy <server>           Proxy server URL (or SILICON_BROWSER_PROXY)
                              e.g., --proxy "http://user:pass@127.0.0.1:7890"
-  --proxy-bypass <hosts>     Bypass proxy for these hosts (or AGENT_BROWSER_PROXY_BYPASS)
+  --proxy-bypass <hosts>     Bypass proxy for these hosts (or SILICON_BROWSER_PROXY_BYPASS)
                              e.g., --proxy-bypass "localhost,*.internal.com"
   --ignore-https-errors      Ignore HTTPS certificate errors
   --allow-file-access        Allow file:// URLs to access local files (Chromium only)
@@ -2562,33 +2562,33 @@ Options:
   --json                     JSON output
   --full, -f                 Full page screenshot
   --annotate                 Annotated screenshot with numbered labels and legend
-  --screenshot-dir <path>    Default screenshot output directory (or AGENT_BROWSER_SCREENSHOT_DIR)
-  --screenshot-quality <n>   JPEG quality 0-100; ignored for PNG (or AGENT_BROWSER_SCREENSHOT_QUALITY)
-  --screenshot-format <fmt>  Screenshot format: png, jpeg (or AGENT_BROWSER_SCREENSHOT_FORMAT)
-  --headed                   Show browser window (not headless) (or AGENT_BROWSER_HEADED env)
+  --screenshot-dir <path>    Default screenshot output directory (or SILICON_BROWSER_SCREENSHOT_DIR)
+  --screenshot-quality <n>   JPEG quality 0-100; ignored for PNG (or SILICON_BROWSER_SCREENSHOT_QUALITY)
+  --screenshot-format <fmt>  Screenshot format: png, jpeg (or SILICON_BROWSER_SCREENSHOT_FORMAT)
+  --headed                   Show browser window (not headless) (or SILICON_BROWSER_HEADED env)
   --cdp <port>               Connect via CDP (Chrome DevTools Protocol)
-  --color-scheme <scheme>    Color scheme: dark, light, no-preference (or AGENT_BROWSER_COLOR_SCHEME)
-  --download-path <path>     Default download directory (or AGENT_BROWSER_DOWNLOAD_PATH)
-  --content-boundaries       Wrap page output in boundary markers (or AGENT_BROWSER_CONTENT_BOUNDARIES)
-  --max-output <chars>       Truncate page output to N chars (or AGENT_BROWSER_MAX_OUTPUT)
-  --allowed-domains <list>   Restrict navigation domains (or AGENT_BROWSER_ALLOWED_DOMAINS)
-  --action-policy <path>     Action policy JSON file (or AGENT_BROWSER_ACTION_POLICY)
-  --confirm-actions <list>   Categories requiring confirmation (or AGENT_BROWSER_CONFIRM_ACTIONS)
-  --confirm-interactive      Interactive confirmation prompts; auto-denies if stdin is not a TTY (or AGENT_BROWSER_CONFIRM_INTERACTIVE)
-  --engine <name>            Browser engine: chrome (default), lightpanda (or AGENT_BROWSER_ENGINE)
-  --config <path>            Use a custom config file (or AGENT_BROWSER_CONFIG env)
+  --color-scheme <scheme>    Color scheme: dark, light, no-preference (or SILICON_BROWSER_COLOR_SCHEME)
+  --download-path <path>     Default download directory (or SILICON_BROWSER_DOWNLOAD_PATH)
+  --content-boundaries       Wrap page output in boundary markers (or SILICON_BROWSER_CONTENT_BOUNDARIES)
+  --max-output <chars>       Truncate page output to N chars (or SILICON_BROWSER_MAX_OUTPUT)
+  --allowed-domains <list>   Restrict navigation domains (or SILICON_BROWSER_ALLOWED_DOMAINS)
+  --action-policy <path>     Action policy JSON file (or SILICON_BROWSER_ACTION_POLICY)
+  --confirm-actions <list>   Categories requiring confirmation (or SILICON_BROWSER_CONFIRM_ACTIONS)
+  --confirm-interactive      Interactive confirmation prompts; auto-denies if stdin is not a TTY (or SILICON_BROWSER_CONFIRM_INTERACTIVE)
+  --engine <name>            Browser engine: chrome (default), lightpanda (or SILICON_BROWSER_ENGINE)
+  --config <path>            Use a custom config file (or SILICON_BROWSER_CONFIG env)
   --debug                    Debug output
   --version, -V              Show version
 
 Configuration:
-  agent-browser looks for agent-browser.json in these locations (lowest to highest priority):
-    1. ~/.agent-browser/config.json      User-level defaults
-    2. ./agent-browser.json              Project-level overrides
+  silicon-browser looks for silicon-browser.json in these locations (lowest to highest priority):
+    1. ~/.silicon-browser/config.json      User-level defaults
+    2. ./silicon-browser.json              Project-level overrides
     3. Environment variables             Override config file values
     4. CLI flags                         Override everything
 
   Use --config <path> to load a specific config file instead of the defaults.
-  If --config points to a missing or invalid file, agent-browser exits with an error.
+  If --config points to a missing or invalid file, silicon-browser exits with an error.
 
   Boolean flags accept an optional true/false value to override config:
     --headed           (same as --headed true)
@@ -2596,82 +2596,82 @@ Configuration:
 
   Extensions from user and project configs are merged (not replaced).
 
-  Example agent-browser.json:
+  Example silicon-browser.json:
     {{"headed": true, "proxy": "http://localhost:8080", "profile": "./browser-data"}}
 
 Environment:
-  AGENT_BROWSER_CONFIG           Path to config file (or use --config)
-  AGENT_BROWSER_SESSION          Session name (default: "default")
-  AGENT_BROWSER_SESSION_NAME     Auto-save/restore state persistence name
-  AGENT_BROWSER_ENCRYPTION_KEY   64-char hex key for AES-256-GCM state encryption
-  AGENT_BROWSER_STATE_EXPIRE_DAYS Auto-delete states older than N days (default: 30)
-  AGENT_BROWSER_EXECUTABLE_PATH  Custom browser executable path
-  AGENT_BROWSER_EXTENSIONS       Comma-separated browser extension paths
-  AGENT_BROWSER_HEADED           Show browser window (not headless)
-  AGENT_BROWSER_JSON             JSON output
-  AGENT_BROWSER_FULL             Full page screenshot
-  AGENT_BROWSER_ANNOTATE         Annotated screenshot with numbered labels and legend
-  AGENT_BROWSER_DEBUG            Debug output
-  AGENT_BROWSER_IGNORE_HTTPS_ERRORS Ignore HTTPS certificate errors
-  AGENT_BROWSER_PROVIDER         Browser provider (ios, browserbase, kernel, browseruse, browserless)
-  AGENT_BROWSER_AUTO_CONNECT     Auto-discover and connect to running Chrome
-  AGENT_BROWSER_ALLOW_FILE_ACCESS Allow file:// URLs to access local files
-  AGENT_BROWSER_COLOR_SCHEME     Color scheme preference (dark, light, no-preference)
-  AGENT_BROWSER_DOWNLOAD_PATH    Default download directory for browser downloads
-  AGENT_BROWSER_DEFAULT_TIMEOUT  Default action timeout in ms (default: 25000)
-  AGENT_BROWSER_SESSION_NAME     Auto-save/load state persistence name
-  AGENT_BROWSER_STATE_EXPIRE_DAYS Auto-delete saved states older than N days (default: 30)
-  AGENT_BROWSER_ENCRYPTION_KEY   64-char hex key for AES-256-GCM session encryption
-  AGENT_BROWSER_STREAM_PORT      Enable WebSocket streaming on port (e.g., 9223)
-  AGENT_BROWSER_IDLE_TIMEOUT_MS  Auto-shutdown daemon after N ms of inactivity (disabled by default)
-  AGENT_BROWSER_IOS_DEVICE       Default iOS device name
-  AGENT_BROWSER_IOS_UDID         Default iOS device UDID
-  AGENT_BROWSER_CONTENT_BOUNDARIES Wrap page output in boundary markers
-  AGENT_BROWSER_MAX_OUTPUT       Max characters for page output
-  AGENT_BROWSER_ALLOWED_DOMAINS  Comma-separated allowed domain patterns
-  AGENT_BROWSER_ACTION_POLICY    Path to action policy JSON file
-  AGENT_BROWSER_CONFIRM_ACTIONS  Action categories requiring confirmation
-  AGENT_BROWSER_CONFIRM_INTERACTIVE Enable interactive confirmation prompts
-  AGENT_BROWSER_ENGINE           Browser engine: chrome (default), lightpanda
-  AGENT_BROWSER_SCREENSHOT_DIR   Default screenshot output directory
-  AGENT_BROWSER_SCREENSHOT_QUALITY JPEG quality 0-100
-  AGENT_BROWSER_SCREENSHOT_FORMAT Screenshot format: png, jpeg
+  SILICON_BROWSER_CONFIG           Path to config file (or use --config)
+  SILICON_BROWSER_SESSION          Session name (default: "default")
+  SILICON_BROWSER_SESSION_NAME     Auto-save/restore state persistence name
+  SILICON_BROWSER_ENCRYPTION_KEY   64-char hex key for AES-256-GCM state encryption
+  SILICON_BROWSER_STATE_EXPIRE_DAYS Auto-delete states older than N days (default: 30)
+  SILICON_BROWSER_EXECUTABLE_PATH  Custom browser executable path
+  SILICON_BROWSER_EXTENSIONS       Comma-separated browser extension paths
+  SILICON_BROWSER_HEADED           Show browser window (not headless)
+  SILICON_BROWSER_JSON             JSON output
+  SILICON_BROWSER_FULL             Full page screenshot
+  SILICON_BROWSER_ANNOTATE         Annotated screenshot with numbered labels and legend
+  SILICON_BROWSER_DEBUG            Debug output
+  SILICON_BROWSER_IGNORE_HTTPS_ERRORS Ignore HTTPS certificate errors
+  SILICON_BROWSER_PROVIDER         Browser provider (ios, browserbase, kernel, browseruse, browserless)
+  SILICON_BROWSER_AUTO_CONNECT     Auto-discover and connect to running Chrome
+  SILICON_BROWSER_ALLOW_FILE_ACCESS Allow file:// URLs to access local files
+  SILICON_BROWSER_COLOR_SCHEME     Color scheme preference (dark, light, no-preference)
+  SILICON_BROWSER_DOWNLOAD_PATH    Default download directory for browser downloads
+  SILICON_BROWSER_DEFAULT_TIMEOUT  Default action timeout in ms (default: 25000)
+  SILICON_BROWSER_SESSION_NAME     Auto-save/load state persistence name
+  SILICON_BROWSER_STATE_EXPIRE_DAYS Auto-delete saved states older than N days (default: 30)
+  SILICON_BROWSER_ENCRYPTION_KEY   64-char hex key for AES-256-GCM session encryption
+  SILICON_BROWSER_STREAM_PORT      Enable WebSocket streaming on port (e.g., 9223)
+  SILICON_BROWSER_IDLE_TIMEOUT_MS  Auto-shutdown daemon after N ms of inactivity (disabled by default)
+  SILICON_BROWSER_IOS_DEVICE       Default iOS device name
+  SILICON_BROWSER_IOS_UDID         Default iOS device UDID
+  SILICON_BROWSER_CONTENT_BOUNDARIES Wrap page output in boundary markers
+  SILICON_BROWSER_MAX_OUTPUT       Max characters for page output
+  SILICON_BROWSER_ALLOWED_DOMAINS  Comma-separated allowed domain patterns
+  SILICON_BROWSER_ACTION_POLICY    Path to action policy JSON file
+  SILICON_BROWSER_CONFIRM_ACTIONS  Action categories requiring confirmation
+  SILICON_BROWSER_CONFIRM_INTERACTIVE Enable interactive confirmation prompts
+  SILICON_BROWSER_ENGINE           Browser engine: chrome (default), lightpanda
+  SILICON_BROWSER_SCREENSHOT_DIR   Default screenshot output directory
+  SILICON_BROWSER_SCREENSHOT_QUALITY JPEG quality 0-100
+  SILICON_BROWSER_SCREENSHOT_FORMAT Screenshot format: png, jpeg
 
 Install:
-  npm install -g agent-browser           # npm
-  brew install agent-browser             # Homebrew
-  cargo install agent-browser            # Cargo
-  agent-browser install                  # Download Chrome (first time)
+  npm install -g silicon-browser           # npm
+  brew install silicon-browser             # Homebrew
+  cargo install silicon-browser            # Cargo
+  silicon-browser install                  # Download Chrome (first time)
 
 Examples:
-  agent-browser open example.com
-  agent-browser snapshot -i              # Interactive elements only
-  agent-browser click @e2                # Click by ref from snapshot
-  agent-browser fill @e3 "test@example.com"
-  agent-browser find role button click --name Submit
-  agent-browser get text @e1
-  agent-browser screenshot --full
-  agent-browser screenshot --annotate    # Labeled screenshot for vision models
-  agent-browser wait --load networkidle  # Wait for slow pages to load
-  agent-browser --cdp 9222 snapshot      # Connect via CDP port
-  agent-browser --auto-connect snapshot  # Auto-discover running Chrome
-  agent-browser --color-scheme dark open example.com  # Dark mode
-  agent-browser --profile ~/.myapp open example.com    # Persistent profile
-  agent-browser --session-name myapp open example.com  # Auto-save/restore state
+  silicon-browser open example.com
+  silicon-browser snapshot -i              # Interactive elements only
+  silicon-browser click @e2                # Click by ref from snapshot
+  silicon-browser fill @e3 "test@example.com"
+  silicon-browser find role button click --name Submit
+  silicon-browser get text @e1
+  silicon-browser screenshot --full
+  silicon-browser screenshot --annotate    # Labeled screenshot for vision models
+  silicon-browser wait --load networkidle  # Wait for slow pages to load
+  silicon-browser --cdp 9222 snapshot      # Connect via CDP port
+  silicon-browser --auto-connect snapshot  # Auto-discover running Chrome
+  silicon-browser --color-scheme dark open example.com  # Dark mode
+  silicon-browser --profile ~/.myapp open example.com    # Persistent profile
+  silicon-browser --session-name myapp open example.com  # Auto-save/restore state
 
 Command Chaining:
   Chain commands with && in a single shell call (browser persists via daemon):
 
-  agent-browser open example.com && agent-browser wait --load networkidle && agent-browser snapshot -i
-  agent-browser fill @e1 "user@example.com" && agent-browser fill @e2 "pass" && agent-browser click @e3
-  agent-browser open example.com && agent-browser wait --load networkidle && agent-browser screenshot page.png
+  silicon-browser open example.com && silicon-browser wait --load networkidle && silicon-browser snapshot -i
+  silicon-browser fill @e1 "user@example.com" && silicon-browser fill @e2 "pass" && silicon-browser click @e3
+  silicon-browser open example.com && silicon-browser wait --load networkidle && silicon-browser screenshot page.png
 
 iOS Simulator (requires Xcode and Appium):
-  agent-browser -p ios open example.com                    # Use default iPhone
-  agent-browser -p ios --device "iPhone 15 Pro" open url   # Specific device
-  agent-browser -p ios device list                         # List simulators
-  agent-browser -p ios swipe up                            # Swipe gesture
-  agent-browser -p ios tap @e1                             # Touch element
+  silicon-browser -p ios open example.com                    # Use default iPhone
+  silicon-browser -p ios --device "iPhone 15 Pro" open url   # Specific device
+  silicon-browser -p ios device list                         # List simulators
+  silicon-browser -p ios swipe up                            # Swipe gesture
+  silicon-browser -p ios tap @e1                             # Touch element
 "#
     );
 }
@@ -2753,7 +2753,7 @@ fn print_screenshot_diff(data: &serde_json::Map<String, serde_json::Value>) {
 }
 
 pub fn print_version() {
-    println!("agent-browser {}", env!("CARGO_PKG_VERSION"));
+    println!("silicon-browser {}", env!("CARGO_PKG_VERSION"));
 }
 
 #[cfg(test)]

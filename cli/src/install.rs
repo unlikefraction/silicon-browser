@@ -10,7 +10,7 @@ const LAST_KNOWN_GOOD_URL: &str =
 pub fn get_browsers_dir() -> PathBuf {
     dirs::home_dir()
         .unwrap_or_else(|| PathBuf::from("."))
-        .join(".agent-browser")
+        .join(".silicon-browser")
         .join("browsers")
 }
 
@@ -278,7 +278,7 @@ pub fn run_install(with_deps: bool) {
         eprintln!("  Install Chromium from your system package manager instead:");
         eprintln!("    sudo apt install chromium-browser   # Debian/Ubuntu");
         eprintln!("    sudo dnf install chromium            # Fedora");
-        eprintln!("  Then use: agent-browser --executable-path /usr/bin/chromium");
+        eprintln!("  Then use: silicon-browser --executable-path /usr/bin/chromium");
         exit(1);
     }
 
@@ -292,7 +292,7 @@ pub fn run_install(with_deps: bool) {
                 "{} Linux detected. If browser fails to launch, run:",
                 color::warning_indicator()
             );
-            println!("  agent-browser install --with-deps");
+            println!("  silicon-browser install --with-deps");
             println!();
         }
     }
@@ -358,7 +358,7 @@ pub fn run_install(with_deps: bool) {
                     "{} If you see \"shared library\" errors when running, use:",
                     color::yellow("Note:")
                 );
-                println!("  agent-browser install --with-deps");
+                println!("  silicon-browser install --with-deps");
             }
         }
         Err(e) => {

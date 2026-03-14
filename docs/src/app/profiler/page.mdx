@@ -12,14 +12,14 @@ and other performance bottlenecks in agentic workflows.
 
 ```bash
 # Start profiling
-agent-browser profiler start
+silicon-browser profiler start
 
 # Perform actions
-agent-browser navigate https://example.com
-agent-browser click "#button"
+silicon-browser navigate https://example.com
+silicon-browser click "#button"
 
 # Stop and save profile
-agent-browser profiler stop ./trace.json
+silicon-browser profiler stop ./trace.json
 ```
 
 The output JSON file can be loaded into Chrome DevTools, Perfetto UI, or any
@@ -43,7 +43,7 @@ tool that accepts Chrome Trace Event format.
 The `--categories` flag accepts a comma-separated list of Chrome trace categories.
 
 ```bash
-agent-browser profiler start --categories "devtools.timeline,v8.execute,blink.user_timing"
+silicon-browser profiler start --categories "devtools.timeline,v8.execute,blink.user_timing"
 ```
 
 Default categories include `devtools.timeline`, `v8.execute`, `blink`,
@@ -111,4 +111,4 @@ On Windows it is omitted.
 - Only works with Chromium-based browsers (Chrome, Edge). Not supported on Firefox or WebKit.
 - Trace data accumulates in memory while profiling is active (capped at 5 million events). Stop profiling promptly after the area of interest.
 - Data collection on stop has a 30-second timeout. If the browser is unresponsive, the stop command may fail.
-- When no output path is provided, the profile is saved to an auto-generated path under the agent-browser temp directory.
+- When no output path is provided, the profile is saved to an auto-generated path under the silicon-browser temp directory.

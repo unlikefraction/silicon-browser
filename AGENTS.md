@@ -18,7 +18,7 @@ When adding or changing user-facing features (new flags, commands, behaviors, en
 
 1. `cli/src/output.rs` -- `--help` output (flags list, examples, environment variables)
 2. `README.md` -- Options table, relevant feature sections, examples
-3. `skills/agent-browser/SKILL.md` -- so AI agents know about the feature
+3. `skills/silicon-browser/SKILL.md` -- so AI agents know about the feature
 4. `docs/src/app/` -- the Next.js docs site (MDX pages)
 5. Inline doc comments in the relevant source files
 
