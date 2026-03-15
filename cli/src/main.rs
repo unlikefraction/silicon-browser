@@ -233,6 +233,36 @@ fn main() {
         return;
     }
 
+    // Handle push/clone/pull as top-level commands
+    match clean.first().map(|s| s.as_str()) {
+        Some("push") => {
+            let name = clean.get(1).unwrap_or_else(|| {
+                eprintln!("{} Usage: silicon-browser push <profile-name>", color::error_indicator());
+                exit(1);
+            });
+            profile::run_push(name);
+            return;
+        }
+        Some("clone") => {
+            let url = clean.get(1).unwrap_or_else(|| {
+                eprintln!("{} Usage: silicon-browser clone <url>", color::error_indicator());
+                exit(1);
+            });
+            profile::run_clone(url);
+            return;
+        }
+        Some("pull") => {
+            let name = clean.get(1).unwrap_or_else(|| {
+                eprintln!("{} Usage: silicon-browser pull <profile-name> [url]", color::error_indicator());
+                exit(1);
+            });
+            let url = clean.get(2).map(|s| s.as_str());
+            profile::run_pull(name, url);
+            return;
+        }
+        _ => {}
+    }
+
     // Handle session separately (doesn't need daemon)
     if clean.first().map(|s| s.as_str()) == Some("session") {
         run_session(&clean, &flags.session, flags.json);

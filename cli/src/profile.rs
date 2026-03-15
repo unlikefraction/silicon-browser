@@ -1,24 +1,26 @@
-// profile.rs - Profile pack/unpack/push/pull for silicon-browser.
+// profile.rs - Profile management and sync for silicon-browser.
 //
-// Enables syncing browser profiles (cookies, fingerprint, login state) between
-// machines. Profiles are encrypted with AES-256-GCM before transfer.
+// Profiles can be packed/unpacked locally, or synced between machines
+// using a temporary HTTP server + 6-digit OTP (no 3rd party needed).
 //
-// Usage:
-//   silicon-browser profile list
-//   silicon-browser profile pack <name> -p <password>
-//   silicon-browser profile unpack <file> -p <password>
-//   silicon-browser profile push <name> <user@host> [-p <password>]
-//   silicon-browser profile pull <name> <user@host> [-p <password>]
+// Commands:
+//   silicon-browser profile list              List all profiles
+//   silicon-browser profile pack <name>       Export encrypted .silicon file
+//   silicon-browser profile unpack <file>     Import encrypted .silicon file
+//   silicon-browser push <name>               Serve profile for cloning (HTTP + OTP)
+//   silicon-browser clone                     Clone a profile from a push server
+//   silicon-browser pull <name>               Re-sync a previously cloned profile
 
 use crate::color;
 use aes_gcm::{aead::Aead, aead::KeyInit, Aes256Gcm};
 use sha2::{Digest, Sha256};
 use std::fs;
-use std::io::{self, Write};
+use std::io::{self, Read as _, Write};
+use std::net::{Ipv4Addr, TcpListener, TcpStream};
 use std::path::{Path, PathBuf};
-use std::process::{exit, Command, Stdio};
+use std::process::exit;
 
-/// Magic bytes at the start of a .silicon file to identify it.
+/// Magic bytes at the start of a .silicon file.
 const MAGIC: &[u8; 8] = b"SILICON\x01";
 
 fn get_profiles_dir() -> PathBuf {
@@ -28,7 +30,7 @@ fn get_profiles_dir() -> PathBuf {
         .join("profiles")
 }
 
-/// Derive a 256-bit key from a password using SHA-256.
+/// Derive a 256-bit key from a password/OTP using SHA-256.
 fn derive_key(password: &str) -> [u8; 32] {
     let mut hasher = Sha256::new();
     hasher.update(b"silicon-browser-profile-key:");
@@ -52,7 +54,6 @@ fn encrypt_bytes(data: &[u8], password: &str) -> Result<Vec<u8>, String> {
         .encrypt(aes_gcm::Nonce::from_slice(&iv), data)
         .map_err(|e| format!("Encryption failed: {}", e))?;
 
-    // Format: MAGIC (8) + IV (12) + encrypted data (includes 16-byte auth tag)
     let mut output = Vec::with_capacity(8 + 12 + encrypted.len());
     output.extend_from_slice(MAGIC);
     output.extend_from_slice(&iv);
@@ -75,10 +76,10 @@ fn decrypt_bytes(data: &[u8], password: &str) -> Result<Vec<u8>, String> {
 
     cipher
         .decrypt(aes_gcm::Nonce::from_slice(iv), ciphertext)
-        .map_err(|_| "Decryption failed — wrong password?".to_string())
+        .map_err(|_| "Decryption failed — wrong OTP?".to_string())
 }
 
-/// Create a tar.gz archive of a directory, returning the bytes.
+/// Create a tar.gz archive of a directory.
 fn tar_gz_dir(dir: &Path) -> Result<Vec<u8>, String> {
     use flate2::write::GzEncoder;
     use flate2::Compression;
@@ -116,15 +117,504 @@ fn untar_gz(bytes: &[u8], dest: &Path) -> Result<(), String> {
     Ok(())
 }
 
+/// Generate a 6-digit OTP.
+fn generate_otp() -> String {
+    let mut buf = [0u8; 4];
+    let _ = getrandom::getrandom(&mut buf);
+    let num = u32::from_le_bytes(buf) % 900000 + 100000;
+    num.to_string()
+}
+
+/// Get the machine's local IP address.
+fn get_local_ip() -> String {
+    // Try to find a non-loopback IP by connecting to a public DNS
+    if let Ok(socket) = std::net::UdpSocket::bind("0.0.0.0:0") {
+        if socket.connect("8.8.8.8:80").is_ok() {
+            if let Ok(addr) = socket.local_addr() {
+                return addr.ip().to_string();
+            }
+        }
+    }
+    "127.0.0.1".to_string()
+}
+
+// ---------------------------------------------------------------------------
+// Push: serve a profile over HTTP with OTP authentication
+// ---------------------------------------------------------------------------
+
+/// Start a temporary HTTP server that serves an encrypted profile.
+/// Waits for one successful clone, then shuts down.
+pub fn run_push(name: &str) {
+    let profile_dir = get_profiles_dir().join(name);
+    if !profile_dir.exists() {
+        eprintln!(
+            "{} Profile '{}' not found. Available profiles:",
+            color::error_indicator(),
+            name
+        );
+        list_profiles();
+        exit(1);
+    }
+
+    // Pack and encrypt
+    eprint!("Packing profile '{}'...", name);
+    let _ = io::stderr().flush();
+
+    let tar_bytes = match tar_gz_dir(&profile_dir) {
+        Ok(b) => b,
+        Err(e) => {
+            eprintln!("\n{} {}", color::error_indicator(), e);
+            exit(1);
+        }
+    };
+
+    let otp = generate_otp();
+    let encrypted = match encrypt_bytes(&tar_bytes, &otp) {
+        Ok(b) => b,
+        Err(e) => {
+            eprintln!("\n{} {}", color::error_indicator(), e);
+            exit(1);
+        }
+    };
+
+    let size_mb = encrypted.len() as f64 / 1_048_576.0;
+    eprintln!(" done ({:.1} MB)", size_mb);
+
+    // Bind to a random port
+    let listener = match TcpListener::bind((Ipv4Addr::UNSPECIFIED, 0)) {
+        Ok(l) => l,
+        Err(e) => {
+            eprintln!("{} Failed to start server: {}", color::error_indicator(), e);
+            exit(1);
+        }
+    };
+
+    let port = listener.local_addr().unwrap().port();
+    let local_ip = get_local_ip();
+
+    println!();
+    println!("  {} Serving profile '{}'", color::cyan("●"), name);
+    println!();
+    println!(
+        "  URL:  {}",
+        color::bold(&format!("http://{}:{}", local_ip, port))
+    );
+    println!("  OTP:  {}", color::bold(&otp));
+    println!("  Name: {}", name);
+    println!();
+    println!("  On the other machine, run:");
+    println!(
+        "    silicon-browser clone http://{}:{}",
+        local_ip, port
+    );
+    println!();
+    println!("  Waiting for clone...");
+    println!();
+
+    // Serve until one successful transfer
+    for stream in listener.incoming() {
+        match stream {
+            Ok(stream) => {
+                if handle_push_connection(stream, &encrypted, name, &otp) {
+                    println!(
+                        "  {} Profile '{}' sent successfully. Server closed.",
+                        color::success_indicator(),
+                        name
+                    );
+                    return;
+                }
+            }
+            Err(e) => {
+                eprintln!("  Connection error: {}", e);
+            }
+        }
+    }
+}
+
+/// Handle a single HTTP connection for push.
+/// Returns true if the profile was successfully sent.
+fn handle_push_connection(mut stream: TcpStream, encrypted: &[u8], name: &str, otp: &str) -> bool {
+    let mut buf = [0u8; 4096];
+    let n = match stream.read(&mut buf) {
+        Ok(n) => n,
+        Err(_) => return false,
+    };
+
+    let request = String::from_utf8_lossy(&buf[..n]);
+
+    // Parse the request — extract the path from "GET /path HTTP/1.1"
+    let first_line = request.lines().next().unwrap_or("");
+    let request_path = first_line
+        .split_whitespace()
+        .nth(1)
+        .unwrap_or("/");
+
+    if request_path.starts_with("/info") {
+        // Info endpoint: returns profile name and size (no auth needed)
+        let body = format!(
+            r#"{{"name":"{}","size":{}}}"#,
+            name,
+            encrypted.len()
+        );
+        let response = format!(
+            "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nAccess-Control-Allow-Origin: *\r\n\r\n{}",
+            body.len(),
+            body
+        );
+        let _ = stream.write_all(response.as_bytes());
+        return false; // Don't shut down for info requests
+    }
+
+    if request_path.starts_with("/clone") || request_path.starts_with("/pull") {
+        // Check OTP from query string: /clone?otp=123456
+        let has_valid_otp = request_path
+            .split('?')
+            .nth(1)
+            .and_then(|query| {
+                query.split('&').find_map(|param| {
+                    let mut parts = param.splitn(2, '=');
+                    if parts.next() == Some("otp") {
+                        parts.next()
+                    } else {
+                        None
+                    }
+                })
+            })
+            .map(|provided_otp| provided_otp == otp)
+            .unwrap_or(false);
+
+        if !has_valid_otp {
+            let body = r#"{"error":"Invalid OTP"}"#;
+            let response = format!(
+                "HTTP/1.1 403 Forbidden\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n{}",
+                body.len(),
+                body
+            );
+            let _ = stream.write_all(response.as_bytes());
+            eprintln!("  {} Invalid OTP attempt from {}", color::warning_indicator(),
+                stream.peer_addr().map(|a| a.to_string()).unwrap_or_else(|_| "unknown".into()));
+            return false;
+        }
+
+        // Send the encrypted profile
+        let response = format!(
+            "HTTP/1.1 200 OK\r\nContent-Type: application/octet-stream\r\nContent-Disposition: attachment; filename=\"{}.silicon\"\r\nContent-Length: {}\r\nX-Profile-Name: {}\r\n\r\n",
+            name,
+            encrypted.len(),
+            name
+        );
+        if stream.write_all(response.as_bytes()).is_err() {
+            return false;
+        }
+        if stream.write_all(encrypted).is_err() {
+            return false;
+        }
+
+        eprintln!(
+            "  {} Sent to {}",
+            color::success_indicator(),
+            stream.peer_addr().map(|a| a.to_string()).unwrap_or_else(|_| "unknown".into())
+        );
+        return true; // Successful transfer, shut down
+    }
+
+    // Unknown request
+    let body = "silicon-browser push server. Use silicon-browser clone to download.";
+    let response = format!(
+        "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: {}\r\n\r\n{}",
+        body.len(),
+        body
+    );
+    let _ = stream.write_all(response.as_bytes());
+    false
+}
+
+// ---------------------------------------------------------------------------
+// Clone: download a profile from a push server
+// ---------------------------------------------------------------------------
+
+/// Clone a profile from a push server.
+pub fn run_clone(url: &str) {
+    // Get profile info first
+    let info_url = format!("{}/info", url.trim_end_matches('/'));
+    let (name, size) = match fetch_profile_info(&info_url) {
+        Ok(info) => info,
+        Err(e) => {
+            eprintln!("{} {}", color::error_indicator(), e);
+            exit(1);
+        }
+    };
+
+    let size_mb = size as f64 / 1_048_576.0;
+    println!(
+        "Found profile '{}' ({:.1} MB)",
+        name, size_mb
+    );
+
+    // Prompt for OTP
+    eprint!("OTP: ");
+    let _ = io::stderr().flush();
+    let mut otp = String::new();
+    if io::stdin().read_line(&mut otp).is_err() || otp.trim().is_empty() {
+        eprintln!("{} OTP required", color::error_indicator());
+        exit(1);
+    }
+    let otp = otp.trim();
+
+    // Download the encrypted profile
+    let clone_url = format!("{}/clone?otp={}", url.trim_end_matches('/'), otp);
+    println!("Downloading...");
+
+    let encrypted = match fetch_profile_data(&clone_url) {
+        Ok(data) => data,
+        Err(e) => {
+            eprintln!("{} {}", color::error_indicator(), e);
+            exit(1);
+        }
+    };
+
+    // Decrypt
+    let tar_bytes = match decrypt_bytes(&encrypted, otp) {
+        Ok(b) => b,
+        Err(e) => {
+            eprintln!("{} {}", color::error_indicator(), e);
+            exit(1);
+        }
+    };
+
+    // Extract to profile directory
+    let profile_dir = get_profiles_dir().join(&name);
+
+    if profile_dir.exists() {
+        let backup = get_profiles_dir().join(format!("{}.backup", &name));
+        let _ = fs::remove_dir_all(&backup);
+        let _ = fs::rename(&profile_dir, &backup);
+        println!("  Existing profile backed up to {}.backup/", &name);
+    }
+
+    match untar_gz(&tar_bytes, &profile_dir) {
+        Ok(()) => {
+            // Save the remote URL for future pulls
+            let remote_file = profile_dir.join(".remote");
+            let _ = fs::write(&remote_file, url);
+
+            println!(
+                "{} Cloned profile '{}' successfully",
+                color::success_indicator(),
+                name
+            );
+            println!("  Location: {}", profile_dir.display());
+            println!();
+            println!("  Use it:");
+            println!("    silicon-browser --profile {} open https://example.com", name);
+        }
+        Err(e) => {
+            eprintln!("{} {}", color::error_indicator(), e);
+            exit(1);
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Pull: re-sync from a push server (same as clone but for existing profile)
+// ---------------------------------------------------------------------------
+
+/// Pull (re-sync) a profile. The other machine must be running `push`.
+pub fn run_pull(name: &str, url: Option<&str>) {
+    let profile_dir = get_profiles_dir().join(name);
+
+    // Try to get URL from args, or from saved .remote file
+    let url = if let Some(u) = url {
+        u.to_string()
+    } else {
+        let remote_file = profile_dir.join(".remote");
+        match fs::read_to_string(&remote_file) {
+            Ok(u) if !u.trim().is_empty() => u.trim().to_string(),
+            _ => {
+                eprintln!(
+                    "{} No URL provided and no saved remote for profile '{}'.",
+                    color::error_indicator(),
+                    name
+                );
+                eprintln!("  Usage: silicon-browser pull {} <url>", name);
+                exit(1);
+            }
+        }
+    };
+
+    // Get info
+    let info_url = format!("{}/info", url.trim_end_matches('/'));
+    match fetch_profile_info(&info_url) {
+        Ok((remote_name, size)) => {
+            let size_mb = size as f64 / 1_048_576.0;
+            println!("Pulling '{}' from {} ({:.1} MB)", remote_name, url, size_mb);
+        }
+        Err(e) => {
+            eprintln!("{} Cannot reach push server: {}", color::error_indicator(), e);
+            eprintln!("  Make sure the other machine is running: silicon-browser push {}", name);
+            exit(1);
+        }
+    }
+
+    // Prompt for OTP
+    eprint!("OTP: ");
+    let _ = io::stderr().flush();
+    let mut otp = String::new();
+    if io::stdin().read_line(&mut otp).is_err() || otp.trim().is_empty() {
+        eprintln!("{} OTP required", color::error_indicator());
+        exit(1);
+    }
+    let otp = otp.trim();
+
+    // Download
+    let clone_url = format!("{}/pull?otp={}", url.trim_end_matches('/'), otp);
+    println!("Downloading...");
+
+    let encrypted = match fetch_profile_data(&clone_url) {
+        Ok(data) => data,
+        Err(e) => {
+            eprintln!("{} {}", color::error_indicator(), e);
+            exit(1);
+        }
+    };
+
+    // Decrypt
+    let tar_bytes = match decrypt_bytes(&encrypted, otp) {
+        Ok(b) => b,
+        Err(e) => {
+            eprintln!("{} {}", color::error_indicator(), e);
+            exit(1);
+        }
+    };
+
+    // Backup and extract
+    if profile_dir.exists() {
+        let backup = get_profiles_dir().join(format!("{}.backup", name));
+        let _ = fs::remove_dir_all(&backup);
+        let _ = fs::rename(&profile_dir, &backup);
+    }
+
+    match untar_gz(&tar_bytes, &profile_dir) {
+        Ok(()) => {
+            // Save remote for future pulls
+            let remote_file = profile_dir.join(".remote");
+            let _ = fs::write(&remote_file, &url);
+
+            println!(
+                "{} Pulled profile '{}' successfully",
+                color::success_indicator(),
+                name
+            );
+        }
+        Err(e) => {
+            eprintln!("{} {}", color::error_indicator(), e);
+            exit(1);
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// HTTP client helpers (minimal, no external deps needed — use std::net)
+// ---------------------------------------------------------------------------
+
+/// Fetch profile info from the push server's /info endpoint.
+fn fetch_profile_info(url: &str) -> Result<(String, usize), String> {
+    let body = http_get(url)?;
+    let text = String::from_utf8_lossy(&body);
+
+    // Parse simple JSON: {"name":"...","size":...}
+    let name = text
+        .split("\"name\":\"")
+        .nth(1)
+        .and_then(|s| s.split('"').next())
+        .unwrap_or("unknown")
+        .to_string();
+
+    let size = text
+        .split("\"size\":")
+        .nth(1)
+        .and_then(|s| s.split([',', '}'].as_ref()).next())
+        .and_then(|s| s.trim().parse::<usize>().ok())
+        .unwrap_or(0);
+
+    Ok((name, size))
+}
+
+/// Fetch the encrypted profile data from the push server.
+fn fetch_profile_data(url: &str) -> Result<Vec<u8>, String> {
+    let body = http_get(url)?;
+    if body.len() < 20 {
+        // Check if it's an error response
+        let text = String::from_utf8_lossy(&body);
+        if text.contains("Invalid OTP") {
+            return Err("Invalid OTP. Check the code and try again.".to_string());
+        }
+        return Err(format!("Response too small ({} bytes)", body.len()));
+    }
+    Ok(body)
+}
+
+/// Minimal HTTP GET using std::net (no external HTTP client needed).
+fn http_get(url: &str) -> Result<Vec<u8>, String> {
+    // Parse URL: http://host:port/path
+    let url = url.strip_prefix("http://").unwrap_or(url);
+    let (host_port, path) = url.split_once('/').unwrap_or((url, ""));
+    let path = format!("/{}", path);
+
+    let mut stream = TcpStream::connect(host_port)
+        .map_err(|e| format!("Connection failed to {}: {}", host_port, e))?;
+
+    stream
+        .set_read_timeout(Some(std::time::Duration::from_secs(30)))
+        .ok();
+
+    let host = host_port.split(':').next().unwrap_or(host_port);
+    let request = format!(
+        "GET {} HTTP/1.1\r\nHost: {}\r\nConnection: close\r\n\r\n",
+        path, host
+    );
+
+    stream
+        .write_all(request.as_bytes())
+        .map_err(|e| format!("Failed to send request: {}", e))?;
+
+    let mut response = Vec::new();
+    stream
+        .read_to_end(&mut response)
+        .map_err(|e| format!("Failed to read response: {}", e))?;
+
+    // Find the end of HTTP headers (blank line)
+    let header_end = response
+        .windows(4)
+        .position(|w| w == b"\r\n\r\n")
+        .ok_or("Invalid HTTP response")?;
+
+    let headers = String::from_utf8_lossy(&response[..header_end]);
+
+    // Check status code
+    let status_line = headers.lines().next().unwrap_or("");
+    if status_line.contains("403") {
+        return Err("Invalid OTP".to_string());
+    }
+    if !status_line.contains("200") {
+        return Err(format!("HTTP error: {}", status_line));
+    }
+
+    Ok(response[header_end + 4..].to_vec())
+}
+
+// ---------------------------------------------------------------------------
+// Pack / Unpack (local file-based export/import)
+// ---------------------------------------------------------------------------
+
 /// Pack a profile into an encrypted .silicon file.
 pub fn pack_profile(name: &str, password: &str, output: Option<&str>) {
     let profile_dir = get_profiles_dir().join(name);
     if !profile_dir.exists() {
         eprintln!(
-            "{} Profile '{}' not found at {}",
+            "{} Profile '{}' not found",
             color::error_indicator(),
-            name,
-            profile_dir.display()
+            name
         );
         exit(1);
     }
@@ -173,15 +663,10 @@ pub fn pack_profile(name: &str, password: &str, output: Option<&str>) {
 pub fn unpack_profile(file: &str, password: &str, name: Option<&str>) {
     let file_path = PathBuf::from(file);
     if !file_path.exists() {
-        eprintln!(
-            "{} File not found: {}",
-            color::error_indicator(),
-            file
-        );
+        eprintln!("{} File not found: {}", color::error_indicator(), file);
         exit(1);
     }
 
-    // Derive profile name from filename if not specified
     let profile_name = name.unwrap_or_else(|| {
         file_path
             .file_stem()
@@ -209,24 +694,19 @@ pub fn unpack_profile(file: &str, password: &str, name: Option<&str>) {
 
     let profile_dir = get_profiles_dir().join(profile_name);
 
-    // Back up existing profile if present
     if profile_dir.exists() {
         let backup = get_profiles_dir().join(format!("{}.backup", profile_name));
         let _ = fs::remove_dir_all(&backup);
         let _ = fs::rename(&profile_dir, &backup);
-        println!(
-            "  Existing profile backed up to {}.backup/",
-            profile_name
-        );
+        println!("  Existing profile backed up to {}.backup/", profile_name);
     }
 
     match untar_gz(&tar_bytes, &profile_dir) {
         Ok(()) => {
             println!(
-                "{} Unpacked -> profile '{}' at {}",
+                "{} Unpacked -> profile '{}'",
                 color::success_indicator(),
                 profile_name,
-                profile_dir.display()
             );
         }
         Err(e) => {
@@ -236,149 +716,10 @@ pub fn unpack_profile(file: &str, password: &str, name: Option<&str>) {
     }
 }
 
-/// Push a profile to a remote server over SSH.
-pub fn push_profile(name: &str, remote: &str, password: &str) {
-    let profile_dir = get_profiles_dir().join(name);
-    if !profile_dir.exists() {
-        eprintln!(
-            "{} Profile '{}' not found",
-            color::error_indicator(),
-            name
-        );
-        exit(1);
-    }
+// ---------------------------------------------------------------------------
+// List profiles
+// ---------------------------------------------------------------------------
 
-    println!("Packing profile '{}'...", name);
-
-    let tar_bytes = match tar_gz_dir(&profile_dir) {
-        Ok(b) => b,
-        Err(e) => {
-            eprintln!("{} {}", color::error_indicator(), e);
-            exit(1);
-        }
-    };
-
-    let encrypted = match encrypt_bytes(&tar_bytes, password) {
-        Ok(b) => b,
-        Err(e) => {
-            eprintln!("{} {}", color::error_indicator(), e);
-            exit(1);
-        }
-    };
-
-    // Write to temp file
-    let tmp_file = std::env::temp_dir().join(format!("{}.silicon", name));
-    if let Err(e) = fs::write(&tmp_file, &encrypted) {
-        eprintln!("{} Failed to write temp file: {}", color::error_indicator(), e);
-        exit(1);
-    }
-
-    let size_mb = encrypted.len() as f64 / 1_048_576.0;
-    println!(
-        "Pushing '{}' to {} ({:.1} MB, encrypted)...",
-        name, remote, size_mb
-    );
-
-    // Parse remote: user@host or user@host:/path
-    let (ssh_dest, remote_path) = if remote.contains(':') {
-        let parts: Vec<&str> = remote.splitn(2, ':').collect();
-        (parts[0].to_string(), parts[1].to_string())
-    } else {
-        (
-            remote.to_string(),
-            format!("~/.silicon-browser/profiles/{}.silicon", name),
-        )
-    };
-
-    // Ensure remote directory exists
-    let mkdir_cmd = format!(
-        "mkdir -p $(dirname {})",
-        shell_escape(&remote_path)
-    );
-    let _ = Command::new("ssh")
-        .args([&ssh_dest, &mkdir_cmd])
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .status();
-
-    // SCP the file
-    let scp_dest = format!("{}:{}", ssh_dest, remote_path);
-    let status = Command::new("scp")
-        .args(["-q", &tmp_file.to_string_lossy(), &scp_dest])
-        .status();
-
-    let _ = fs::remove_file(&tmp_file);
-
-    match status {
-        Ok(s) if s.success() => {
-            println!(
-                "{} Pushed '{}' to {}",
-                color::success_indicator(),
-                name,
-                scp_dest
-            );
-            println!();
-            println!("  On the server, run:");
-            println!(
-                "    silicon-browser profile unpack ~/.silicon-browser/profiles/{}.silicon -p <password>",
-                name
-            );
-        }
-        Ok(_) => {
-            eprintln!("{} SCP failed. Check SSH access to {}", color::error_indicator(), ssh_dest);
-            exit(1);
-        }
-        Err(e) => {
-            eprintln!("{} Failed to run scp: {}", color::error_indicator(), e);
-            exit(1);
-        }
-    }
-}
-
-/// Pull a profile from a remote server over SSH.
-pub fn pull_profile(name: &str, remote: &str, password: &str) {
-    // Parse remote
-    let (ssh_dest, remote_path) = if remote.contains(':') {
-        let parts: Vec<&str> = remote.splitn(2, ':').collect();
-        (parts[0].to_string(), parts[1].to_string())
-    } else {
-        (
-            remote.to_string(),
-            format!("~/.silicon-browser/profiles/{}.silicon", name),
-        )
-    };
-
-    let scp_src = format!("{}:{}", ssh_dest, remote_path);
-    let tmp_file = std::env::temp_dir().join(format!("{}.silicon", name));
-
-    println!("Pulling '{}' from {}...", name, scp_src);
-
-    let status = Command::new("scp")
-        .args(["-q", &scp_src, &tmp_file.to_string_lossy()])
-        .status();
-
-    match status {
-        Ok(s) if s.success() => {}
-        Ok(_) => {
-            eprintln!(
-                "{} SCP failed. Check SSH access and that the profile exists on {}",
-                color::error_indicator(),
-                ssh_dest
-            );
-            exit(1);
-        }
-        Err(e) => {
-            eprintln!("{} Failed to run scp: {}", color::error_indicator(), e);
-            exit(1);
-        }
-    }
-
-    // Unpack it
-    unpack_profile(&tmp_file.to_string_lossy(), password, Some(name));
-    let _ = fs::remove_file(&tmp_file);
-}
-
-/// List all profiles.
 pub fn list_profiles() {
     let profiles_dir = get_profiles_dir();
 
@@ -435,27 +776,23 @@ fn dir_size(path: &Path) -> u64 {
     let mut total = 0;
     if let Ok(entries) = fs::read_dir(path) {
         for entry in entries.flatten() {
-            let ft = entry.file_type().unwrap_or_else(|_| {
-                // Fallback: treat as file
-                fs::metadata(entry.path())
-                    .map(|m| m.file_type())
-                    .unwrap_or_else(|_| entry.file_type().unwrap())
-            });
-            if ft.is_file() {
-                total += entry.metadata().map(|m| m.len()).unwrap_or(0);
-            } else if ft.is_dir() {
-                total += dir_size(&entry.path());
+            if let Ok(ft) = entry.file_type() {
+                if ft.is_file() {
+                    total += entry.metadata().map(|m| m.len()).unwrap_or(0);
+                } else if ft.is_dir() {
+                    total += dir_size(&entry.path());
+                }
             }
         }
     }
     total
 }
 
-fn shell_escape(s: &str) -> String {
-    format!("'{}'", s.replace('\'', "'\\''"))
-}
+// ---------------------------------------------------------------------------
+// CLI entry points
+// ---------------------------------------------------------------------------
 
-/// Entry point: parse `silicon-browser profile <subcommand>` args.
+/// Entry point for `silicon-browser profile <subcommand>`.
 pub fn run_profile_command(args: &[String]) {
     let subcommand = args.first().map(|s| s.as_str());
 
@@ -464,7 +801,7 @@ pub fn run_profile_command(args: &[String]) {
 
         Some("pack") => {
             let name = args.get(1).unwrap_or_else(|| {
-                eprintln!("{} Usage: silicon-browser profile pack <name> -p <password>", color::error_indicator());
+                eprintln!("{} Usage: silicon-browser profile pack <name> --password <pw>", color::error_indicator());
                 exit(1);
             });
             let password = get_password_from_args(args);
@@ -474,7 +811,7 @@ pub fn run_profile_command(args: &[String]) {
 
         Some("unpack") => {
             let file = args.get(1).unwrap_or_else(|| {
-                eprintln!("{} Usage: silicon-browser profile unpack <file.silicon> -p <password>", color::error_indicator());
+                eprintln!("{} Usage: silicon-browser profile unpack <file> --password <pw>", color::error_indicator());
                 exit(1);
             });
             let password = get_password_from_args(args);
@@ -482,61 +819,29 @@ pub fn run_profile_command(args: &[String]) {
             unpack_profile(file, &password, name.as_deref());
         }
 
-        Some("push") => {
-            let name = args.get(1).unwrap_or_else(|| {
-                eprintln!("{} Usage: silicon-browser profile push <name> <user@host> -p <password>", color::error_indicator());
-                exit(1);
-            });
-            let remote = args.get(2).unwrap_or_else(|| {
-                eprintln!("{} Missing remote. Usage: silicon-browser profile push <name> <user@host>", color::error_indicator());
-                exit(1);
-            });
-            let password = get_password_from_args(args);
-            push_profile(name, remote, &password);
-        }
-
-        Some("pull") => {
-            let name = args.get(1).unwrap_or_else(|| {
-                eprintln!("{} Usage: silicon-browser profile pull <name> <user@host> -p <password>", color::error_indicator());
-                exit(1);
-            });
-            let remote = args.get(2).unwrap_or_else(|| {
-                eprintln!("{} Missing remote. Usage: silicon-browser profile pull <name> <user@host>", color::error_indicator());
-                exit(1);
-            });
-            let password = get_password_from_args(args);
-            pull_profile(name, remote, &password);
-        }
-
         Some(cmd) => {
             eprintln!("{} Unknown profile command: {}", color::error_indicator(), cmd);
             eprintln!();
             eprintln!("Usage:");
             eprintln!("  silicon-browser profile list");
-            eprintln!("  silicon-browser profile pack <name> -p <password>");
-            eprintln!("  silicon-browser profile unpack <file> -p <password> [--as <name>]");
-            eprintln!("  silicon-browser profile push <name> <user@host> -p <password>");
-            eprintln!("  silicon-browser profile pull <name> <user@host> -p <password>");
+            eprintln!("  silicon-browser profile pack <name> --password <pw>");
+            eprintln!("  silicon-browser profile unpack <file> --password <pw> [--as <name>]");
+            eprintln!();
+            eprintln!("  silicon-browser push <name>          Serve profile for cloning");
+            eprintln!("  silicon-browser clone <url>           Clone from a push server");
+            eprintln!("  silicon-browser pull <name> [<url>]   Re-sync a profile");
             exit(1);
         }
     }
 }
 
 fn get_password_from_args(args: &[String]) -> String {
-    // Check -p or --password flag
-    if let Some(p) = get_flag_value(args, "-p") {
-        return p;
-    }
     if let Some(p) = get_flag_value(args, "--password") {
         return p;
     }
-
-    // Check env var
     if let Ok(p) = std::env::var("SILICON_BROWSER_PROFILE_PASSWORD") {
         return p;
     }
-
-    // Prompt
     eprint!("Password: ");
     let _ = io::stderr().flush();
     let mut password = String::new();
@@ -551,5 +856,5 @@ fn get_flag_value(args: &[String], flag: &str) -> Option<String> {
     args.iter()
         .position(|a| a == flag)
         .and_then(|i| args.get(i + 1))
-        .map(|s| s.clone())
+        .cloned()
 }
