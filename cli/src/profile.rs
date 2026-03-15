@@ -15,10 +15,10 @@ use crate::color;
 use aes_gcm::{aead::Aead, aead::KeyInit, Aes256Gcm};
 use sha2::{Digest, Sha256};
 use std::fs;
-use std::io::{self, Read as _, Write};
+use std::io::{self, BufRead, Read as _, Write};
 use std::net::{Ipv4Addr, TcpListener, TcpStream};
 use std::path::{Path, PathBuf};
-use std::process::exit;
+use std::process::{exit, Command, Stdio};
 
 /// Magic bytes at the start of a .silicon file.
 const MAGIC: &[u8; 8] = b"SILICON\x01";
@@ -192,21 +192,34 @@ pub fn run_push(name: &str) {
     let port = listener.local_addr().unwrap().port();
     let local_ip = get_local_ip();
 
+    // Start SSH tunnel for public URL (localhost.run — free, no signup)
+    let tunnel = start_tunnel(port);
+
     println!();
     println!("  {} Serving profile '{}'", color::cyan("●"), name);
     println!();
     println!(
-        "  URL:  {}",
+        "  Local:  {}",
         color::bold(&format!("http://{}:{}", local_ip, port))
     );
-    println!("  OTP:  {}", color::bold(&otp));
-    println!("  Name: {}", name);
+    if let Some(ref url) = tunnel.public_url {
+        println!(
+            "  Public: {}",
+            color::bold(url)
+        );
+    }
+    println!("  OTP:    {}", color::bold(&otp));
     println!();
-    println!("  On the other machine, run:");
-    println!(
-        "    silicon-browser clone http://{}:{}",
-        local_ip, port
-    );
+    if let Some(ref url) = tunnel.public_url {
+        println!("  On any machine, run:");
+        println!("    silicon-browser clone {}", url);
+    } else {
+        println!("  On the same network, run:");
+        println!(
+            "    silicon-browser clone http://{}:{}",
+            local_ip, port
+        );
+    }
     println!();
     println!("  Waiting for clone...");
     println!();
@@ -221,6 +234,8 @@ pub fn run_push(name: &str) {
                         color::success_indicator(),
                         name
                     );
+                    // Kill the tunnel process
+                    drop(tunnel);
                     return;
                 }
             }
@@ -298,7 +313,7 @@ fn handle_push_connection(mut stream: TcpStream, encrypted: &[u8], name: &str, o
 
         // Send the encrypted profile
         let response = format!(
-            "HTTP/1.1 200 OK\r\nContent-Type: application/octet-stream\r\nContent-Disposition: attachment; filename=\"{}.silicon\"\r\nContent-Length: {}\r\nX-Profile-Name: {}\r\n\r\n",
+            "HTTP/1.1 200 OK\r\nContent-Type: application/octet-stream\r\nContent-Disposition: attachment; filename=\"{}.silicon\"\r\nContent-Length: {}\r\nX-Profile-Name: {}\r\nConnection: close\r\n\r\n",
             name,
             encrypted.len(),
             name
@@ -309,6 +324,9 @@ fn handle_push_connection(mut stream: TcpStream, encrypted: &[u8], name: &str, o
         if stream.write_all(encrypted).is_err() {
             return false;
         }
+        let _ = stream.flush();
+        // Give the tunnel time to forward all bytes
+        std::thread::sleep(std::time::Duration::from_millis(500));
 
         eprintln!(
             "  {} Sent to {}",
@@ -554,53 +572,212 @@ fn fetch_profile_data(url: &str) -> Result<Vec<u8>, String> {
     Ok(body)
 }
 
-/// Minimal HTTP GET using std::net (no external HTTP client needed).
+/// HTTP GET supporting both http:// and https:// URLs.
+/// Uses raw TCP for http:// (no deps) and reqwest for https://.
 fn http_get(url: &str) -> Result<Vec<u8>, String> {
-    // Parse URL: http://host:port/path
-    let url = url.strip_prefix("http://").unwrap_or(url);
-    let (host_port, path) = url.split_once('/').unwrap_or((url, ""));
-    let path = format!("/{}", path);
+    if url.starts_with("https://") {
+        // Use reqwest (already a dependency) for HTTPS
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .map_err(|e| format!("Failed to create runtime: {}", e))?;
 
-    let mut stream = TcpStream::connect(host_port)
-        .map_err(|e| format!("Connection failed to {}: {}", host_port, e))?;
+        rt.block_on(async {
+            let client = reqwest::Client::builder()
+                .timeout(std::time::Duration::from_secs(120))
+                .build()
+                .map_err(|e| format!("HTTP client error: {}", e))?;
 
-    stream
-        .set_read_timeout(Some(std::time::Duration::from_secs(30)))
-        .ok();
+            let resp = client.get(url)
+                .send()
+                .await
+                .map_err(|e| format!("Request failed: {}", e))?;
 
-    let host = host_port.split(':').next().unwrap_or(host_port);
-    let request = format!(
-        "GET {} HTTP/1.1\r\nHost: {}\r\nConnection: close\r\n\r\n",
-        path, host
-    );
+            let status = resp.status();
+            if status.as_u16() == 403 {
+                // Try to read error body
+                let body = resp.text().await.unwrap_or_default();
+                if body.contains("Invalid OTP") {
+                    return Err("Invalid OTP. Check the code and try again.".to_string());
+                }
+                return Err(format!("Forbidden (403): {}", body));
+            }
+            if !status.is_success() {
+                return Err(format!("HTTP error: {}", status));
+            }
 
-    stream
-        .write_all(request.as_bytes())
-        .map_err(|e| format!("Failed to send request: {}", e))?;
+            // Read all bytes
+            let bytes = resp.bytes()
+                .await
+                .map_err(|e| format!("Failed to read response: {}", e))?;
+            Ok(bytes.to_vec())
+        })
+    } else {
+        // Raw TCP for http:// (no TLS needed)
+        let stripped = url.strip_prefix("http://").unwrap_or(url);
+        let (host_port, path) = stripped.split_once('/').unwrap_or((stripped, ""));
+        let path = format!("/{}", path);
 
-    let mut response = Vec::new();
-    stream
-        .read_to_end(&mut response)
-        .map_err(|e| format!("Failed to read response: {}", e))?;
+        let mut stream = TcpStream::connect(host_port)
+            .map_err(|e| format!("Connection failed to {}: {}", host_port, e))?;
 
-    // Find the end of HTTP headers (blank line)
-    let header_end = response
-        .windows(4)
-        .position(|w| w == b"\r\n\r\n")
-        .ok_or("Invalid HTTP response")?;
+        stream
+            .set_read_timeout(Some(std::time::Duration::from_secs(30)))
+            .ok();
 
-    let headers = String::from_utf8_lossy(&response[..header_end]);
+        let host = host_port.split(':').next().unwrap_or(host_port);
+        let request = format!(
+            "GET {} HTTP/1.1\r\nHost: {}\r\nConnection: close\r\n\r\n",
+            path, host
+        );
 
-    // Check status code
-    let status_line = headers.lines().next().unwrap_or("");
-    if status_line.contains("403") {
-        return Err("Invalid OTP".to_string());
+        stream
+            .write_all(request.as_bytes())
+            .map_err(|e| format!("Failed to send request: {}", e))?;
+
+        let mut response = Vec::new();
+        stream
+            .read_to_end(&mut response)
+            .map_err(|e| format!("Failed to read response: {}", e))?;
+
+        let header_end = response
+            .windows(4)
+            .position(|w| w == b"\r\n\r\n")
+            .ok_or("Invalid HTTP response")?;
+
+        let headers = String::from_utf8_lossy(&response[..header_end]);
+        let status_line = headers.lines().next().unwrap_or("");
+        if status_line.contains("403") {
+            return Err("Invalid OTP".to_string());
+        }
+        if !status_line.contains("200") {
+            return Err(format!("HTTP error: {}", status_line));
+        }
+
+        Ok(response[header_end + 4..].to_vec())
     }
-    if !status_line.contains("200") {
-        return Err(format!("HTTP error: {}", status_line));
+}
+
+// ---------------------------------------------------------------------------
+// SSH Tunnel (localhost.run — free, no signup, no API keys)
+// ---------------------------------------------------------------------------
+
+struct Tunnel {
+    pub public_url: Option<String>,
+    child: Option<std::process::Child>,
+}
+
+impl Drop for Tunnel {
+    fn drop(&mut self) {
+        if let Some(ref mut child) = self.child {
+            let _ = child.kill();
+            let _ = child.wait();
+        }
+    }
+}
+
+/// Start an SSH tunnel to localhost.run for a public URL.
+/// Falls back gracefully if SSH is unavailable or tunnel fails.
+fn start_tunnel(local_port: u16) -> Tunnel {
+    // Skip tunnel if explicitly disabled
+    if std::env::var("SILICON_BROWSER_NO_TUNNEL").is_ok() {
+        return Tunnel {
+            public_url: None,
+            child: None,
+        };
     }
 
-    Ok(response[header_end + 4..].to_vec())
+    eprint!("  Setting up public URL...");
+    let _ = io::stderr().flush();
+
+    // Try localhost.run: ssh -R 80:localhost:PORT nokey@localhost.run
+    // It prints the public URL to stderr like:
+    //   ...tunneled with tls termination, https://xxxxx.lhr.life
+    let mut child = match Command::new("ssh")
+        .args([
+            "-o", "StrictHostKeyChecking=no",
+            "-o", "ServerAliveInterval=30",
+            "-o", "ConnectTimeout=10",
+            "-R", &format!("80:localhost:{}", local_port),
+            "nokey@localhost.run",
+        ])
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+    {
+        Ok(child) => child,
+        Err(_) => {
+            eprintln!(" skipped (ssh not available)");
+            return Tunnel {
+                public_url: None,
+                child: None,
+            };
+        }
+    };
+
+    // Read stdout/stderr to find the public URL (with timeout)
+    let stdout = child.stdout.take();
+    let public_url = if let Some(stdout) = stdout {
+        let reader = io::BufReader::new(stdout);
+        let start = std::time::Instant::now();
+        let timeout = std::time::Duration::from_secs(15);
+        let mut found_url: Option<String> = None;
+
+        for line in reader.lines() {
+            if start.elapsed() > timeout {
+                break;
+            }
+            if let Ok(line) = line {
+                // localhost.run outputs lines like:
+                // "abc123.lhr.life tunneled with tls termination, https://abc123.lhr.life"
+                // or just a URL on its own line
+                if let Some(url) = extract_tunnel_url(&line) {
+                    found_url = Some(url);
+                    break;
+                }
+            }
+        }
+
+        found_url
+    } else {
+        None
+    };
+
+    if let Some(ref url) = public_url {
+        eprintln!(" {}", color::success_indicator());
+        // Re-attach stdout so the tunnel process keeps running
+        Tunnel {
+            public_url: Some(url.clone()),
+            child: Some(child),
+        }
+    } else {
+        eprintln!(" skipped (tunnel failed to connect)");
+        let _ = child.kill();
+        Tunnel {
+            public_url: None,
+            child: None,
+        }
+    }
+}
+
+/// Extract a public HTTPS URL from a localhost.run output line.
+fn extract_tunnel_url(line: &str) -> Option<String> {
+    // Match patterns like "https://xxxx.lhr.life" or "https://xxxx.localhost.run"
+    for word in line.split_whitespace() {
+        let word = word.trim_end_matches(',');
+        if word.starts_with("https://") && (word.contains(".lhr.life") || word.contains(".localhost.run")) {
+            return Some(word.to_string());
+        }
+    }
+    // Also check for bare domain patterns
+    for word in line.split_whitespace() {
+        let word = word.trim_end_matches(',');
+        if (word.ends_with(".lhr.life") || word.ends_with(".localhost.run")) && !word.starts_with("https://") {
+            return Some(format!("https://{}", word));
+        }
+    }
+    None
 }
 
 // ---------------------------------------------------------------------------
