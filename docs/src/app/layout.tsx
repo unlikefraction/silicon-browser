@@ -23,25 +23,25 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  metadataBase: new URL("https://silicon-browser.dev"),
+  metadataBase: new URL("https://silicon-browser.unlikefraction.com"),
   title: {
-    default: "silicon-browser | Headless Browser Automation for AI",
+    default: "silicon-browser | The Most Reliable Browser for Your AI Agent",
     template: "%s | silicon-browser",
   },
-  description: "Headless browser automation CLI for AI agents",
+  description: "Stealth-first, terminal-native headless browser CLI for AI agents. CloakBrowser + 18 stealth evasions. Profiles with pinned fingerprints. Push/clone over HTTP.",
   openGraph: {
     type: "website",
     locale: "en_US",
-    url: "https://silicon-browser.dev",
+    url: "https://silicon-browser.unlikefraction.com",
     siteName: "silicon-browser",
-    title: "silicon-browser | Headless Browser Automation for AI",
-    description: "Headless browser automation CLI for AI agents",
+    title: "silicon-browser | The Most Reliable Browser for Your AI Agent",
+    description: "Stealth-first, terminal-native headless browser CLI for AI agents. CloakBrowser + 18 stealth evasions. Profiles with pinned fingerprints. Push/clone over HTTP.",
     images: [{ url: "/og", width: 1200, height: 630, alt: "silicon-browser" }],
   },
   twitter: {
     card: "summary_large_image",
-    title: "silicon-browser | Headless Browser Automation for AI",
-    description: "Headless browser automation CLI for AI agents",
+    title: "silicon-browser | The Most Reliable Browser for Your AI Agent",
+    description: "Stealth-first, terminal-native headless browser CLI for AI agents. CloakBrowser + 18 stealth evasions. Profiles with pinned fingerprints. Push/clone over HTTP.",
     images: ["/og"],
   },
 };

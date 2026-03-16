@@ -4,66 +4,116 @@ export const metadata = pageMetadata("")
 
 # silicon-browser
 
-Browser automation CLI designed for AI agents. Compact text output minimizes context usage. 100% native Rust.
+**The most reliable browser for your AI agent.**
+
+Stealth-first headless browser CLI that uses [CloakBrowser](https://cloakbrowser.dev/)'s patched Chromium (33 C++ patches) + 18 JavaScript evasions. Passes Cloudflare, DataDome, BrowserScan. Zero configuration.
 
 ```bash
-npm install -g silicon-browser      # all platforms
-brew install silicon-browser        # macOS
-silicon-browser install             # Download Chrome (first time)
-
-# or try without installing
-npx silicon-browser open example.com
+npm install -g silicon-browser
+silicon-browser install
+silicon-browser open https://example.com
 ```
 
-## Features
+## Why Silicon Browser?
 
-- **Agent-first** - Compact text output uses fewer tokens than JSON, designed for AI context efficiency
-- **Ref-based** - Snapshot returns accessibility tree with refs for deterministic element selection
-- **Fast** - Native Rust CLI for instant command parsing
-- **Complete** - 50+ commands for navigation, forms, screenshots, network, storage
-- **Sessions** - Multiple isolated browser instances with separate auth
-- **Cross-platform** - macOS, Linux, Windows with native binaries
+Regular headless browsers get flagged instantly. Silicon Browser doesn't.
 
-## Works with
+| Detection Check | Stock Playwright | Silicon Browser |
+|----------------|-----------------|-----------------|
+| BrowserScan WebDriver | Robot | **Normal** |
+| BrowserScan CDP | Robot | **Normal** |
+| BrowserScan Headless Chrome | Robot | **Normal** |
+| bot.sannysoft.com | Multiple fails | **All pass** |
+| Shopify login | Blocked | **Works** |
 
-Claude Code, Cursor, GitHub Copilot, OpenAI Codex, Google Gemini, opencode, and any agent that can run shell commands.
+## Stealth Architecture
 
-## Example
+Four layers of anti-detection, zero configuration:
+
+### Layer 1: CloakBrowser Binary
+33 C++ source-level patches compiled into Chromium. TLS fingerprints, WebGL, Canvas, Audio — all handled at the engine level. Undetectable because there's nothing to detect.
+
+### Layer 2: Chrome Launch Flags
+`--disable-blink-features=AutomationControlled`, `--fingerprint=<seed>`, WebRTC leak prevention, GPU rasterization.
+
+### Layer 3: JavaScript Injection
+Defense-in-depth: `window.chrome` object, Permissions API, CDP artifact removal, `navigator.connection`.
+
+### Layer 4: Network Headers
+Realistic `Sec-Fetch-*`, `Accept`, `Accept-Language` headers matching real Chrome.
+
+## Profiles
+
+Every profile has its own cookies, history, and **pinned fingerprint**. Same profile = same identity.
 
 ```bash
-# Navigate and get snapshot
-silicon-browser open example.com
+# Default profile (always there)
+silicon-browser open https://example.com
+
+# Named profiles
+silicon-browser --profile work open https://shopify.com
+silicon-browser --profile personal open https://github.com
+
+# Incognito (throwaway)
+silicon-browser --incognito open https://example.com
+```
+
+## Push/Clone: Sync Profiles Anywhere
+
+Login on your laptop, use the session on your server. No SSH keys, no cloud accounts.
+
+```bash
+# Your laptop (login here)
+silicon-browser push shopify
+# → Public: https://abc123.lhr.life
+# → OTP: 483921
+
+# Your server (anywhere in the world)
+silicon-browser clone https://abc123.lhr.life
+# → OTP: 483921
+# → ✓ Cloned! Already logged in.
+```
+
+## Ref-Based Interaction
+
+Instead of fragile CSS selectors, every element gets a ref like `@e1`, `@e2`:
+
+```bash
+silicon-browser open https://example.com
 silicon-browser snapshot -i
+# @e1  link "Home"
+# @e2  button "Sign In"
+# @e3  input "Search..."
 
-# Output:
-# - heading "Example Domain" [ref=e1]
-# - link "More information..." [ref=e2]
-
-# Interact using refs
 silicon-browser click @e2
-silicon-browser screenshot page.png
-silicon-browser close
+silicon-browser fill @e3 "query"
 ```
 
-## Why refs?
+93% fewer tokens than screenshot-based approaches.
 
-The `snapshot` command returns a compact accessibility tree where each element
-has a unique ref like `@e1`, `@e2`. This provides:
+## All Commands
 
-- **Context-efficient** - Text output uses ~200-400 tokens vs ~3000-5000 for full DOM
-- **Deterministic** - Ref points to exact element from snapshot
-- **Fast** - No DOM re-query needed
-- **AI-friendly** - LLMs parse text output naturally
+| Command | Description |
+|---------|-------------|
+| `open <url>` | Navigate to URL |
+| `snapshot -i` | Get interactive elements with refs |
+| `click @ref` | Click element |
+| `fill @ref "text"` | Fill input field |
+| `type "text"` | Type text |
+| `screenshot` | Capture screenshot |
+| `eval "js"` | Execute JavaScript |
+| `scroll down` | Scroll the page |
+| `tabs` | List open tabs |
+| `push <name>` | Share profile over HTTP |
+| `clone <url>` | Clone profile from push server |
+| `profile list` | List all profiles |
+| `close` | Close browser |
+| `install` | Download CloakBrowser + Chrome |
 
-## Architecture
+## Works With
 
-Client-daemon architecture for optimal performance:
+Claude Code, Cursor, GitHub Copilot, OpenAI Codex, Google Gemini, and any AI agent that can run shell commands.
 
-1. **Rust CLI** - Parses commands, communicates with daemon
-2. **Native Daemon** - Pure Rust daemon using direct CDP, manages Chrome via Chrome DevTools Protocol
+## Credits
 
-Daemon starts automatically and persists between commands.
-
-## Platforms
-
-Native Rust binaries for macOS (ARM64, x64), Linux (ARM64, x64), and Windows (x64).
+Built on [agent-browser](https://github.com/vercel-labs/agent-browser) by Vercel and [CloakBrowser](https://cloakbrowser.dev/) by CloakHQ.

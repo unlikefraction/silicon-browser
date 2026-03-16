@@ -15,7 +15,23 @@ export const navigation: NavSection[] = [
       { name: "Introduction", href: "/" },
       { name: "Installation", href: "/installation" },
       { name: "Quick Start", href: "/quick-start" },
-      { name: "Skills", href: "/skills" },
+    ],
+  },
+  {
+    title: "Stealth",
+    items: [
+      { name: "Architecture", href: "/stealth-architecture" },
+      { name: "Detection Tests", href: "/detection-tests" },
+    ],
+  },
+  {
+    title: "Features",
+    items: [
+      { name: "Profiles", href: "/profiles" },
+      { name: "Push / Clone", href: "/push-clone" },
+      { name: "Snapshots", href: "/snapshots" },
+      { name: "Sessions", href: "/sessions" },
+      { name: "CDP Mode", href: "/cdp-mode" },
     ],
   },
   {
@@ -24,28 +40,6 @@ export const navigation: NavSection[] = [
       { name: "Commands", href: "/commands" },
       { name: "Configuration", href: "/configuration" },
       { name: "Selectors", href: "/selectors" },
-      { name: "Snapshots", href: "/snapshots" },
-    ],
-  },
-  {
-    title: "Features",
-    items: [
-      { name: "Sessions", href: "/sessions" },
-      { name: "Diffing", href: "/diffing" },
-      { name: "CDP Mode", href: "/cdp-mode" },
-      { name: "Streaming", href: "/streaming" },
-      { name: "Profiler", href: "/profiler" },
-      { name: "iOS Simulator", href: "/ios" },
-      { name: "Security", href: "/security" },
-      { name: "Next.js + Vercel", href: "/next" },
-      { name: "Native Mode", href: "/native-mode" },
-    ],
-  },
-  {
-    title: "Engines",
-    items: [
-      { name: "Chrome", href: "/engines/chrome" },
-      { name: "Lightpanda", href: "/engines/lightpanda" },
     ],
   },
   {
