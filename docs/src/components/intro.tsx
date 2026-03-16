@@ -77,19 +77,20 @@ export function Intro({ onDone }: { onDone: () => void }) {
       oc.textBaseline = "top";
       oc.fillText(text, 30, 15);
 
-      // Sample brightness into grid
+      // Determine on-screen char dimensions FIRST so we know the exact display ratio
       const cols = COLS;
-      const cellW = off.width / cols;
-      const cellH = cellW * 1.8; // cells are taller than wide (monospace ratio)
-      const rows = Math.floor(off.height / cellH);
-      const img = oc.getImageData(0, 0, off.width, off.height);
-
-      // Determine on-screen char dimensions
-      // Measure actual monospace char width at our font size
       fontPx = Math.max(7, Math.floor(W * 0.7 / cols));
       ctx.font = fontPx + "px monospace";
       charW = ctx.measureText("@").width;
       charH = fontPx * 1.2;
+
+      // Sample brightness into grid using the SAME aspect ratio as the display chars
+      // This is the key: cellH/cellW must equal charH/charW for circles to stay round
+      const displayRatio = charH / charW;
+      const cellW = off.width / cols;
+      const cellH = cellW * displayRatio;
+      const rows = Math.floor(off.height / cellH);
+      const img = oc.getImageData(0, 0, off.width, off.height);
 
       const gridW = cols * charW;
       const gridH = rows * charH;
