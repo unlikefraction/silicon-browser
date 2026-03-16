@@ -49,15 +49,27 @@ export function Intro({ onDone }: { onDone: () => void }) {
     let nameText = "";
     let nameOpacity = 0;
 
+    // Fixed canvas size so both "°/°" and "°/-" produce identically-sized grids
+    let fixedCanvasW = 0;
+    let fixedCanvasH = 0;
+
+    function initCanvasSize() {
+      const oc = document.createElement("canvas").getContext("2d")!;
+      const fs = 400;
+      oc.font = fs + "px ApfelGrotezk";
+      // Use the wider text to set the fixed size
+      const w1 = oc.measureText("°/°").width;
+      const w2 = oc.measureText("°/-").width;
+      fixedCanvasW = Math.max(w1, w2) + 60;
+      fixedCanvasH = fs + 60;
+    }
+
     function buildAscii(text: string): AsciiChar[] {
-      // Render text to offscreen canvas
       const off = document.createElement("canvas");
       const oc = off.getContext("2d")!;
       const fs = 400;
-      oc.font = fs + "px ApfelGrotezk";
-      const tw = oc.measureText(text).width;
-      off.width = tw + 60;
-      off.height = fs + 60;
+      off.width = fixedCanvasW;
+      off.height = fixedCanvasH;
       oc.fillStyle = "#000";
       oc.fillRect(0, 0, off.width, off.height);
       oc.fillStyle = "#fff";
@@ -185,6 +197,7 @@ export function Intro({ onDone }: { onDone: () => void }) {
 
     async function run() {
       // Build TWO separate ASCII grids from TWO different renders
+      initCanvasSize();
       asciiOpen = buildAscii("°/°");   // eyes open
       asciiWink = buildAscii("°/-");   // right eye winked (rendered from the actual font)
 
