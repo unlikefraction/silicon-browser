@@ -30,7 +30,14 @@ body {
   overflow-x: hidden;
 }
 
+/* Light bg: dark selection */
 ::selection { background: #1a1a1a; color: #ede8e0; }
+
+/* Dark bg: grey selection */
+.terminal ::selection,
+.sync-content ::selection,
+.install-bar ::selection,
+.flow-box ::selection { background: #555; color: #ede8e0; }
 
 /* ── INTRO SCREEN ── */
 .intro-screen {
@@ -329,7 +336,6 @@ body {
 .terminal .dim { opacity: 0.35; }
 .terminal .accent { color: #c9b99a; }
 .terminal .green { color: #7dbe6a; }
-.terminal ::selection, .sync-content ::selection { background: #555; color: #ede8e0; }
 
 /* Sync grid (push/clone) */
 .sync-grid {
