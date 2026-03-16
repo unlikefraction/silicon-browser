@@ -12,7 +12,6 @@ interface AsciiChar {
   y: number;
   col: number;
   row: number;
-  isRightEye: boolean;
 }
 
 export function Intro({ onDone }: { onDone: () => void }) {
@@ -39,7 +38,8 @@ export function Intro({ onDone }: { onDone: () => void }) {
       run();
     });
 
-    let asciiChars: AsciiChar[] = [];
+    let asciiOpen: AsciiChar[] = [];  // "°/°" — eyes open
+    let asciiWink: AsciiChar[] = [];  // "°/-" — right eye closed
     let fontPx = 0;
     let charW = 0;
     let charH = 0;
@@ -84,14 +84,6 @@ export function Intro({ onDone }: { onDone: () => void }) {
       const ox = (W - gridW) / 2;
       const oy = (H - gridH) / 2;
 
-      // Find slash position for left/right eye split
-      // Render just "/" to find its position
-      const slashOc = document.createElement("canvas").getContext("2d")!;
-      slashOc.font = fs + "px ApfelGrotezk";
-      const beforeSlash = slashOc.measureText("°").width;
-      const slashCenter = (30 + beforeSlash + slashOc.measureText("/").width / 2) / off.width;
-      const slashCol = Math.floor(slashCenter * cols);
-
       const chars: AsciiChar[] = [];
       for (let r = 0; r < rows; r++) {
         for (let c = 0; c < cols; c++) {
@@ -115,14 +107,13 @@ export function Intro({ onDone }: { onDone: () => void }) {
             x: ox + c * charW + charW / 2,
             y: oy + r * charH + charH / 2,
             col: c, row: r,
-            isRightEye: c > slashCol + 2,
           });
         }
       }
       return chars;
     }
 
-    function draw(chars: AsciiChar[], wink: boolean) {
+    function draw(chars: AsciiChar[]) {
       ctx.clearRect(0, 0, W, H);
       ctx.fillStyle = "#1a1a1a";
       ctx.fillRect(0, 0, W, H);
@@ -131,11 +122,7 @@ export function Intro({ onDone }: { onDone: () => void }) {
       ctx.textBaseline = "middle";
       ctx.textAlign = "center";
       for (const c of chars) {
-        let ch = c.char;
-        if (wink && c.isRightEye && "@#%&8BWMQO0Xkdpbq$".includes(ch)) {
-          ch = "-";
-        }
-        ctx.fillText(ch, c.x, c.y);
+        ctx.fillText(c.char, c.x, c.y);
       }
     }
 
@@ -149,7 +136,7 @@ export function Intro({ onDone }: { onDone: () => void }) {
       ]);
 
       bodies = [];
-      for (const c of asciiChars) {
+      for (const c of asciiOpen) {
         const a = Math.random() * Math.PI * 2;
         const f = 0.01 + Math.random() * 0.03;
         const body = Matter.Bodies.rectangle(c.x, c.y, charW, charH, {
@@ -197,21 +184,23 @@ export function Intro({ onDone }: { onDone: () => void }) {
     }
 
     async function run() {
-      asciiChars = buildAscii("°/°");
+      // Build TWO separate ASCII grids from TWO different renders
+      asciiOpen = buildAscii("°/°");   // eyes open
+      asciiWink = buildAscii("°/-");   // right eye winked (rendered from the actual font)
 
-      // Show logo
-      draw(asciiChars, false);
+      // Show logo — eyes open
+      draw(asciiOpen);
       await sleep(1200);
 
-      // Wink
-      draw(asciiChars, true);
+      // Wink — show the "°/-" version (completely different shape from font)
+      draw(asciiWink);
       await sleep(400);
 
-      // Open
-      draw(asciiChars, false);
+      // Open again
+      draw(asciiOpen);
       await sleep(500);
 
-      // Blast (physics keeps running from here)
+      // Blast (physics keeps running from here) — uses the open version
       blast();
 
       // Fade in name
