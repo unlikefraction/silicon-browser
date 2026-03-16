@@ -323,6 +323,7 @@ body {
   line-height: 1.8;
   overflow-x: auto;
   position: relative;
+  white-space: pre-wrap;
 }
 
 .terminal .dim { opacity: 0.35; }
