@@ -166,20 +166,39 @@ export default function Home() {
             Login on your laptop. Use the session on your server. No SSH keys.
             No cloud. Just a URL and a 6-digit OTP. Auto-tunneled.
           </p>
-          <div className="flow-box">
-{`YOUR LAPTOP                              YOUR SERVER
-┌──────────────────────────┐              ┌──────────────────────┐
-│                          │              │                      │
-│  `}<span className="hl">silicon-browser push work</span>{`   │              │                      │
-│                          │              │                      │
-│  ● Serving 'work'        │              │                      │
-│    Public: `}<span className="hl">https://a1.lhr.life</span>{`           │                      │
-│    OTP:    `}<span className="hl">483921</span>{`         │──────────►  │  `}<span className="hl">silicon-browser clone</span>{`  │
-│                          │              │    `}<span className="hl">https://a1.lhr.life</span>{`  │
-│  ✓ Sent!                 │              │    OTP: `}<span className="hl">483921</span>{`         │
-│                          │              │  ✓ Cloned!             │
-└──────────────────────────┘              └──────────────────────┘`}
+          <div className="sync-grid">
+            <div className="sync-terminal">
+              <div className="sync-label">your mac</div>
+              <div className="sync-content">
+                <span className="dim">$ </span>silicon-browser --profile work --headed open https://shopify.com{"\n"}
+                <span className="dim"># login manually, solve captchas, 2FA...</span>{"\n"}
+                <span className="dim">$ </span>silicon-browser close{"\n\n"}
+                <span className="dim">$ </span><span className="accent">silicon-browser push work</span>{"\n\n"}
+                <span className="accent">{"●"}</span> Serving &apos;work&apos;{"\n"}
+                {"  "}Public: <span className="accent">https://a1b2.lhr.life</span>{"\n"}
+                {"  "}OTP:{"    "}<span className="accent">483921</span>{"\n\n"}
+                <span className="green">{"✓"}</span> Sent!
+              </div>
+            </div>
+            <div className="sync-arrow">
+              <span>{"→"}</span>
+            </div>
+            <div className="sync-terminal">
+              <div className="sync-label">your server</div>
+              <div className="sync-content">
+                <span className="dim">$ </span><span className="accent">silicon-browser clone</span>{"\n"}
+                {"  "}https://a1b2.lhr.life{"\n\n"}
+                OTP: <span className="accent">483921</span>{"\n\n"}
+                <span className="green">{"✓"}</span> Cloned profile &apos;work&apos;{"\n\n"}
+                <span className="dim"># already logged in — no captcha, no 2FA</span>{"\n"}
+                <span className="dim">$ </span>silicon-browser --profile work open https://shopify.com/admin{"\n"}
+                <span className="green">{"✓"}</span> Shopify Admin
+              </div>
+            </div>
           </div>
+          <p style={{ color: "#999", fontSize: "13px", marginTop: "1rem" }}>
+            AES-256-GCM encrypted. Auto-tunneled via localhost.run. Server shuts down after one transfer.
+          </p>
         </section>
 
         {/* Skill */}
