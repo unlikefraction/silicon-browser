@@ -42,8 +42,8 @@ export default function Home() {
           </h1>
           <div className="hero-sub">
             <div className="hero-tagline">
-              stealth-first browser cli<br />
-              for ai agents
+              most reliable browser cli<br />
+              for your ai agent
             </div>
             <nav className="hero-nav">
               <a href="#stealth">stealth</a>
@@ -69,7 +69,7 @@ export default function Home() {
         {/* Stealth */}
         <section className="section" id="stealth">
           <div className="section-label">stealth</div>
-          <h2>passes<br />everything.</h2>
+          <h2>stealth by<br />default.</h2>
           <p>
             CloakBrowser&apos;s 33 C++ patches at the Chromium source level.
             Not JavaScript injection — binary-level stealth that anti-bot
@@ -161,7 +161,7 @@ export default function Home() {
         {/* Push/Clone */}
         <section className="section" id="sync">
           <div className="section-label">sync</div>
-          <h2>push /<br />clone.</h2>
+          <h2>secure push<br />/ clone.</h2>
           <p>
             Login on your laptop. Use the session on your server. No SSH keys.
             No cloud. Just a URL and a 6-digit OTP. Auto-tunneled.

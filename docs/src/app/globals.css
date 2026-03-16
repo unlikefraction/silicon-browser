@@ -329,6 +329,7 @@ body {
 .terminal .dim { opacity: 0.35; }
 .terminal .accent { color: #c9b99a; }
 .terminal .green { color: #7dbe6a; }
+.terminal ::selection, .sync-content ::selection { background: #555; color: #ede8e0; }
 
 /* Sync grid (push/clone) */
 .sync-grid {
@@ -364,13 +365,13 @@ body {
 }
 
 .sync-arrow {
-  background: #1a1a1a;
+  background: #ede8e0;
   display: flex;
   align-items: center;
   justify-content: center;
-  padding: 0 1rem;
+  padding: 0 1.5rem;
   font-size: 24px;
-  color: #555;
+  color: #999;
 }
 
 @media (max-width: 768px) {
