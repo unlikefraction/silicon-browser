@@ -385,7 +385,12 @@ body {
     grid-template-columns: 1fr;
   }
   .sync-arrow {
-    padding: 0.5rem;
+    background: #ede8e0;
+    padding: 0.75rem;
+    font-size: 20px;
+  }
+  .sync-arrow span {
+    display: inline-block;
     transform: rotate(90deg);
   }
 }
@@ -416,6 +421,12 @@ body {
   gap: 0.75rem;
   justify-content: center;
   flex-wrap: wrap;
+}
+
+.skill-actions-row {
+  display: flex;
+  gap: 0.75rem;
+  justify-content: center;
 }
 
 .btn-dark {

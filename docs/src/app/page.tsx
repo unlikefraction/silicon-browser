@@ -211,12 +211,14 @@ export default function Home() {
               Drop it in your agent&apos;s context.
             </p>
             <div className="skill-actions">
-              <button className="btn-dark" onClick={copySkill}>
-                {skillCopied ? "copied to clipboard" : "copy to clipboard"}
-              </button>
-              <a href="https://raw.githubusercontent.com/unlikefraction/silicon-browser/main/SKILL.md" className="btn-outline" target="_blank">
-                download
-              </a>
+              <div className="skill-actions-row">
+                <button className="btn-dark" onClick={copySkill}>
+                  {skillCopied ? "copied to clipboard" : "copy to clipboard"}
+                </button>
+                <a href="https://raw.githubusercontent.com/unlikefraction/silicon-browser/main/SKILL.md" className="btn-outline" target="_blank">
+                  download
+                </a>
+              </div>
               <a href="https://github.com/unlikefraction/silicon-browser/blob/main/SKILL.md" className="btn-outline" target="_blank">
                 view on github
               </a>
