@@ -43,7 +43,12 @@ export default function Home() {
           <div className="hero-sub">
             <div className="hero-tagline">
               most reliable browser cli<br />
-              for your ai agent
+              for your ai agent<br /><br />
+              by <a href="https://unlikefraction.com" target="_blank" style={{ color: "#1a1a1a", textDecoration: "none" }}>unlikefraction</a>
+              {"  "}
+              <a href="https://twitter.com/unlikefraction" target="_blank" style={{ color: "#999", textDecoration: "none" }}>twitter</a>
+              {"  "}
+              <a href="https://github.com/unlikefraction" target="_blank" style={{ color: "#999", textDecoration: "none" }}>github</a>
             </div>
             <nav className="hero-nav">
               <a href="#stealth">stealth</a>
