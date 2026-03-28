@@ -42,12 +42,32 @@ Run commands separately when you need to read output before proceeding (e.g., sn
 
 ## Stealth
 
-Stealth is on by default. No flags, no config. Two layers:
+Stealth is on by default. No flags, no config. Three layers:
 
 1. **CloakBrowser binary** (primary) -- 33 Chromium C++ source patches. TLS fingerprints (JA3/JA4), canvas, WebGL, audio fingerprints, CDP input signals all match real Chrome at the binary level. `navigator.webdriver` removed in C++.
-2. **JavaScript evasions** (defense-in-depth) -- 18 JS patches injected before any page code runs: realistic plugins, WebGL vendor masking, `window.chrome` object, CDP artifact removal, WebRTC leak prevention, realistic headers, screen dimensions, etc.
+2. **JavaScript evasions** (defense-in-depth) -- 22 JS patches injected before any page code runs: Function.prototype.toString protection, platform-aware WebGL (Apple M1 on macOS, RTX 3060 on Windows), SpeechSynthesis voice mocking, CSS media query normalization, stack trace sanitization, Client Hints metadata, and more.
+3. **Offscreen headed mode** -- instead of `--headless=new` (detectable), runs a real headed Chrome window at off-screen coordinates. Passes ALL headless detection because it IS a real browser. On headless Linux, auto-installs and starts Xvfb.
+
+Bypasses Cloudflare, Akamai, PerimeterX, DataDome, and Newegg's custom detection out of the box. Scored 95% on BU Bench V1 (previous SOTA: 78%).
 
 Disable stealth for debugging: `SILICON_BROWSER_NO_STEALTH=1`
+Force traditional headless: `SILICON_BROWSER_HEADLESS_REAL=1`
+
+## CAPTCHA Solving
+
+Auto-detect and solve CAPTCHAs on the current page:
+
+```bash
+silicon-browser solve-captcha
+```
+
+Supported types:
+- **Cloudflare Turnstile** -- detects "Just a moment..." pages, clicks checkbox via CDP
+- **reCAPTCHA v2 checkbox** -- human-like mouse movement (based on real recorded data) to click "I'm not a robot"
+- **Text CAPTCHAs** -- local OCR engine (classical CV, no external APIs)
+- **hCaptcha** -- checkbox click with behavioral simulation
+
+All solving is local. No external APIs, no LLM calls.
 
 ## Profiles
 
@@ -574,6 +594,7 @@ Never cache refs across page changes. Always snapshot again.
 | Variable | Description |
 |----------|-------------|
 | `SILICON_BROWSER_NO_STEALTH` | `1` to disable stealth |
+| `SILICON_BROWSER_HEADLESS_REAL` | `1` to force traditional `--headless=new` instead of offscreen headed |
 | `SILICON_BROWSER_FINGERPRINT` | Pin fingerprint seed (consistent identity) |
 | `SILICON_BROWSER_HEADED` | `1` to show browser window |
 | `SILICON_BROWSER_SESSION` | Default session name |
