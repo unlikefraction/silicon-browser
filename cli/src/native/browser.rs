@@ -270,11 +270,22 @@ impl BrowserManager {
                     }
                 });
             if let Some(ua) = ua {
+                // Pass userAgentMetadata for Client Hints (navigator.userAgentData)
+                // so getHighEntropyValues() returns consistent, realistic data.
+                let ua_metadata: Option<serde_json::Value> = if !stealth_disabled && !using_cloakbrowser {
+                    serde_json::from_str(super::stealth::get_user_agent_metadata()).ok()
+                } else {
+                    None
+                };
+                let mut params = json!({ "userAgent": ua });
+                if let Some(meta) = ua_metadata {
+                    params["userAgentMetadata"] = meta;
+                }
                 let _ = manager
                     .client
                     .send_command(
                         "Emulation.setUserAgentOverride",
-                        Some(json!({ "userAgent": ua })),
+                        Some(params),
                         Some(&session_id),
                     )
                     .await;

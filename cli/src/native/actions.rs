@@ -601,6 +601,7 @@ pub async fn execute_command(cmd: &Value, state: &mut DaemonState) -> Value {
         "close" => handle_close(state).await,
         "snapshot" => handle_snapshot(cmd, state).await,
         "screenshot" => handle_screenshot(cmd, state).await,
+        "solve_captcha" | "solvecaptcha" => handle_solve_captcha(cmd, state).await,
         "click" => handle_click(cmd, state).await,
         "dblclick" => handle_dblclick(cmd, state).await,
         "fill" => handle_fill(cmd, state).await,
@@ -1485,6 +1486,350 @@ async fn handle_screenshot(cmd: &Value, state: &mut DaemonState) -> Result<Value
     }
 
     Ok(response)
+}
+
+async fn handle_solve_captcha(_cmd: &Value, state: &mut DaemonState) -> Result<Value, String> {
+    let mgr = state
+        .browser
+        .as_mut()
+        .ok_or("Browser not started")?;
+    let session_id = mgr.active_session_id()?.to_string();
+
+    // Step 1: Inject OCR engine and human mouse engine
+    let _ = mgr
+        .client
+        .send_command(
+            "Runtime.evaluate",
+            Some(json!({
+                "expression": super::captcha::get_text_ocr_script(),
+                "awaitPromise": false,
+            })),
+            Some(&session_id),
+        )
+        .await;
+
+    let _ = mgr
+        .client
+        .send_command(
+            "Runtime.evaluate",
+            Some(json!({
+                "expression": super::captcha::get_human_mouse_script(),
+                "awaitPromise": false,
+            })),
+            Some(&session_id),
+        )
+        .await;
+
+    // Step 2: Detect CAPTCHA type
+    let detect_result = mgr
+        .client
+        .send_command(
+            "Runtime.evaluate",
+            Some(json!({
+                "expression": super::captcha::get_captcha_detect_script(),
+                "returnByValue": true,
+                "awaitPromise": false,
+            })),
+            Some(&session_id),
+        )
+        .await?;
+
+    let detect_str = detect_result["result"]["value"]
+        .as_str()
+        .unwrap_or(r#"{"type":"none"}"#);
+
+    let detect: serde_json::Value =
+        serde_json::from_str(detect_str).unwrap_or(json!({"type": "none"}));
+
+    let captcha_type = detect["type"].as_str().unwrap_or("none");
+
+    if captcha_type == "none" {
+        return Ok(json!({
+            "solved": false,
+            "type": "none",
+            "message": "No CAPTCHA detected on page",
+        }));
+    }
+
+    // Step 3: Solve based on type
+    match captcha_type {
+        "canvas_text" | "image_text" => {
+            // Extract CAPTCHA image
+            let selector = detect["selector"].as_str().unwrap_or("canvas");
+            let extract_script = super::captcha::get_canvas_extract_script(selector);
+
+            let extract_result = mgr
+                .client
+                .send_command(
+                    "Runtime.evaluate",
+                    Some(json!({
+                        "expression": extract_script,
+                        "returnByValue": true,
+                        "awaitPromise": false,
+                    })),
+                    Some(&session_id),
+                )
+                .await?;
+
+            // Run OCR on the extracted image
+            let ocr_script = format!(
+                r#"(function() {{
+                    const el = document.querySelector('{}');
+                    if (!el || !window.__sB_ocrFromCanvas) return JSON.stringify({{error: 'not ready'}});
+                    let canvas;
+                    if (el.tagName === 'CANVAS') {{ canvas = el; }}
+                    else {{
+                        canvas = document.createElement('canvas');
+                        canvas.width = el.naturalWidth || el.width;
+                        canvas.height = el.naturalHeight || el.height;
+                        canvas.getContext('2d').drawImage(el, 0, 0);
+                    }}
+                    const result = window.__sB_ocrFromCanvas(canvas);
+                    // Enter the result
+                    const inputSel = '{}';
+                    if (inputSel && result.text) {{
+                        const input = document.querySelector(inputSel);
+                        if (input) {{
+                            input.focus();
+                            input.value = result.text;
+                            input.dispatchEvent(new Event('input', {{bubbles: true}}));
+                            input.dispatchEvent(new Event('change', {{bubbles: true}}));
+                            result.entered = true;
+                            // Try submit
+                            const form = input.closest('form');
+                            const btn = form?.querySelector('button[type="submit"], input[type="submit"], button');
+                            if (btn) {{ btn.click(); result.submitted = true; }}
+                        }}
+                    }}
+                    return JSON.stringify(result);
+                }})()"#,
+                selector,
+                detect["details"]["inputSelector"].as_str().unwrap_or(""),
+            );
+
+            let solve_result = mgr
+                .client
+                .send_command(
+                    "Runtime.evaluate",
+                    Some(json!({
+                        "expression": ocr_script,
+                        "returnByValue": true,
+                        "awaitPromise": false,
+                    })),
+                    Some(&session_id),
+                )
+                .await?;
+
+            let solve_str = solve_result["result"]["value"]
+                .as_str()
+                .unwrap_or("{}");
+
+            let solve_data: serde_json::Value =
+                serde_json::from_str(solve_str).unwrap_or(json!({}));
+
+            Ok(json!({
+                "solved": solve_data.get("entered").and_then(|v| v.as_bool()).unwrap_or(false),
+                "type": captcha_type,
+                "text": solve_data.get("text"),
+                "confidence": solve_data.get("confidence"),
+                "details": solve_data,
+                "extract": extract_result["result"]["value"],
+            }))
+        }
+
+        "recaptcha_checkbox" => {
+            let solve_result = mgr
+                .client
+                .send_command(
+                    "Runtime.evaluate",
+                    Some(json!({
+                        "expression": super::captcha::get_recaptcha_checkbox_solve_script(),
+                        "returnByValue": true,
+                        "awaitPromise": true,
+                    })),
+                    Some(&session_id),
+                )
+                .await?;
+
+            let result_str = solve_result["result"]["value"]
+                .as_str()
+                .unwrap_or("{}");
+
+            let result_data: serde_json::Value =
+                serde_json::from_str(result_str).unwrap_or(json!({}));
+
+            Ok(json!({
+                "solved": true,
+                "type": "recaptcha_checkbox",
+                "details": result_data,
+            }))
+        }
+
+        "turnstile" | "recaptcha_checkbox" | "hcaptcha" | "unknown_challenge" => {
+            // For Turnstile/reCAPTCHA/hCaptcha: find the checkbox widget and click it
+            // using CDP Input.dispatchMouseEvent with human-like mouse movement.
+            //
+            // CDP mouse events are isTrusted:true and go through Chrome's compositor
+            // hit-testing, which DOES reach cross-origin iframes inside shadow DOMs.
+
+            // Step 1: Find the widget position via accessibility tree snapshot
+            // (the widget is invisible to DOM queries but visible in accessibility)
+            let snap_result = mgr
+                .client
+                .send_command(
+                    "Accessibility.getFullAXTree",
+                    Some(json!({})),
+                    Some(&session_id),
+                )
+                .await;
+
+            // Step 2: Get the iframe bounding box via JavaScript
+            // Use a heuristic: the "Verify you are human" checkbox is typically
+            // inside a widget at a predictable position on the challenge page.
+            let widget_pos = mgr
+                .client
+                .send_command(
+                    "Runtime.evaluate",
+                    Some(json!({
+                        "expression": r#"(function(){
+                            // Strategy: use Page.getLayoutMetrics and the known Turnstile
+                            // widget size (300x65) to find it.
+                            // The widget is injected after the page description text.
+                            // Find the last visible text element and look below it.
+                            const texts = document.querySelectorAll('p, h2');
+                            let maxBottom = 0;
+                            let leftX = 0;
+                            for (const t of texts) {
+                                const r = t.getBoundingClientRect();
+                                if (r.bottom > maxBottom && r.height > 0) {
+                                    maxBottom = r.bottom;
+                                    leftX = r.x;
+                                }
+                            }
+                            // Turnstile checkbox is typically 27px from left edge of widget,
+                            // 30px from top of widget, and the widget starts ~20px below
+                            // the last text element
+                            const checkboxX = leftX + 27;
+                            const checkboxY = maxBottom + 20 + 30;
+                            return JSON.stringify({x: checkboxX, y: checkboxY, textBottom: maxBottom, leftX: leftX});
+                        })()"#,
+                        "returnByValue": true,
+                    })),
+                    Some(&session_id),
+                )
+                .await?;
+
+            let pos_str = widget_pos["result"]["value"].as_str().unwrap_or("{}");
+            let pos: serde_json::Value = serde_json::from_str(pos_str).unwrap_or(json!({}));
+            let target_x = pos["x"].as_f64().unwrap_or(165.0);
+            let target_y = pos["y"].as_f64().unwrap_or(250.0);
+
+            // Step 3: Human-like mouse movement toward the checkbox via CDP
+            // Generate a curved path with 20 steps
+            let start_x = target_x + 400.0;
+            let start_y = target_y - 150.0;
+            let steps = 20;
+
+            for i in 0..=steps {
+                let t = i as f64 / steps as f64;
+                // Ease-in-out cubic
+                let ease = if t < 0.5 {
+                    4.0 * t * t * t
+                } else {
+                    1.0 - (-2.0 * t + 2.0_f64).powi(3) / 2.0
+                };
+                let x = start_x + (target_x - start_x) * ease;
+                let y = start_y + (target_y - start_y) * ease;
+
+                let _ = mgr
+                    .client
+                    .send_command(
+                        "Input.dispatchMouseEvent",
+                        Some(json!({
+                            "type": "mouseMoved",
+                            "x": x,
+                            "y": y,
+                        })),
+                        Some(&session_id),
+                    )
+                    .await;
+
+                tokio::time::sleep(tokio::time::Duration::from_millis(20 + (i as u64 * 2))).await;
+            }
+
+            // Small pause before clicking (human hesitation)
+            tokio::time::sleep(tokio::time::Duration::from_millis(150)).await;
+
+            // Step 4: Click sequence — mousePressed + pause + mouseReleased
+            mgr.client
+                .send_command(
+                    "Input.dispatchMouseEvent",
+                    Some(json!({
+                        "type": "mousePressed",
+                        "x": target_x,
+                        "y": target_y,
+                        "button": "left",
+                        "clickCount": 1,
+                    })),
+                    Some(&session_id),
+                )
+                .await?;
+
+            tokio::time::sleep(tokio::time::Duration::from_millis(80)).await;
+
+            mgr.client
+                .send_command(
+                    "Input.dispatchMouseEvent",
+                    Some(json!({
+                        "type": "mouseReleased",
+                        "x": target_x,
+                        "y": target_y,
+                        "button": "left",
+                        "clickCount": 1,
+                    })),
+                    Some(&session_id),
+                )
+                .await?;
+
+            // Step 5: Wait for verification
+            tokio::time::sleep(tokio::time::Duration::from_secs(5)).await;
+
+            // Check if page navigated (Turnstile success redirects)
+            let url_result = mgr
+                .client
+                .send_command(
+                    "Runtime.evaluate",
+                    Some(json!({
+                        "expression": "document.title + '|' + location.href",
+                        "returnByValue": true,
+                    })),
+                    Some(&session_id),
+                )
+                .await;
+
+            let page_info = url_result
+                .as_ref()
+                .ok()
+                .and_then(|r| r["result"]["value"].as_str())
+                .unwrap_or("unknown")
+                .to_string();
+
+            let solved = !page_info.contains("Just a moment") && !page_info.contains("verification");
+
+            Ok(json!({
+                "solved": solved,
+                "type": captcha_type,
+                "clickTarget": { "x": target_x, "y": target_y },
+                "pageInfo": page_info,
+            }))
+        }
+
+        _ => Ok(json!({
+            "solved": false,
+            "type": captcha_type,
+            "message": format!("CAPTCHA type '{}' detected but solver not yet implemented", captcha_type),
+        })),
+    }
 }
 
 async fn handle_click(cmd: &Value, state: &mut DaemonState) -> Result<Value, String> {
@@ -5265,30 +5610,34 @@ async fn handle_mousedown(cmd: &Value, state: &DaemonState) -> Result<Value, Str
     let mgr = state.browser.as_ref().ok_or("Browser not launched")?;
     let session_id = mgr.active_session_id()?.to_string();
     let button = cmd.get("button").and_then(|v| v.as_str()).unwrap_or("left");
+    let x = cmd.get("x").and_then(|v| v.as_f64()).unwrap_or(0.0);
+    let y = cmd.get("y").and_then(|v| v.as_f64()).unwrap_or(0.0);
 
     mgr.client
         .send_command(
             "Input.dispatchMouseEvent",
-            Some(json!({ "type": "mousePressed", "x": 0, "y": 0, "button": button, "clickCount": 1 })),
+            Some(json!({ "type": "mousePressed", "x": x, "y": y, "button": button, "clickCount": 1 })),
             Some(&session_id),
         )
         .await?;
-    Ok(json!({ "pressed": true }))
+    Ok(json!({ "pressed": true, "x": x, "y": y }))
 }
 
 async fn handle_mouseup(cmd: &Value, state: &DaemonState) -> Result<Value, String> {
     let mgr = state.browser.as_ref().ok_or("Browser not launched")?;
     let session_id = mgr.active_session_id()?.to_string();
     let button = cmd.get("button").and_then(|v| v.as_str()).unwrap_or("left");
+    let x = cmd.get("x").and_then(|v| v.as_f64()).unwrap_or(0.0);
+    let y = cmd.get("y").and_then(|v| v.as_f64()).unwrap_or(0.0);
 
     mgr.client
         .send_command(
             "Input.dispatchMouseEvent",
-            Some(json!({ "type": "mouseReleased", "x": 0, "y": 0, "button": button, "clickCount": 1 })),
+            Some(json!({ "type": "mouseReleased", "x": x, "y": y, "button": button, "clickCount": 1 })),
             Some(&session_id),
         )
         .await?;
-    Ok(json!({ "released": true }))
+    Ok(json!({ "released": true, "x": x, "y": y }))
 }
 
 // ---------------------------------------------------------------------------

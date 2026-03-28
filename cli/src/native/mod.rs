@@ -42,6 +42,8 @@ pub mod tracing;
 pub mod webdriver;
 #[allow(dead_code)]
 pub mod stealth;
+#[allow(dead_code)]
+pub mod captcha;
 
 #[cfg(test)]
 mod e2e_tests;

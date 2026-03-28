@@ -98,6 +98,162 @@ impl Default for LaunchOptions {
 }
 
 // ---------------------------------------------------------------------------
+// Virtual display (Xvfb) for headless Linux stealth
+// ---------------------------------------------------------------------------
+
+/// Ensure a virtual display is available on headless Linux.
+/// Installs Xvfb if needed, starts it, and returns the DISPLAY string.
+///
+/// The Xvfb process is started as a daemon and persists for the lifetime
+/// of the silicon-browser daemon. A lock file prevents multiple instances.
+#[cfg(target_os = "linux")]
+fn ensure_virtual_display() -> Result<String, String> {
+    use std::process::Command;
+
+    // Check if Xvfb is already running (e.g. from a previous session)
+    let lock_path = dirs::home_dir()
+        .unwrap_or_else(|| PathBuf::from("/tmp"))
+        .join(".silicon-browser")
+        .join("xvfb.display");
+
+    if let Ok(display) = std::fs::read_to_string(&lock_path) {
+        let display = display.trim().to_string();
+        // Verify the display is still alive
+        if Command::new("xdpyinfo")
+            .env("DISPLAY", &display)
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status()
+            .map(|s| s.success())
+            .unwrap_or(false)
+        {
+            return Ok(display);
+        }
+    }
+
+    // Check if Xvfb is installed
+    let has_xvfb = Command::new("which")
+        .arg("Xvfb")
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false);
+
+    if !has_xvfb {
+        // Try to install Xvfb automatically
+        eprintln!("[silicon-browser] No display server found. Installing Xvfb for stealth mode...");
+
+        // Try apt (Debian/Ubuntu)
+        let apt_result = Command::new("sh")
+            .args(["-c", "command -v apt-get && sudo apt-get update -qq && sudo apt-get install -y -qq xvfb >/dev/null 2>&1"])
+            .status();
+
+        if !apt_result.map(|s| s.success()).unwrap_or(false) {
+            // Try yum (RHEL/CentOS/Amazon Linux)
+            let yum_result = Command::new("sh")
+                .args(["-c", "command -v yum && sudo yum install -y -q xorg-x11-server-Xvfb >/dev/null 2>&1"])
+                .status();
+
+            if !yum_result.map(|s| s.success()).unwrap_or(false) {
+                // Try dnf (Fedora)
+                let dnf_result = Command::new("sh")
+                    .args(["-c", "command -v dnf && sudo dnf install -y -q xorg-x11-server-Xvfb >/dev/null 2>&1"])
+                    .status();
+
+                if !dnf_result.map(|s| s.success()).unwrap_or(false) {
+                    // Try apk (Alpine)
+                    let apk_result = Command::new("sh")
+                        .args(["-c", "command -v apk && sudo apk add --quiet xvfb >/dev/null 2>&1"])
+                        .status();
+
+                    if !apk_result.map(|s| s.success()).unwrap_or(false) {
+                        return Err("Could not install Xvfb. Install manually: apt install xvfb".to_string());
+                    }
+                }
+            }
+        }
+
+        // Verify installation
+        if !Command::new("which")
+            .arg("Xvfb")
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status()
+            .map(|s| s.success())
+            .unwrap_or(false)
+        {
+            return Err("Xvfb installation failed".to_string());
+        }
+
+        eprintln!("[silicon-browser] Xvfb installed successfully.");
+    }
+
+    // Find a free display number (try :99, :98, etc.)
+    let mut display_num = 99;
+    let display = loop {
+        let sock_path = format!("/tmp/.X11-unix/X{}", display_num);
+        if !std::path::Path::new(&sock_path).exists() {
+            break format!(":{}", display_num);
+        }
+        display_num -= 1;
+        if display_num < 90 {
+            return Err("No free display number found (tried :90-:99)".to_string());
+        }
+    };
+
+    // Start Xvfb
+    let child = Command::new("Xvfb")
+        .args([
+            &display,
+            "-screen", "0", "1920x1080x24",
+            "-ac",           // disable access control (no auth needed)
+            "-nolisten", "tcp",
+            "+extension", "GLX",  // needed for WebGL
+        ])
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .map_err(|e| format!("Failed to start Xvfb: {}", e))?;
+
+    // Wait a moment for Xvfb to initialize
+    std::thread::sleep(Duration::from_millis(500));
+
+    // Verify it's running
+    let alive = Command::new("xdpyinfo")
+        .env("DISPLAY", &display)
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false);
+
+    if !alive {
+        return Err("Xvfb started but display is not responding".to_string());
+    }
+
+    // Save the display number and PID for cleanup / reuse
+    let _ = std::fs::create_dir_all(lock_path.parent().unwrap());
+    let _ = std::fs::write(&lock_path, &display);
+
+    // Save PID for potential cleanup
+    let pid_path = lock_path.with_extension("pid");
+    let _ = std::fs::write(&pid_path, child.id().to_string());
+
+    // Detach — Xvfb runs as long as the silicon-browser daemon runs.
+    // We intentionally leak the Child handle so it isn't killed on drop.
+    std::mem::forget(child);
+
+    eprintln!("[silicon-browser] Virtual display started on {display}");
+    Ok(display)
+}
+
+#[cfg(not(target_os = "linux"))]
+fn ensure_virtual_display() -> Result<String, String> {
+    Err("Virtual display is only needed on Linux".to_string())
+}
+
+// ---------------------------------------------------------------------------
 // Profile management
 // ---------------------------------------------------------------------------
 
@@ -192,10 +348,43 @@ fn build_chrome_args(options: &LaunchOptions) -> Result<ChromeArgs, String> {
         .as_ref()
         .is_some_and(|exts| !exts.is_empty());
 
-    // Extensions require headed mode in native Chrome (content scripts are not
-    // injected in headless mode).  Skip --headless when extensions are loaded.
+    // Stealth headless: instead of --headless=new (which has detectable
+    // architectural differences), run headed Chrome with the window moved
+    // far off-screen. This is indistinguishable from a real human browser
+    // because it IS a real headed browser — just not visible.
+    //
+    // --headless=new is only used as a fallback when SILICON_BROWSER_HEADLESS_REAL=1
+    // is set (e.g. in CI environments without a display server).
+    let use_real_headless = std::env::var("SILICON_BROWSER_HEADLESS_REAL").is_ok();
+    let has_display = std::env::var("DISPLAY").is_ok()
+        || std::env::var("WAYLAND_DISPLAY").is_ok()
+        || cfg!(target_os = "macos")
+        || cfg!(target_os = "windows");
+
     if options.headless && !has_extensions {
-        args.push("--headless=new".to_string());
+        if use_real_headless {
+            // Explicitly requested real headless mode
+            args.push("--headless=new".to_string());
+        } else if has_display {
+            // Display available — use stealth headed mode (offscreen window).
+            // Passes ALL headless detection because it IS a real headed browser.
+            args.push("--window-position=-32000,-32000".to_string());
+        } else if cfg!(target_os = "linux") {
+            // Linux with no display — auto-provision Xvfb for full stealth.
+            // This gives us a real headed browser on a headless server.
+            match ensure_virtual_display() {
+                Ok(display) => {
+                    std::env::set_var("DISPLAY", &display);
+                    args.push("--window-position=-32000,-32000".to_string());
+                }
+                Err(_) => {
+                    // Xvfb unavailable and can't install — fall back to headless
+                    args.push("--headless=new".to_string());
+                }
+            }
+        } else {
+            args.push("--headless=new".to_string());
+        }
     }
 
     if let Some(ref proxy) = options.proxy {
