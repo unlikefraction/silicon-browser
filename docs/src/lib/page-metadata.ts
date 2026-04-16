@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 import { PAGE_TITLES } from "./page-titles";
 
 const DESCRIPTION =
-  "Headless browser automation CLI for AI agents";
+  "Stealth-first, terminal-native headless browser CLI for AI agents. CloakBrowser + 18 stealth evasions. Profiles with pinned fingerprints. Push/clone over HTTP.";
 
 export function pageMetadata(slug: string): Metadata {
   const title = PAGE_TITLES[slug];
