@@ -45,7 +45,7 @@ const packageJson = JSON.parse(
 const version = packageJson.version;
 
 // GitHub release URL
-const GITHUB_REPO = 'unlikefraction/silicon-browser';
+const GITHUB_REPO = 'vercel-labs/silicon-browser';
 const DOWNLOAD_URL = `https://github.com/${GITHUB_REPO}/releases/download/v${version}/${binaryName}`;
 
 async function downloadFile(url, dest) {
@@ -80,6 +80,31 @@ async function downloadFile(url, dest) {
   });
 }
 
+/**
+ * Detect which package manager ran this postinstall and write a marker file
+ * next to the binary so `silicon-browser upgrade` can use the correct one
+ * without fragile path heuristics or slow subprocess probing.
+ *
+ * npm_config_user_agent is set by npm/pnpm/yarn/bun during lifecycle scripts,
+ * e.g. "pnpm/8.10.0 node/v20.10.0 linux x64"
+ */
+function writeInstallMethod() {
+  const ua = process.env.npm_config_user_agent || '';
+  let method = '';
+  if (ua.startsWith('pnpm/')) method = 'pnpm';
+  else if (ua.startsWith('yarn/')) method = 'yarn';
+  else if (ua.startsWith('bun/')) method = 'bun';
+  else if (ua.startsWith('npm/')) method = 'npm';
+
+  if (method) {
+    try {
+      writeFileSync(join(binDir, '.install-method'), method);
+    } catch {
+      // Non-critical — upgrade will fall back to heuristics
+    }
+  }
+}
+
 async function main() {
   // Check if binary already exists
   if (existsSync(binaryPath)) {
@@ -88,10 +113,12 @@ async function main() {
       chmodSync(binaryPath, 0o755);
     }
     console.log(`✓ Native binary ready: ${binaryName}`);
-    
+
+    writeInstallMethod();
+
     // On global installs, fix npm's bin entry to use native binary directly
     await fixGlobalInstallBin();
-    
+
     showInstallReminder();
     return;
   }
@@ -106,12 +133,12 @@ async function main() {
 
   try {
     await downloadFile(DOWNLOAD_URL, binaryPath);
-    
+
     // Make executable on Unix
     if (platform() !== 'win32') {
       chmodSync(binaryPath, 0o755);
     }
-    
+
     console.log(`✓ Downloaded native binary: ${binaryName}`);
   } catch (err) {
     console.log(`Could not download native binary: ${err.message}`);
@@ -121,6 +148,8 @@ async function main() {
     console.log('  2. Run: npm run build:native');
   }
 
+  writeInstallMethod();
+
   // On global installs, fix npm's bin entry to use native binary directly
   // This avoids the /bin/sh error on Windows and provides zero-overhead execution
   await fixGlobalInstallBin();
@@ -128,15 +157,60 @@ async function main() {
   showInstallReminder();
 }
 
+function findSystemChrome() {
+  const os = platform();
+  if (os === 'darwin') {
+    const candidates = [
+      '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
+      '/Applications/Google Chrome Canary.app/Contents/MacOS/Google Chrome Canary',
+      '/Applications/Chromium.app/Contents/MacOS/Chromium',
+    ];
+    return candidates.find(p => existsSync(p)) || null;
+  }
+  if (os === 'linux') {
+    const names = ['google-chrome', 'google-chrome-stable', 'chromium-browser', 'chromium'];
+    for (const name of names) {
+      try {
+        const result = execSync(`which ${name} 2>/dev/null`, { encoding: 'utf8' }).trim();
+        if (result) return result;
+      } catch {}
+    }
+    return null;
+  }
+  if (os === 'win32') {
+    const candidates = [
+      `${process.env.LOCALAPPDATA}\\Google\\Chrome\\Application\\chrome.exe`,
+      'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe',
+      'C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe',
+    ];
+    return candidates.find(p => p && existsSync(p)) || null;
+  }
+  return null;
+}
+
 function showInstallReminder() {
+  const systemChrome = findSystemChrome();
+  if (systemChrome) {
+    console.log('');
+    console.log(`  ✓ System Chrome found: ${systemChrome}`);
+    console.log('    silicon-browser will use it automatically.');
+    console.log('');
+    return;
+  }
+
   console.log('');
-  console.log('  To download Chrome, run:');
+  console.log('  ⚠ No Chrome installation detected.');
+  console.log('  If you plan to use a local browser, run:');
   console.log('');
   console.log('    silicon-browser install');
+  if (platform() === 'linux') {
+    console.log('');
+    console.log('  On Linux, include system dependencies with:');
+    console.log('');
+    console.log('    silicon-browser install --with-deps');
+  }
   console.log('');
-  console.log('  On Linux, include system dependencies with:');
-  console.log('');
-  console.log('    silicon-browser install --with-deps');
+  console.log('  You can skip this if you use --cdp, --provider, --engine, or --executable-path.');
   console.log('');
 }
 

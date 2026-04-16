@@ -72,6 +72,23 @@ pub fn gen_id() -> String {
 }
 
 pub fn parse_command(args: &[String], flags: &Flags) -> Result<Value, ParseError> {
+    let mut result = parse_command_inner(args, flags)?;
+
+    // Inject SILICON_BROWSER_DEFAULT_TIMEOUT into any wait-family command that
+    // doesn't already carry an explicit timeout. Centralised here so that new
+    // wait variants automatically inherit the default without per-variant wiring.
+    if let Some(action) = result.get("action").and_then(|a| a.as_str()) {
+        if action.starts_with("wait") && result.get("timeout").is_none() {
+            if let Some(t) = flags.default_timeout {
+                result["timeout"] = json!(t);
+            }
+        }
+    }
+
+    Ok(result)
+}
+
+fn parse_command_inner(args: &[String], flags: &Flags) -> Result<Value, ParseError> {
     if args.is_empty() {
         return Err(ParseError::MissingArguments {
             context: "".to_string(),
@@ -112,7 +129,9 @@ pub fn parse_command(args: &[String], flags: &Flags) -> Result<Value, ParseError
                 format!("https://{}", url)
             };
             let mut nav_cmd = json!({ "id": id, "action": "navigate", "url": url });
-            // If --headers flag is set, include headers (scoped to this origin)
+            if flags.provider.is_some() {
+                nav_cmd["waitUntil"] = json!("none");
+            }
             if let Some(ref headers_json) = flags.headers {
                 let headers =
                     serde_json::from_str::<serde_json::Value>(headers_json).map_err(|_| {
@@ -449,10 +468,22 @@ pub fn parse_command(args: &[String], flags: &Flags) -> Result<Value, ParseError
 
         // === Screenshot/PDF ===
         "screenshot" => {
-            // screenshot [selector] [path]
+            // screenshot [selector] [path] [--full/-f]
             // selector: @ref or CSS selector
             // path: file path (contains / or . or ends with known extension)
-            let (selector, path) = match (rest.first(), rest.get(1)) {
+            let mut full_page = false;
+            let positional: Vec<&str> = rest
+                .iter()
+                .filter(|arg| match **arg {
+                    "--full" | "-f" => {
+                        full_page = true;
+                        false
+                    }
+                    _ => true,
+                })
+                .copied()
+                .collect();
+            let (selector, path) = match (positional.first(), positional.get(1)) {
                 (Some(first), Some(second)) => {
                     // Two args: first is selector, second is path
                     (Some(*first), Some(*second))
@@ -480,7 +511,7 @@ pub fn parse_command(args: &[String], flags: &Flags) -> Result<Value, ParseError
             let mut cmd = json!({
                 "id": id, "action": "screenshot",
                 "path": path, "selector": selector,
-                "fullPage": flags.full, "annotate": flags.annotate
+                "fullPage": full_page, "annotate": flags.annotate
             });
             if let Some(ref fmt) = flags.screenshot_format {
                 cmd["format"] = json!(fmt);
@@ -530,6 +561,9 @@ pub fn parse_command(args: &[String], flags: &Flags) -> Result<Value, ParseError
                     }
                     "-C" | "--cursor" => {
                         obj.insert("cursor".to_string(), json!(true));
+                    }
+                    "-u" | "--urls" => {
+                        obj.insert("urls".to_string(), json!(true));
                     }
                     "-d" | "--depth" => {
                         if let Some(d) = rest.get(i + 1) {
@@ -791,6 +825,62 @@ pub fn parse_command(args: &[String], flags: &Flags) -> Result<Value, ParseError
             }
         }
 
+        // === Runtime stream control ===
+        "stream" => match rest.first().copied() {
+            Some("enable") => {
+                let mut cmd = json!({ "id": id, "action": "stream_enable" });
+                let mut i = 1;
+                while i < rest.len() {
+                    match rest[i] {
+                        "--port" => {
+                            let value =
+                                rest.get(i + 1)
+                                    .ok_or_else(|| ParseError::MissingArguments {
+                                        context: "stream enable --port".to_string(),
+                                        usage: "stream enable [--port <port>]",
+                                    })?;
+                            let port =
+                                value.parse::<u32>().map_err(|_| ParseError::InvalidValue {
+                                    message: format!(
+                                        "Invalid port: '{}' is not a valid integer",
+                                        value
+                                    ),
+                                    usage: "stream enable [--port <port>]",
+                                })?;
+                            if port > u16::MAX as u32 {
+                                return Err(ParseError::InvalidValue {
+                                    message: format!(
+                                        "Invalid port: {} is out of range (valid range: 0-65535)",
+                                        port
+                                    ),
+                                    usage: "stream enable [--port <port>]",
+                                });
+                            }
+                            cmd["port"] = json!(port);
+                            i += 2;
+                        }
+                        flag => {
+                            return Err(ParseError::InvalidValue {
+                                message: format!("Unknown flag for stream enable: {}", flag),
+                                usage: "stream enable [--port <port>]",
+                            });
+                        }
+                    }
+                }
+                Ok(cmd)
+            }
+            Some("disable") => Ok(json!({ "id": id, "action": "stream_disable" })),
+            Some("status") => Ok(json!({ "id": id, "action": "stream_status" })),
+            Some(sub) => Err(ParseError::UnknownSubcommand {
+                subcommand: sub.to_string(),
+                valid_options: &["enable", "disable", "status"],
+            }),
+            None => Err(ParseError::MissingArguments {
+                context: "stream".to_string(),
+                usage: "stream <enable|disable|status>",
+            }),
+        },
+
         // === Get ===
         "get" => parse_get(&rest, &id),
 
@@ -982,7 +1072,7 @@ pub fn parse_command(args: &[String], flags: &Flags) -> Result<Value, ParseError
 
         // === Dialog ===
         "dialog" => {
-            const VALID: &[&str] = &["accept", "dismiss"];
+            const VALID: &[&str] = &["accept", "dismiss", "status"];
             match rest.first().copied() {
                 Some("accept") => {
                     let mut cmd = json!({ "id": id, "action": "dialog", "response": "accept" });
@@ -998,13 +1088,14 @@ pub fn parse_command(args: &[String], flags: &Flags) -> Result<Value, ParseError
                     }
                     Ok(cmd)
                 }
+                Some("status") => Ok(json!({ "id": id, "action": "dialog", "response": "status" })),
                 Some(sub) => Err(ParseError::UnknownSubcommand {
                     subcommand: sub.to_string(),
                     valid_options: VALID,
                 }),
                 None => Err(ParseError::MissingArguments {
                     context: "dialog".to_string(),
-                    usage: "dialog <accept|dismiss> [text]",
+                    usage: "dialog <accept|dismiss|status> [text]",
                 }),
             }
         }
@@ -1218,7 +1309,7 @@ pub fn parse_command(args: &[String], flags: &Flags) -> Result<Value, ParseError
                         context: "state show".to_string(),
                         usage: "state show <filename>",
                     })?;
-                    Ok(json!({ "id": id, "action": "state_show", "filename": filename }))
+                    Ok(json!({ "id": id, "action": "state_show", "path": filename }))
                 }
                 Some("clean") => {
                     let mut days: Option<i64> = None;
@@ -1323,7 +1414,18 @@ pub fn parse_command(args: &[String], flags: &Flags) -> Result<Value, ParseError
             }
         }
 
-        "diff" => parse_diff(&rest, &id, flags),
+        "diff" => parse_diff(&rest, &id),
+
+        // === Batch ===
+        "batch" => {
+            let bail = rest.contains(&"--bail");
+            let commands: Vec<&str> = rest.iter().filter(|a| **a != "--bail").copied().collect();
+            let mut cmd = json!({ "id": id, "action": "batch", "bail": bail });
+            if !commands.is_empty() {
+                cmd["commands"] = json!(commands);
+            }
+            Ok(cmd)
+        }
 
         _ => Err(ParseError::UnknownCommand {
             command: cmd.to_string(),
@@ -1331,7 +1433,7 @@ pub fn parse_command(args: &[String], flags: &Flags) -> Result<Value, ParseError
     }
 }
 
-fn parse_diff(rest: &[&str], id: &str, flags: &Flags) -> Result<Value, ParseError> {
+fn parse_diff(rest: &[&str], id: &str) -> Result<Value, ParseError> {
     const VALID: &[&str] = &["snapshot", "screenshot", "url"];
 
     match rest.first().copied() {
@@ -1476,26 +1578,23 @@ fn parse_diff(rest: &[&str], id: &str, flags: &Flags) -> Result<Value, ParseErro
                             });
                         }
                     }
-                    "--full" => {
+                    "--full" | "-f" => {
                         obj.insert("fullPage".to_string(), json!(true));
                     }
                     other if other.starts_with('-') => {
                         return Err(ParseError::InvalidValue {
                             message: format!("Unknown flag: {}", other),
-                            usage: "diff screenshot --baseline <file> [--output <file>] [--threshold <0-1>] [--selector <sel>] [--full]",
+                            usage: "diff screenshot --baseline <file> [--output <file>] [--threshold <0-1>] [--selector <sel>] [--full/-f]",
                         });
                     }
                     other => {
                         return Err(ParseError::InvalidValue {
                             message: format!("Unexpected argument: {}", other),
-                            usage: "diff screenshot --baseline <file> [--output <file>] [--threshold <0-1>] [--selector <sel>] [--full]",
+                            usage: "diff screenshot --baseline <file> [--output <file>] [--threshold <0-1>] [--selector <sel>] [--full/-f]",
                         });
                     }
                 }
                 i += 1;
-            }
-            if flags.full {
-                obj.insert("fullPage".to_string(), json!(true));
             }
             if !obj.contains_key("baseline") {
                 return Err(ParseError::MissingArguments {
@@ -1527,7 +1626,7 @@ fn parse_diff(rest: &[&str], id: &str, flags: &Flags) -> Result<Value, ParseErro
                     "--screenshot" => {
                         obj.insert("screenshot".to_string(), json!(true));
                     }
-                    "--full" => {
+                    "--full" | "-f" => {
                         obj.insert("fullPage".to_string(), json!(true));
                     }
                     "--wait-until" => {
@@ -1582,20 +1681,17 @@ fn parse_diff(rest: &[&str], id: &str, flags: &Flags) -> Result<Value, ParseErro
                     other if other.starts_with('-') => {
                         return Err(ParseError::InvalidValue {
                             message: format!("Unknown flag: {}", other),
-                            usage: "diff url <url1> <url2> [--screenshot] [--full] [--wait-until <strategy>] [--selector <sel>] [--compact] [--depth <n>]",
+                            usage: "diff url <url1> <url2> [--screenshot] [--full/-f] [--wait-until <strategy>] [--selector <sel>] [--compact] [--depth <n>]",
                         });
                     }
                     other => {
                         return Err(ParseError::InvalidValue {
                             message: format!("Unexpected argument: {}", other),
-                            usage: "diff url <url1> <url2> [--screenshot] [--full] [--wait-until <strategy>] [--selector <sel>] [--compact] [--depth <n>]",
+                            usage: "diff url <url1> <url2> [--screenshot] [--full/-f] [--wait-until <strategy>] [--selector <sel>] [--compact] [--depth <n>]",
                         });
                     }
                 }
                 i += 1;
-            }
-            if flags.full {
-                obj.insert("fullPage".to_string(), json!(true));
             }
             Ok(cmd)
         }
@@ -1738,10 +1834,6 @@ fn parse_find(rest: &[&str], id: &str) -> Result<Value, ParseError> {
         usage: "find <locator> <value> [action] [text]",
     })?;
 
-    let name_idx = rest.iter().position(|&s| s == "--name");
-    let name = name_idx.and_then(|i| rest.get(i + 1).copied());
-    let exact = rest.contains(&"--exact");
-
     match *locator {
         "role" | "text" | "label" | "placeholder" | "alt" | "title" | "testid" | "first"
         | "last" => {
@@ -1761,10 +1853,41 @@ fn parse_find(rest: &[&str], id: &str) -> Result<Value, ParseError> {
                 },
             })?;
             let subaction = rest.get(2).unwrap_or(&"click");
-            let fill_value = if rest.len() > 3 {
-                Some(rest[3..].join(" "))
-            } else {
+            let mut name: Option<&str> = None;
+            let mut exact = false;
+            let mut fill_parts: Vec<&str> = Vec::new();
+
+            if rest.len() > 3 {
+                let mut i = 3;
+                while i < rest.len() {
+                    match rest[i] {
+                        "--exact" => {
+                            exact = true;
+                            i += 1;
+                        }
+                        "--name" => {
+                            let n =
+                                rest.get(i + 1)
+                                    .ok_or_else(|| ParseError::MissingArguments {
+                                        context: format!("find {}", locator),
+                                        usage:
+                                            "find role <role> [action] [--name <name>] [--exact]",
+                                    })?;
+                            name = Some(*n);
+                            i += 2;
+                        }
+                        token => {
+                            fill_parts.push(token);
+                            i += 1;
+                        }
+                    }
+                }
+            }
+
+            let fill_value = if fill_parts.is_empty() {
                 None
+            } else {
+                Some(fill_parts.join(" "))
             };
 
             match *locator {
@@ -2044,8 +2167,9 @@ fn parse_set(rest: &[&str], id: &str) -> Result<Value, ParseError> {
     }
 }
 
+/// Parse network interception, request inspection, and HAR recording commands.
 fn parse_network(rest: &[&str], id: &str) -> Result<Value, ParseError> {
-    const VALID: &[&str] = &["route", "unroute", "requests"];
+    const VALID: &[&str] = &["route", "unroute", "requests", "request", "har"];
 
     match rest.first().copied() {
         Some("route") => {
@@ -2069,11 +2193,54 @@ fn parse_network(rest: &[&str], id: &str) -> Result<Value, ParseError> {
             let clear = rest.contains(&"--clear");
             let filter_idx = rest.iter().position(|&s| s == "--filter");
             let filter = filter_idx.and_then(|i| rest.get(i + 1).copied());
+            let type_idx = rest.iter().position(|&s| s == "--type");
+            let rtype = type_idx.and_then(|i| rest.get(i + 1).copied());
+            let method_idx = rest.iter().position(|&s| s == "--method");
+            let method = method_idx.and_then(|i| rest.get(i + 1).copied());
+            let status_idx = rest.iter().position(|&s| s == "--status");
+            let status = status_idx.and_then(|i| rest.get(i + 1).copied());
             let mut cmd = json!({ "id": id, "action": "requests", "clear": clear });
             if let Some(f) = filter {
                 cmd["filter"] = json!(f);
             }
+            if let Some(t) = rtype {
+                cmd["type"] = json!(t);
+            }
+            if let Some(m) = method {
+                cmd["method"] = json!(m);
+            }
+            if let Some(s) = status {
+                cmd["status"] = json!(s);
+            }
             Ok(cmd)
+        }
+        Some("request") => {
+            let request_id = rest.get(1).ok_or_else(|| ParseError::MissingArguments {
+                context: "network request".to_string(),
+                usage: "network request <requestId>",
+            })?;
+            Ok(json!({ "id": id, "action": "request_detail", "requestId": request_id }))
+        }
+        Some("har") => {
+            const HAR_VALID: &[&str] = &["start", "stop"];
+            match rest.get(1).copied() {
+                Some("start") => Ok(json!({ "id": id, "action": "har_start" })),
+                Some("stop") => {
+                    let mut cmd = json!({ "id": id, "action": "har_stop" });
+                    if let Some(path) = rest.get(2) {
+                        cmd["path"] = json!(path);
+                    }
+                    Ok(cmd)
+                }
+                Some(sub) => Err(ParseError::UnknownSubcommand {
+                    subcommand: sub.to_string(),
+                    valid_options: HAR_VALID,
+                }),
+                None => Err(ParseError::MissingArguments {
+                    context: "network har".to_string(),
+                    usage: "network har <start|stop> [path]",
+                }),
+            }
         }
         Some(sub) => Err(ParseError::UnknownSubcommand {
             subcommand: sub.to_string(),
@@ -2081,7 +2248,7 @@ fn parse_network(rest: &[&str], id: &str) -> Result<Value, ParseError> {
         }),
         None => Err(ParseError::MissingArguments {
             context: "network".to_string(),
-            usage: "network <route|unroute|requests> [args...]",
+            usage: "network <route|unroute|requests|request|har> [args...]",
         }),
     }
 }
@@ -2137,6 +2304,38 @@ fn parse_storage(rest: &[&str], id: &str) -> Result<Value, ParseError> {
     }
 }
 
+/// Split a string into arguments respecting shell quoting (double/single quotes, backslash escapes).
+pub fn shell_words_split(s: &str) -> Vec<String> {
+    let mut args = Vec::new();
+    let mut current = String::new();
+    let mut in_double = false;
+    let mut in_single = false;
+    let mut chars = s.chars().peekable();
+
+    while let Some(c) = chars.next() {
+        match c {
+            '\\' if !in_single => {
+                if let Some(&next) = chars.peek() {
+                    chars.next();
+                    current.push(next);
+                }
+            }
+            '"' if !in_single => in_double = !in_double,
+            '\'' if !in_double => in_single = !in_single,
+            ' ' if !in_double && !in_single => {
+                if !current.is_empty() {
+                    args.push(std::mem::take(&mut current));
+                }
+            }
+            _ => current.push(c),
+        }
+    }
+    if !current.is_empty() {
+        args.push(current);
+    }
+    args
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2145,7 +2344,6 @@ mod tests {
         Flags {
             session: "test".to_string(),
             json: false,
-            full: false,
             headed: false,
             debug: false,
             headers: None,
@@ -2189,6 +2387,12 @@ mod tests {
             screenshot_dir: None,
             screenshot_quality: None,
             screenshot_format: None,
+            idle_timeout: None,
+            default_timeout: None,
+            no_auto_dialog: false,
+            model: None,
+            verbose: false,
+            quiet: false,
         }
     }
 
@@ -2660,6 +2864,82 @@ mod tests {
         assert_eq!(cmd["action"], "tab_close");
     }
 
+    // === Network ===
+
+    #[test]
+    fn test_network_har_start() {
+        let cmd = parse_command(&args("network har start"), &default_flags()).unwrap();
+        assert_eq!(cmd["action"], "har_start");
+    }
+
+    #[test]
+    fn test_network_har_stop_with_path() {
+        let cmd = parse_command(&args("network har stop ./capture.har"), &default_flags()).unwrap();
+        assert_eq!(cmd["action"], "har_stop");
+        assert_eq!(cmd["path"], "./capture.har");
+    }
+
+    #[test]
+    fn test_network_har_stop_without_path() {
+        let cmd = parse_command(&args("network har stop"), &default_flags()).unwrap();
+        assert_eq!(cmd["action"], "har_stop");
+        assert!(cmd.get("path").is_none());
+    }
+
+    #[test]
+    fn test_network_har_requires_subcommand() {
+        let result = parse_command(&args("network har"), &default_flags());
+        assert!(matches!(result, Err(ParseError::MissingArguments { .. })));
+    }
+
+    #[test]
+    fn test_network_requests_type_filter() {
+        let cmd =
+            parse_command(&args("network requests --type xhr,fetch"), &default_flags()).unwrap();
+        assert_eq!(cmd["action"], "requests");
+        assert_eq!(cmd["type"], "xhr,fetch");
+    }
+
+    #[test]
+    fn test_network_requests_method_filter() {
+        let cmd = parse_command(&args("network requests --method POST"), &default_flags()).unwrap();
+        assert_eq!(cmd["action"], "requests");
+        assert_eq!(cmd["method"], "POST");
+    }
+
+    #[test]
+    fn test_network_requests_status_filter() {
+        let cmd = parse_command(&args("network requests --status 2xx"), &default_flags()).unwrap();
+        assert_eq!(cmd["action"], "requests");
+        assert_eq!(cmd["status"], "2xx");
+    }
+
+    #[test]
+    fn test_network_requests_combined_filters() {
+        let cmd = parse_command(
+            &args("network requests --filter api --type xhr --method GET --status 200"),
+            &default_flags(),
+        )
+        .unwrap();
+        assert_eq!(cmd["filter"], "api");
+        assert_eq!(cmd["type"], "xhr");
+        assert_eq!(cmd["method"], "GET");
+        assert_eq!(cmd["status"], "200");
+    }
+
+    #[test]
+    fn test_network_request_detail() {
+        let cmd = parse_command(&args("network request 1234.5"), &default_flags()).unwrap();
+        assert_eq!(cmd["action"], "request_detail");
+        assert_eq!(cmd["requestId"], "1234.5");
+    }
+
+    #[test]
+    fn test_network_request_detail_requires_id() {
+        let result = parse_command(&args("network request"), &default_flags());
+        assert!(matches!(result, Err(ParseError::MissingArguments { .. })));
+    }
+
     // === Screenshot ===
 
     #[test]
@@ -2679,9 +2959,14 @@ mod tests {
 
     #[test]
     fn test_screenshot_full_page() {
-        let mut flags = default_flags();
-        flags.full = true;
-        let cmd = parse_command(&args("screenshot"), &flags).unwrap();
+        let cmd = parse_command(&args("screenshot --full"), &default_flags()).unwrap();
+        assert_eq!(cmd["action"], "screenshot");
+        assert_eq!(cmd["fullPage"], true);
+    }
+
+    #[test]
+    fn test_screenshot_full_page_shorthand() {
+        let cmd = parse_command(&args("screenshot -f"), &default_flags()).unwrap();
         assert_eq!(cmd["action"], "screenshot");
         assert_eq!(cmd["fullPage"], true);
     }
@@ -2768,6 +3053,21 @@ mod tests {
         let cmd = parse_command(&args("snapshot -d 3"), &default_flags()).unwrap();
         assert_eq!(cmd["action"], "snapshot");
         assert_eq!(cmd["maxDepth"], 3);
+    }
+
+    #[test]
+    fn test_snapshot_urls() {
+        let cmd = parse_command(&args("snapshot -i --urls"), &default_flags()).unwrap();
+        assert_eq!(cmd["action"], "snapshot");
+        assert_eq!(cmd["interactive"], true);
+        assert_eq!(cmd["urls"], true);
+    }
+
+    #[test]
+    fn test_snapshot_urls_short() {
+        let cmd = parse_command(&args("snapshot -i -u"), &default_flags()).unwrap();
+        assert_eq!(cmd["action"], "snapshot");
+        assert_eq!(cmd["urls"], true);
     }
 
     // === Wait ===
@@ -3265,6 +3565,21 @@ mod tests {
         assert!(cmd.get("value").is_none());
     }
 
+    #[test]
+    fn test_find_role_fill_does_not_include_flags_in_value() {
+        let cmd = parse_command(
+            &args("find role textbox fill hello --name username --exact"),
+            &default_flags(),
+        )
+        .unwrap();
+        assert_eq!(cmd["action"], "getbyrole");
+        assert_eq!(cmd["role"], "textbox");
+        assert_eq!(cmd["subaction"], "fill");
+        assert_eq!(cmd["name"], "username");
+        assert_eq!(cmd["exact"], true);
+        assert_eq!(cmd["value"], "hello");
+    }
+
     // === Download Tests ===
 
     #[test]
@@ -3344,6 +3659,77 @@ mod tests {
         let cmd = parse_command(&args("wait -d ./file.pdf"), &default_flags()).unwrap();
         assert_eq!(cmd["action"], "waitfordownload");
         assert_eq!(cmd["path"], "./file.pdf");
+    }
+
+    // === Default timeout (SILICON_BROWSER_DEFAULT_TIMEOUT) tests ===
+
+    fn flags_with_default_timeout(ms: u64) -> Flags {
+        let mut f = default_flags();
+        f.default_timeout = Some(ms);
+        f
+    }
+
+    #[test]
+    fn test_wait_selector_inherits_default_timeout() {
+        let flags = flags_with_default_timeout(3000);
+        let cmd = parse_command(&args("wait #element"), &flags).unwrap();
+        assert_eq!(cmd["action"], "wait");
+        assert_eq!(cmd["selector"], "#element");
+        assert_eq!(cmd["timeout"], 3000);
+    }
+
+    #[test]
+    fn test_wait_url_inherits_default_timeout() {
+        let flags = flags_with_default_timeout(4000);
+        let cmd = parse_command(&args("wait --url **/dashboard"), &flags).unwrap();
+        assert_eq!(cmd["action"], "waitforurl");
+        assert_eq!(cmd["timeout"], 4000);
+    }
+
+    #[test]
+    fn test_wait_load_inherits_default_timeout() {
+        let flags = flags_with_default_timeout(4000);
+        let cmd = parse_command(&args("wait --load networkidle"), &flags).unwrap();
+        assert_eq!(cmd["action"], "waitforloadstate");
+        assert_eq!(cmd["timeout"], 4000);
+    }
+
+    #[test]
+    fn test_wait_fn_inherits_default_timeout() {
+        let flags = flags_with_default_timeout(4000);
+        let cmd = parse_command(&args("wait --fn window.ready"), &flags).unwrap();
+        assert_eq!(cmd["action"], "waitforfunction");
+        assert_eq!(cmd["timeout"], 4000);
+    }
+
+    #[test]
+    fn test_wait_text_inherits_default_timeout() {
+        let flags = flags_with_default_timeout(2000);
+        let cmd = parse_command(&args("wait --text Welcome"), &flags).unwrap();
+        assert_eq!(cmd["action"], "wait");
+        assert_eq!(cmd["text"], "Welcome");
+        assert_eq!(cmd["timeout"], 2000);
+    }
+
+    #[test]
+    fn test_wait_download_inherits_default_timeout() {
+        let flags = flags_with_default_timeout(5000);
+        let cmd = parse_command(&args("wait --download"), &flags).unwrap();
+        assert_eq!(cmd["action"], "waitfordownload");
+        assert_eq!(cmd["timeout"], 5000);
+    }
+
+    #[test]
+    fn test_wait_explicit_timeout_overrides_default() {
+        let flags = flags_with_default_timeout(5000);
+        let cmd = parse_command(&args("wait --text Welcome --timeout 1000"), &flags).unwrap();
+        assert_eq!(cmd["timeout"], 1000);
+    }
+
+    #[test]
+    fn test_wait_no_default_timeout_omits_field() {
+        let cmd = parse_command(&args("wait #element"), &default_flags()).unwrap();
+        assert!(cmd.get("timeout").is_none());
     }
 
     // === Connect (CDP) tests ===
@@ -3442,6 +3828,46 @@ mod tests {
         let cmd = parse_command(&args("connect 1"), &default_flags()).unwrap();
         assert_eq!(cmd["action"], "launch");
         assert_eq!(cmd["cdpPort"], 1);
+    }
+
+    // === Runtime stream control tests ===
+
+    #[test]
+    fn test_stream_enable_auto_port() {
+        let cmd = parse_command(&args("stream enable"), &default_flags()).unwrap();
+        assert_eq!(cmd["action"], "stream_enable");
+        assert!(cmd.get("port").is_none());
+    }
+
+    #[test]
+    fn test_stream_enable_with_port() {
+        let cmd = parse_command(&args("stream enable --port 9223"), &default_flags()).unwrap();
+        assert_eq!(cmd["action"], "stream_enable");
+        assert_eq!(cmd["port"], 9223);
+    }
+
+    #[test]
+    fn test_stream_status() {
+        let cmd = parse_command(&args("stream status"), &default_flags()).unwrap();
+        assert_eq!(cmd["action"], "stream_status");
+    }
+
+    #[test]
+    fn test_stream_disable() {
+        let cmd = parse_command(&args("stream disable"), &default_flags()).unwrap();
+        assert_eq!(cmd["action"], "stream_disable");
+    }
+
+    #[test]
+    fn test_stream_enable_invalid_port() {
+        let result = parse_command(&args("stream enable --port abc"), &default_flags());
+        assert!(matches!(result, Err(ParseError::InvalidValue { .. })));
+    }
+
+    #[test]
+    fn test_stream_missing_subcommand() {
+        let result = parse_command(&args("stream"), &default_flags());
+        assert!(matches!(result, Err(ParseError::MissingArguments { .. })));
     }
 
     // === Trace Tests ===
@@ -3549,10 +3975,23 @@ mod tests {
     }
 
     #[test]
-    fn test_diff_screenshot_global_full_flag() {
-        let mut flags = default_flags();
-        flags.full = true;
-        let cmd = parse_command(&args("diff screenshot --baseline b.png"), &flags).unwrap();
+    fn test_diff_screenshot_command_full_flag() {
+        let cmd = parse_command(
+            &args("diff screenshot --baseline b.png --full"),
+            &default_flags(),
+        )
+        .unwrap();
+        assert_eq!(cmd["action"], "diff_screenshot");
+        assert_eq!(cmd["fullPage"], true);
+    }
+
+    #[test]
+    fn test_diff_screenshot_command_full_flag_shorthand() {
+        let cmd = parse_command(
+            &args("diff screenshot --baseline b.png -f"),
+            &default_flags(),
+        )
+        .unwrap();
         assert_eq!(cmd["action"], "diff_screenshot");
         assert_eq!(cmd["fullPage"], true);
     }
@@ -3593,10 +4032,12 @@ mod tests {
     }
 
     #[test]
-    fn test_diff_url_global_full_flag() {
-        let mut flags = default_flags();
-        flags.full = true;
-        let cmd = parse_command(&args("diff url https://a.com https://b.com"), &flags).unwrap();
+    fn test_diff_url_command_full_flag() {
+        let cmd = parse_command(
+            &args("diff url https://a.com https://b.com --full"),
+            &default_flags(),
+        )
+        .unwrap();
         assert_eq!(cmd["fullPage"], true);
     }
 
@@ -3967,5 +4408,58 @@ mod tests {
     fn test_get_cdp_url() {
         let cmd = parse_command(&args("get cdp-url"), &default_flags()).unwrap();
         assert_eq!(cmd["action"], "cdp_url");
+    }
+
+    // === Batch Tests ===
+
+    #[test]
+    fn test_batch_default() {
+        let cmd = parse_command(&args("batch"), &default_flags()).unwrap();
+        assert_eq!(cmd["action"], "batch");
+        assert_eq!(cmd["bail"], false);
+    }
+
+    #[test]
+    fn test_batch_with_bail() {
+        let cmd = parse_command(&args("batch --bail"), &default_flags()).unwrap();
+        assert_eq!(cmd["action"], "batch");
+        assert_eq!(cmd["bail"], true);
+    }
+
+    #[test]
+    fn test_batch_with_args() {
+        let cmd_args = vec![
+            "batch".to_string(),
+            "open https://example.com".to_string(),
+            "screenshot".to_string(),
+        ];
+        let cmd = parse_command(&cmd_args, &default_flags()).unwrap();
+        assert_eq!(cmd["action"], "batch");
+        assert_eq!(cmd["bail"], false);
+        let commands = cmd["commands"].as_array().unwrap();
+        assert_eq!(commands.len(), 2);
+        assert_eq!(commands[0], "open https://example.com");
+        assert_eq!(commands[1], "screenshot");
+    }
+
+    #[test]
+    fn test_batch_with_args_and_bail() {
+        let cmd_args = vec![
+            "batch".to_string(),
+            "--bail".to_string(),
+            "open https://example.com".to_string(),
+            "screenshot".to_string(),
+        ];
+        let cmd = parse_command(&cmd_args, &default_flags()).unwrap();
+        assert_eq!(cmd["action"], "batch");
+        assert_eq!(cmd["bail"], true);
+        let commands = cmd["commands"].as_array().unwrap();
+        assert_eq!(commands.len(), 2);
+    }
+
+    #[test]
+    fn test_batch_no_args_no_commands_field() {
+        let cmd = parse_command(&args("batch"), &default_flags()).unwrap();
+        assert!(cmd.get("commands").is_none());
     }
 }

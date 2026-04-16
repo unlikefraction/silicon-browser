@@ -8,6 +8,48 @@ const CONFIG_DIR: &str = ".silicon-browser";
 const CONFIG_FILENAME: &str = "config.json";
 const PROJECT_CONFIG_FILENAME: &str = "silicon-browser.json";
 
+/// Parse idle timeout from user-friendly format.
+/// Supports: "10s" (seconds), "3m" (minutes), "1h" (hours), or raw milliseconds.
+fn parse_idle_timeout(s: &str) -> Result<String, String> {
+    let s = s.trim();
+    if s.is_empty() {
+        return Err("Empty idle timeout".to_string());
+    }
+
+    // If the value ends with a unit suffix, convert it to milliseconds.
+    if s.chars().last().is_some_and(|c| c.is_ascii_alphabetic()) {
+        let (num_str, unit) = s.split_at(s.len() - 1);
+        let num: u64 = num_str.parse().map_err(|_| "Invalid number")?;
+
+        let ms = match unit {
+            "s" => num * 1000,
+            "m" => num * 60 * 1000,
+            "h" => num * 60 * 60 * 1000,
+            _ => return Err("Invalid idle timeout unit (use s, m, h, or raw ms)".to_string()),
+        };
+        return Ok(ms.to_string());
+    }
+
+    // Pure numbers are already expressed in milliseconds.
+    s.parse::<u64>().map_err(|_| "Invalid idle timeout")?;
+    Ok(s.to_string())
+}
+
+fn parse_idle_timeout_value(value: Option<String>, source: &str) -> Option<String> {
+    value.and_then(|raw| match parse_idle_timeout(&raw) {
+        Ok(ms) => Some(ms),
+        Err(e) => {
+            eprintln!(
+                "{} invalid idle timeout from {}: {}",
+                color::warning_indicator(),
+                source,
+                e
+            );
+            None
+        }
+    })
+}
+
 #[derive(Debug, Default, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
 pub struct Config {
@@ -45,6 +87,9 @@ pub struct Config {
     pub screenshot_dir: Option<String>,
     pub screenshot_quality: Option<u32>,
     pub screenshot_format: Option<String>,
+    pub idle_timeout: Option<String>,
+    pub no_auto_dialog: Option<bool>,
+    pub model: Option<String>,
 }
 
 impl Config {
@@ -90,6 +135,9 @@ impl Config {
             screenshot_dir: other.screenshot_dir.or(self.screenshot_dir),
             screenshot_quality: other.screenshot_quality.or(self.screenshot_quality),
             screenshot_format: other.screenshot_format.or(self.screenshot_format),
+            idle_timeout: other.idle_timeout.or(self.idle_timeout),
+            no_auto_dialog: other.no_auto_dialog.or(self.no_auto_dialog),
+            model: other.model.or(self.model),
         }
     }
 }
@@ -97,7 +145,13 @@ impl Config {
 fn read_config_file(path: &Path) -> Option<Config> {
     let content = fs::read_to_string(path).ok()?;
     match serde_json::from_str::<Config>(&content) {
-        Ok(config) => Some(config),
+        Ok(mut config) => {
+            config.idle_timeout = parse_idle_timeout_value(
+                config.idle_timeout.take(),
+                &format!("config file {}", path.display()),
+            );
+            Some(config)
+        }
         Err(e) => {
             eprintln!(
                 "{} invalid config file {}: {}",
@@ -168,6 +222,8 @@ fn extract_config_path(args: &[String]) -> Option<Option<String>> {
         "--screenshot-dir",
         "--screenshot-quality",
         "--screenshot-format",
+        "--idle-timeout",
+        "--model",
     ];
     let mut i = 0;
     while i < args.len() {
@@ -250,6 +306,12 @@ pub struct Flags {
     pub screenshot_dir: Option<String>,
     pub screenshot_quality: Option<u32>,
     pub screenshot_format: Option<String>,
+    pub idle_timeout: Option<String>, // Canonical milliseconds string for SILICON_BROWSER_IDLE_TIMEOUT_MS
+    pub default_timeout: Option<u64>, // SILICON_BROWSER_DEFAULT_TIMEOUT in ms
+    pub no_auto_dialog: bool,
+    pub model: Option<String>,
+    pub verbose: bool,
+    pub quiet: bool,
 
     // Track which launch-time options were explicitly passed via CLI
     // (as opposed to being set only via environment variables)
@@ -306,10 +368,20 @@ pub fn parse_flags(args: &[String]) -> Flags {
         extensions,
         profile: env::var("SILICON_BROWSER_PROFILE").ok().or(config.profile),
         state: env::var("SILICON_BROWSER_STATE").ok().or(config.state),
-        proxy: env::var("SILICON_BROWSER_PROXY").ok().or(config.proxy),
+        proxy: env::var("SILICON_BROWSER_PROXY")
+            .ok()
+            .or(config.proxy)
+            .or_else(|| env::var("HTTP_PROXY").ok())
+            .or_else(|| env::var("http_proxy").ok())
+            .or_else(|| env::var("HTTPS_PROXY").ok())
+            .or_else(|| env::var("https_proxy").ok())
+            .or_else(|| env::var("ALL_PROXY").ok())
+            .or_else(|| env::var("all_proxy").ok()),
         proxy_bypass: env::var("SILICON_BROWSER_PROXY_BYPASS")
             .ok()
-            .or(config.proxy_bypass),
+            .or(config.proxy_bypass)
+            .or_else(|| env::var("NO_PROXY").ok())
+            .or_else(|| env::var("no_proxy").ok()),
         args: env::var("SILICON_BROWSER_ARGS").ok().or(config.args),
         user_agent: env::var("SILICON_BROWSER_USER_AGENT")
             .ok()
@@ -368,6 +440,19 @@ pub fn parse_flags(args: &[String]) -> Flags {
             .ok()
             .or(config.screenshot_format)
             .filter(|s| s == "png" || s == "jpeg"),
+        idle_timeout: parse_idle_timeout_value(
+            env::var("SILICON_BROWSER_IDLE_TIMEOUT_MS").ok(),
+            "SILICON_BROWSER_IDLE_TIMEOUT_MS",
+        )
+        .or(config.idle_timeout),
+        default_timeout: env::var("SILICON_BROWSER_DEFAULT_TIMEOUT")
+            .ok()
+            .and_then(|s| s.parse::<u64>().ok()),
+        no_auto_dialog: env_var_is_truthy("SILICON_BROWSER_NO_AUTO_DIALOG")
+            || config.no_auto_dialog.unwrap_or(false),
+        model: env::var("AI_GATEWAY_MODEL").ok().or(config.model),
+        verbose: false,
+        quiet: false,
         cli_executable_path: false,
         cli_extensions: false,
         cli_profile: false,
@@ -417,6 +502,19 @@ pub fn parse_flags(args: &[String]) -> Flags {
             "--session" => {
                 if let Some(s) = args.get(i + 1) {
                     flags.session = s.clone();
+                    i += 1;
+                }
+            }
+            "--idle-timeout" => {
+                if let Some(s) = args.get(i + 1) {
+                    match parse_idle_timeout(s) {
+                        Ok(ms) => flags.idle_timeout = Some(ms),
+                        Err(e) => eprintln!(
+                            "{} Invalid --idle-timeout: {}",
+                            color::warning_indicator(),
+                            e
+                        ),
+                    }
                     i += 1;
                 }
             }
@@ -639,6 +737,25 @@ pub fn parse_flags(args: &[String]) -> Flags {
                     i += 1;
                 }
             }
+            "--no-auto-dialog" => {
+                let (val, consumed) = parse_bool_arg(args, i);
+                flags.no_auto_dialog = val;
+                if consumed {
+                    i += 1;
+                }
+            }
+            "--model" => {
+                if let Some(s) = args.get(i + 1) {
+                    flags.model = Some(s.clone());
+                    i += 1;
+                }
+            }
+            "-v" | "--verbose" => {
+                flags.verbose = true;
+            }
+            "-q" | "--quiet" => {
+                flags.quiet = true;
+            }
             "--config" => {
                 // Already handled by load_config(); skip the value
                 i += 1;
@@ -667,6 +784,11 @@ pub fn clean_args(args: &[String]) -> Vec<String> {
         "--content-boundaries",
         "--confirm-interactive",
         "--incognito",
+        "--no-auto-dialog",
+        "-v",
+        "--verbose",
+        "-q",
+        "--quiet",
     ];
     // Global flags that always take a value (need to skip the next arg too)
     const GLOBAL_FLAGS_WITH_VALUE: &[&str] = &[
@@ -696,6 +818,8 @@ pub fn clean_args(args: &[String]) -> Vec<String> {
         "--screenshot-dir",
         "--screenshot-quality",
         "--screenshot-format",
+        "--idle-timeout",
+        "--model",
     ];
 
     let mut i = 0;
@@ -738,6 +862,36 @@ mod tests {
     fn test_parse_headers_flag() {
         let flags = parse_flags(&args(r#"open example.com --headers {"Auth":"token"}"#));
         assert_eq!(flags.headers, Some(r#"{"Auth":"token"}"#.to_string()));
+    }
+
+    #[test]
+    fn test_parse_idle_timeout_raw_ms() {
+        assert_eq!(parse_idle_timeout("10").unwrap(), "10");
+    }
+
+    #[test]
+    fn test_parse_idle_timeout_seconds() {
+        assert_eq!(parse_idle_timeout("10s").unwrap(), "10000");
+    }
+
+    #[test]
+    fn test_parse_idle_timeout_minutes() {
+        assert_eq!(parse_idle_timeout("3m").unwrap(), "180000");
+    }
+
+    #[test]
+    fn test_parse_idle_timeout_hours() {
+        assert_eq!(parse_idle_timeout("1h").unwrap(), "3600000");
+    }
+
+    #[test]
+    fn test_parse_idle_timeout_rejects_capital_m() {
+        assert!(parse_idle_timeout("10M").is_err());
+    }
+
+    #[test]
+    fn test_parse_idle_timeout_rejects_unknown_unit() {
+        assert!(parse_idle_timeout("10x").is_err());
     }
 
     #[test]
@@ -836,6 +990,18 @@ mod tests {
     }
 
     #[test]
+    fn test_clean_args_removes_idle_timeout_before_command() {
+        let cleaned = clean_args(&args("--idle-timeout 10s open example.com"));
+        assert_eq!(cleaned, vec!["open", "example.com"]);
+    }
+
+    #[test]
+    fn test_parse_idle_timeout_flag_converts_to_ms() {
+        let flags = parse_flags(&args("--idle-timeout 10s open example.com"));
+        assert_eq!(flags.idle_timeout.as_deref(), Some("10000"));
+    }
+
+    #[test]
     fn test_parse_flags_with_session_and_executable_path() {
         let flags = parse_flags(&args(
             "--session test --executable-path /custom/chrome open example.com",
@@ -917,7 +1083,6 @@ mod tests {
         let json = r#"{
             "headed": true,
             "json": true,
-            "full": true,
             "debug": true,
             "session": "test-session",
             "sessionName": "my-app",
@@ -940,7 +1105,6 @@ mod tests {
         let config: Config = serde_json::from_str(json).unwrap();
         assert_eq!(config.headed, Some(true));
         assert_eq!(config.json, Some(true));
-        assert_eq!(config.full, Some(true));
         assert_eq!(config.debug, Some(true));
         assert_eq!(config.session.as_deref(), Some("test-session"));
         assert_eq!(config.session_name.as_deref(), Some("my-app"));
@@ -1035,6 +1199,22 @@ mod tests {
         let config = read_config_file(&config_path).unwrap();
         assert_eq!(config.headed, Some(true));
         assert_eq!(config.proxy.as_deref(), Some("http://test:1234"));
+
+        let _ = fs::remove_file(&config_path);
+        let _ = fs::remove_dir(&dir);
+    }
+
+    #[test]
+    fn test_load_config_from_file_parses_idle_timeout() {
+        use std::io::Write;
+        let dir = std::env::temp_dir().join("ab-test-idle-timeout-config");
+        let _ = fs::create_dir_all(&dir);
+        let config_path = dir.join("test-config.json");
+        let mut f = fs::File::create(&config_path).unwrap();
+        writeln!(f, r#"{{"idleTimeout": "10s"}}"#).unwrap();
+
+        let config = read_config_file(&config_path).unwrap();
+        assert_eq!(config.idle_timeout.as_deref(), Some("10000"));
 
         let _ = fs::remove_file(&config_path);
         let _ = fs::remove_dir(&dir);
@@ -1201,36 +1381,6 @@ mod tests {
     }
 
     #[test]
-    fn test_full_bare_defaults_true() {
-        let flags = parse_flags(&args("--full open example.com"));
-        assert!(flags.full);
-    }
-
-    #[test]
-    fn test_full_false() {
-        let flags = parse_flags(&args("--full false open example.com"));
-        assert!(!flags.full);
-    }
-
-    #[test]
-    fn test_full_short_flag() {
-        let flags = parse_flags(&args("-f open example.com"));
-        assert!(flags.full);
-    }
-
-    #[test]
-    fn test_clean_args_removes_full_with_value() {
-        let cleaned = clean_args(&args("--full false open example.com"));
-        assert_eq!(cleaned, vec!["open", "example.com"]);
-    }
-
-    #[test]
-    fn test_clean_args_removes_short_full() {
-        let cleaned = clean_args(&args("-f open example.com"));
-        assert_eq!(cleaned, vec!["open", "example.com"]);
-    }
-
-    #[test]
     fn test_clean_args_removes_bool_flag_with_value() {
         let cleaned = clean_args(&args("--headed false --debug true open example.com"));
         assert_eq!(cleaned, vec!["open", "example.com"]);
@@ -1285,5 +1435,28 @@ mod tests {
         };
         let merged = user.merge(project);
         assert_eq!(merged.extensions, Some(vec!["/ext2".to_string()]));
+    }
+
+    #[test]
+    fn test_no_auto_dialog_flag() {
+        let flags = parse_flags(&args("open example.com --no-auto-dialog"));
+        assert!(flags.no_auto_dialog);
+    }
+
+    #[test]
+    fn test_no_auto_dialog_default_false() {
+        let flags = parse_flags(&args("open example.com"));
+        assert!(!flags.no_auto_dialog);
+    }
+
+    #[test]
+    fn test_clean_args_removes_no_auto_dialog() {
+        let input: Vec<String> = vec![
+            "open".to_string(),
+            "example.com".to_string(),
+            "--no-auto-dialog".to_string(),
+        ];
+        let clean = clean_args(&input);
+        assert_eq!(clean, vec!["open", "example.com"]);
     }
 }

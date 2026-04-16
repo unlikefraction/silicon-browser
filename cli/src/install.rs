@@ -128,30 +128,85 @@ fn cloakbrowser_binary_in_dir(dir: &Path) -> Option<PathBuf> {
 
 pub fn find_installed_chrome() -> Option<PathBuf> {
     let browsers_dir = get_browsers_dir();
+    let debug = std::env::var("SILICON_BROWSER_DEBUG").is_ok();
+
+    if debug {
+        let _ = writeln!(
+            io::stderr(),
+            "[chrome-search] home_dir={:?} browsers_dir={}",
+            dirs::home_dir(),
+            browsers_dir.display()
+        );
+    }
+
     if !browsers_dir.exists() {
+        if debug {
+            let _ = writeln!(io::stderr(), "[chrome-search] browsers_dir does not exist");
+        }
         return None;
     }
 
-    let mut versions: Vec<_> = fs::read_dir(&browsers_dir)
-        .ok()?
+    let entries = match fs::read_dir(&browsers_dir) {
+        Ok(entries) => entries,
+        Err(e) => {
+            let _ = writeln!(
+                io::stderr(),
+                "Warning: cannot read Chrome cache directory {}: {}",
+                browsers_dir.display(),
+                e
+            );
+            return None;
+        }
+    };
+
+    let mut versions: Vec<_> = entries
         .filter_map(|e| e.ok())
         .filter(|e| {
-            e.file_name()
+            let matches = e
+                .file_name()
                 .to_str()
-                .is_some_and(|n| n.starts_with("chrome-"))
+                .is_some_and(|n| n.starts_with("chrome-"));
+            if debug {
+                let _ = writeln!(
+                    io::stderr(),
+                    "[chrome-search] entry {:?} matches={}",
+                    e.file_name(),
+                    matches
+                );
+            }
+            matches
         })
         .collect();
 
     versions.sort_by_key(|b| std::cmp::Reverse(b.file_name()));
 
     for entry in versions {
-        if let Some(bin) = chrome_binary_in_dir(&entry.path()) {
-            if bin.exists() {
+        let dir = entry.path();
+        if let Some(bin) = chrome_binary_in_dir(&dir) {
+            let exists = bin.exists();
+            if debug {
+                let _ = writeln!(
+                    io::stderr(),
+                    "[chrome-search] candidate {} exists={}",
+                    bin.display(),
+                    exists
+                );
+            }
+            if exists {
                 return Some(bin);
             }
+        } else if debug {
+            let _ = writeln!(
+                io::stderr(),
+                "[chrome-search] no binary found in {}",
+                dir.display()
+            );
         }
     }
 
+    if debug {
+        let _ = writeln!(io::stderr(), "[chrome-search] no installed Chrome found");
+    }
     None
 }
 
@@ -270,9 +325,12 @@ fn cloakbrowser_platform_tag() -> &'static str {
 // ---------------------------------------------------------------------------
 
 async fn fetch_download_url() -> Result<(String, String), String> {
-    let resp = reqwest::get(LAST_KNOWN_GOOD_URL)
+    let client = http_client()?;
+    let resp = client
+        .get(LAST_KNOWN_GOOD_URL)
+        .send()
         .await
-        .map_err(|e| format!("Failed to fetch version info: {}", e))?;
+        .map_err(|e| format!("Failed to fetch version info: {}", format_reqwest_error(&e)))?;
 
     let body: serde_json::Value = resp
         .json()
@@ -310,44 +368,110 @@ async fn fetch_download_url() -> Result<(String, String), String> {
     Ok((version, url))
 }
 
+fn format_reqwest_error(e: &reqwest::Error) -> String {
+    let mut msg = e.to_string();
+    let mut source = std::error::Error::source(e);
+    while let Some(cause) = source {
+        msg.push_str(&format!(": {}", cause));
+        source = std::error::Error::source(cause);
+    }
+    msg
+}
+
+fn http_client() -> Result<reqwest::Client, String> {
+    reqwest::Client::builder()
+        .user_agent(format!("silicon-browser/{}", env!("CARGO_PKG_VERSION")))
+        .timeout(std::time::Duration::from_secs(120))
+        .connect_timeout(std::time::Duration::from_secs(30))
+        .build()
+        .map_err(|e| format!("Failed to create HTTP client: {}", format_reqwest_error(&e)))
+}
+
 async fn download_bytes(url: &str) -> Result<Vec<u8>, String> {
-    let resp = reqwest::get(url)
-        .await
-        .map_err(|e| format!("Download failed: {}", e))?;
+    let client = http_client()?;
+    let max_retries = 3;
+    let mut last_err = String::new();
 
-    let total = resp.content_length();
-    let mut bytes = Vec::new();
-    let mut stream = resp;
-    let mut downloaded: u64 = 0;
-    let mut last_pct: u64 = 0;
+    for attempt in 0..max_retries {
+        if attempt > 0 {
+            eprintln!(
+                "  Retrying download (attempt {}/{})",
+                attempt + 1,
+                max_retries
+            );
+            tokio::time::sleep(std::time::Duration::from_secs(1 << attempt)).await;
+        }
 
-    loop {
-        let chunk = stream
-            .chunk()
-            .await
-            .map_err(|e| format!("Download error: {}", e))?;
-        match chunk {
-            Some(data) => {
-                downloaded += data.len() as u64;
-                bytes.extend_from_slice(&data);
+        let resp = match client.get(url).send().await {
+            Ok(r) => r,
+            Err(e) => {
+                last_err = format!("Download failed: {}", format_reqwest_error(&e));
+                if e.is_connect() || e.is_timeout() {
+                    continue;
+                }
+                return Err(last_err);
+            }
+        };
 
-                if let Some(total) = total {
-                    let pct = (downloaded * 100) / total;
-                    if pct >= last_pct + 5 {
-                        last_pct = pct;
-                        let mb = downloaded as f64 / 1_048_576.0;
-                        let total_mb = total as f64 / 1_048_576.0;
-                        eprint!("\r  {:.0}/{:.0} MB ({pct}%)", mb, total_mb);
-                        let _ = io::stderr().flush();
+        let status = resp.status();
+        if !status.is_success() {
+            last_err = format!(
+                "Download failed: server returned HTTP {} for {}",
+                status, url
+            );
+            if status.is_server_error() {
+                continue;
+            }
+            return Err(last_err);
+        }
+
+        let total = resp.content_length();
+        let mut bytes = Vec::new();
+        let mut stream = resp;
+        let mut downloaded: u64 = 0;
+        let mut last_pct: u64 = 0;
+
+        let mut chunk_err = None;
+        loop {
+            let chunk = stream
+                .chunk()
+                .await
+                .map_err(|e| format!("Download error: {}", format_reqwest_error(&e)));
+            match chunk {
+                Ok(Some(data)) => {
+                    downloaded += data.len() as u64;
+                    bytes.extend_from_slice(&data);
+
+                    if let Some(total) = total {
+                        let pct = (downloaded * 100) / total;
+                        if pct >= last_pct + 5 {
+                            last_pct = pct;
+                            let mb = downloaded as f64 / 1_048_576.0;
+                            let total_mb = total as f64 / 1_048_576.0;
+                            eprint!("\r  {:.0}/{:.0} MB ({pct}%)", mb, total_mb);
+                            let _ = io::stderr().flush();
+                        }
                     }
                 }
+                Ok(None) => break,
+                Err(e) => {
+                    chunk_err = Some(e);
+                    break;
+                }
             }
-            None => break,
         }
+
+        eprintln!();
+
+        if let Some(e) = chunk_err {
+            last_err = e;
+            continue;
+        }
+
+        return Ok(bytes);
     }
 
-    eprintln!();
-    Ok(bytes)
+    Err(last_err)
 }
 
 // ---------------------------------------------------------------------------
@@ -371,10 +495,14 @@ fn extract_zip(bytes: Vec<u8>, dest: &Path) -> Result<(), String> {
             None => continue,
         };
         let raw_name = enclosed.to_string_lossy().to_string();
+        // Strip the top-level "chrome-<platform>/" directory from zip entries.
+        // On Windows, enclosed_name() normalizes paths to backslashes, so we
+        // must split on either separator.
         let rel_path = raw_name
             .strip_prefix("chrome-")
-            .and_then(|s| s.split_once('/'))
-            .map(|(_, rest)| rest.to_string())
+            .and_then(|s| s.find(['/', '\\']).map(|i| &s[i + 1..]))
+            .filter(|s| !s.is_empty())
+            .map(|s| s.to_string())
             .unwrap_or(raw_name.clone());
 
         if rel_path.is_empty() {
@@ -656,53 +784,85 @@ fn install_chrome(rt: &tokio::runtime::Runtime, is_linux: bool, with_deps: bool)
     }
 }
 
+fn report_install_status(status: io::Result<std::process::ExitStatus>) {
+    match status {
+        Ok(s) if s.success() => {
+            println!(
+                "{} System dependencies installed",
+                color::success_indicator()
+            )
+        }
+        Ok(_) => eprintln!(
+            "{} Failed to install some dependencies. You may need to run manually with sudo.",
+            color::warning_indicator()
+        ),
+        Err(e) => eprintln!(
+            "{} Could not run install command: {}",
+            color::warning_indicator(),
+            e
+        ),
+    }
+}
+
 fn install_linux_deps() {
     println!("{}", color::cyan("Installing system dependencies..."));
 
     let (pkg_mgr, deps) = if which_exists("apt-get") {
-        let libasound = if package_exists_apt("libasound2t64") {
-            "libasound2t64"
-        } else {
-            "libasound2"
-        };
+        // On Ubuntu 24.04+, many libraries were renamed with a t64 suffix as
+        // part of the 64-bit time_t transition. Using the old names can cause
+        // apt to propose removing hundreds of system packages to resolve
+        // conflicts. We check for the t64 variant first to avoid this.
+        let apt_deps: Vec<&str> = vec![
+            ("libxcb-shm0", None),
+            ("libx11-xcb1", None),
+            ("libx11-6", None),
+            ("libxcb1", None),
+            ("libxext6", None),
+            ("libxrandr2", None),
+            ("libxcomposite1", None),
+            ("libxcursor1", None),
+            ("libxdamage1", None),
+            ("libxfixes3", None),
+            ("libxi6", None),
+            ("libgtk-3-0", Some("libgtk-3-0t64")),
+            ("libpangocairo-1.0-0", Some("libpangocairo-1.0-0t64")),
+            ("libpango-1.0-0", Some("libpango-1.0-0t64")),
+            ("libatk1.0-0", Some("libatk1.0-0t64")),
+            ("libcairo-gobject2", Some("libcairo-gobject2t64")),
+            ("libcairo2", Some("libcairo2t64")),
+            ("libgdk-pixbuf-2.0-0", Some("libgdk-pixbuf-2.0-0t64")),
+            ("libxrender1", None),
+            ("libasound2", Some("libasound2t64")),
+            ("libfreetype6", None),
+            ("libfontconfig1", None),
+            ("libdbus-1-3", Some("libdbus-1-3t64")),
+            ("libnss3", None),
+            ("libnspr4", None),
+            ("libatk-bridge2.0-0", Some("libatk-bridge2.0-0t64")),
+            ("libdrm2", None),
+            ("libxkbcommon0", None),
+            ("libatspi2.0-0", Some("libatspi2.0-0t64")),
+            ("libcups2", Some("libcups2t64")),
+            ("libxshmfence1", None),
+            ("libgbm1", None),
+            // Fonts: without actual font files, pages render with missing glyphs
+            // (tofu). This is especially visible for CJK and emoji characters.
+            ("fonts-noto-color-emoji", None),
+            ("fonts-noto-cjk", None),
+            ("fonts-freefont-ttf", None),
+        ]
+        .into_iter()
+        .map(|(base, t64_variant)| {
+            if let Some(t64) = t64_variant {
+                if package_exists_apt(t64) {
+                    return t64;
+                }
+            }
+            base
+        })
+        .collect();
 
-        (
-            "apt-get",
-            vec![
-                "libxcb-shm0",
-                "libx11-xcb1",
-                "libx11-6",
-                "libxcb1",
-                "libxext6",
-                "libxrandr2",
-                "libxcomposite1",
-                "libxcursor1",
-                "libxdamage1",
-                "libxfixes3",
-                "libxi6",
-                "libgtk-3-0",
-                "libpangocairo-1.0-0",
-                "libpango-1.0-0",
-                "libatk1.0-0",
-                "libcairo-gobject2",
-                "libcairo2",
-                "libgdk-pixbuf-2.0-0",
-                "libxrender1",
-                libasound,
-                "libfreetype6",
-                "libfontconfig1",
-                "libdbus-1-3",
-                "libnss3",
-                "libnspr4",
-                "libatk-bridge2.0-0",
-                "libdrm2",
-                "libxkbcommon0",
-                "libatspi2.0-0",
-                "libcups2",
-                "libxshmfence1",
-                "libgbm1",
-            ],
-        )
+        ("apt-get", apt_deps)
     } else if which_exists("dnf") {
         (
             "dnf",
@@ -729,6 +889,10 @@ fn install_linux_deps() {
                 "libXi",
                 "gtk3",
                 "cairo-gobject",
+                // Fonts
+                "google-noto-cjk-fonts",
+                "google-noto-emoji-color-fonts",
+                "liberation-fonts",
             ],
         )
     } else if which_exists("yum") {
@@ -748,6 +912,9 @@ fn install_linux_deps() {
                 "pango",
                 "alsa-lib",
                 "libxkbcommon",
+                // Fonts
+                "google-noto-cjk-fonts",
+                "liberation-fonts",
             ],
         )
     } else {
@@ -758,35 +925,103 @@ fn install_linux_deps() {
         exit(1);
     };
 
-    let install_cmd = match pkg_mgr {
-        "apt-get" => {
-            format!(
-                "sudo apt-get update && sudo apt-get install -y {}",
-                deps.join(" ")
-            )
-        }
-        _ => format!("sudo {} install -y {}", pkg_mgr, deps.join(" ")),
-    };
+    if pkg_mgr == "apt-get" {
+        // Run apt-get update first
+        println!("Running: sudo apt-get update");
+        let update_status = Command::new("sudo").args(["apt-get", "update"]).status();
 
-    println!("Running: {}", install_cmd);
-    let status = Command::new("sh").arg("-c").arg(&install_cmd).status();
-
-    match status {
-        Ok(s) if s.success() => {
-            println!(
-                "{} System dependencies installed",
-                color::success_indicator()
-            )
+        match update_status {
+            Ok(s) if !s.success() => {
+                eprintln!(
+                    "{} apt-get update failed. Continuing with existing package lists.",
+                    color::warning_indicator()
+                );
+            }
+            Err(e) => {
+                eprintln!(
+                    "{} Could not run apt-get update: {}",
+                    color::warning_indicator(),
+                    e
+                );
+            }
+            _ => {}
         }
-        Ok(_) => eprintln!(
-            "{} Failed to install some dependencies. You may need to run manually with sudo.",
-            color::warning_indicator()
-        ),
-        Err(e) => eprintln!(
-            "{} Could not run install command: {}",
-            color::warning_indicator(),
-            e
-        ),
+
+        // Simulate the install first to detect if apt would remove any
+        // packages. This prevents the catastrophic scenario where installing
+        // these libraries triggers removal of hundreds of system packages
+        // due to dependency conflicts (e.g. on Ubuntu 24.04 with the
+        // t64 transition).
+        println!("Checking for conflicts...");
+        let sim_output = Command::new("sudo")
+            .args(["apt-get", "install", "--simulate"])
+            .args(&deps)
+            .output();
+
+        match sim_output {
+            Ok(output) => {
+                let stdout = String::from_utf8_lossy(&output.stdout);
+                let stderr = String::from_utf8_lossy(&output.stderr);
+                let combined = format!("{}\n{}", stdout, stderr);
+
+                // Count packages that would be removed
+                let removals: Vec<&str> = combined
+                    .lines()
+                    .filter(|line| line.starts_with("Remv "))
+                    .collect();
+
+                if !removals.is_empty() {
+                    eprintln!(
+                        "{} Aborting: apt would remove {} package(s) to install these dependencies.",
+                        color::error_indicator(),
+                        removals.len()
+                    );
+                    eprintln!(
+                        "  This usually means some package names have changed on your system"
+                    );
+                    eprintln!("  (e.g. Ubuntu 24.04 renamed libraries with a t64 suffix).");
+                    eprintln!();
+                    eprintln!("  Packages that would be removed:");
+                    for line in removals.iter().take(20) {
+                        eprintln!("    {}", line);
+                    }
+                    if removals.len() > 20 {
+                        eprintln!("    ... and {} more", removals.len() - 20);
+                    }
+                    eprintln!();
+                    eprintln!("  To install dependencies manually, run:");
+                    eprintln!("    sudo apt-get install {}", deps.join(" "));
+                    eprintln!();
+                    eprintln!("  Review the apt output carefully before confirming.");
+                    exit(1);
+                }
+            }
+            Err(e) => {
+                eprintln!(
+                    "{} Could not simulate install ({}). Proceeding with caution.",
+                    color::warning_indicator(),
+                    e
+                );
+            }
+        }
+
+        // Safe to proceed: no removals detected
+        let install_cmd = format!("sudo apt-get install -y {}", deps.join(" "));
+        println!("Running: {}", install_cmd);
+        let status = Command::new("sudo")
+            .args(["apt-get", "install", "-y"])
+            .args(&deps)
+            .status();
+
+        report_install_status(status);
+    } else {
+        // dnf / yum path — these package managers do not remove packages
+        // during install, so the simulate-first guard is not needed.
+        let install_cmd = format!("sudo {} install -y {}", pkg_mgr, deps.join(" "));
+        println!("Running: {}", install_cmd);
+        let status = Command::new("sh").arg("-c").arg(&install_cmd).status();
+
+        report_install_status(status);
     }
 }
 
@@ -822,4 +1057,193 @@ fn package_exists_apt(pkg: &str) -> bool {
         .status()
         .map(|s| s.success())
         .unwrap_or(false)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    use tokio::net::TcpListener;
+
+    fn http_response(status: u16, reason: &str, body: &[u8]) -> Vec<u8> {
+        let header = format!(
+            "HTTP/1.1 {} {}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+            status,
+            reason,
+            body.len()
+        );
+        let mut resp = header.into_bytes();
+        resp.extend_from_slice(body);
+        resp
+    }
+
+    async fn accept_once(listener: &TcpListener, response: &[u8]) {
+        let (mut s, _) = listener.accept().await.unwrap();
+        let mut buf = [0u8; 4096];
+        let _ = s.read(&mut buf).await;
+        s.write_all(response).await.unwrap();
+    }
+
+    async fn accept_with_ua_check(listener: &TcpListener, response: &[u8]) -> String {
+        let (mut s, _) = listener.accept().await.unwrap();
+        let mut buf = [0u8; 4096];
+        let n = s.read(&mut buf).await.unwrap();
+        let request = String::from_utf8_lossy(&buf[..n]).to_string();
+        s.write_all(response).await.unwrap();
+        request
+    }
+
+    #[tokio::test]
+    async fn download_bytes_returns_body_on_200() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let body = b"fake-zip-content";
+        let resp = http_response(200, "OK", body);
+
+        let server = tokio::spawn(async move {
+            accept_once(&listener, &resp).await;
+        });
+
+        let url = format!("http://127.0.0.1:{}/test.zip", port);
+        let result = download_bytes(&url).await;
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), body);
+        server.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn download_bytes_returns_error_on_404() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let resp = http_response(404, "Not Found", b"not found");
+
+        let server = tokio::spawn(async move {
+            accept_once(&listener, &resp).await;
+        });
+
+        let url = format!("http://127.0.0.1:{}/test.zip", port);
+        let result = download_bytes(&url).await;
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(
+            err.contains("HTTP 404"),
+            "expected HTTP 404 in error, got: {}",
+            err
+        );
+        server.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn download_bytes_retries_on_500() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+
+        let server = tokio::spawn(async move {
+            // First two attempts: 500
+            let r500 = http_response(500, "Internal Server Error", b"error");
+            accept_once(&listener, &r500).await;
+            accept_once(&listener, &r500).await;
+            // Third attempt: 200
+            let r200 = http_response(200, "OK", b"ok-data");
+            accept_once(&listener, &r200).await;
+        });
+
+        let url = format!("http://127.0.0.1:{}/test.zip", port);
+        let result = download_bytes(&url).await;
+        assert!(
+            result.is_ok(),
+            "expected success after retries: {:?}",
+            result
+        );
+        assert_eq!(result.unwrap(), b"ok-data");
+        server.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn download_bytes_gives_up_after_max_retries() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+
+        let server = tokio::spawn(async move {
+            let r500 = http_response(500, "Internal Server Error", b"error");
+            // All 3 attempts get 500
+            accept_once(&listener, &r500).await;
+            accept_once(&listener, &r500).await;
+            accept_once(&listener, &r500).await;
+        });
+
+        let url = format!("http://127.0.0.1:{}/test.zip", port);
+        let result = download_bytes(&url).await;
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(
+            err.contains("HTTP 500"),
+            "expected HTTP 500 in error, got: {}",
+            err
+        );
+        server.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn download_bytes_does_not_retry_on_403() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let resp = http_response(403, "Forbidden", b"forbidden");
+
+        let server = tokio::spawn(async move {
+            // Only one request should arrive (no retries for 4xx)
+            accept_once(&listener, &resp).await;
+        });
+
+        let url = format!("http://127.0.0.1:{}/test.zip", port);
+        let result = download_bytes(&url).await;
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("HTTP 403"));
+        server.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn http_client_sends_user_agent() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let resp = http_response(200, "OK", b"ok");
+
+        let server = tokio::spawn(async move {
+            let req = accept_with_ua_check(&listener, &resp).await;
+            req
+        });
+
+        let client = http_client().unwrap();
+        let url = format!("http://127.0.0.1:{}/test", port);
+        let _ = client.get(&url).send().await;
+        let request_text = server.await.unwrap();
+        let expected_ua = format!("silicon-browser/{}", env!("CARGO_PKG_VERSION"));
+        assert!(
+            request_text.contains(&expected_ua),
+            "expected User-Agent '{}' in request:\n{}",
+            expected_ua,
+            request_text
+        );
+    }
+
+    #[test]
+    fn download_bytes_connection_refused_includes_details() {
+        // Use a port that nothing is listening on
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        let result = rt.block_on(download_bytes("http://127.0.0.1:1/test.zip"));
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        // The new code should include the root cause (connection refused)
+        // not just the vague "error sending request for url"
+        assert!(
+            err.contains("Connection refused")
+                || err.contains("connection refused")
+                || err.contains("actively refused it"),
+            "expected 'connection refused' in error, got: {}",
+            err
+        );
+    }
 }
