@@ -5,6 +5,7 @@ mod flags;
 mod install;
 mod native;
 mod output;
+mod profile;
 #[cfg(test)]
 mod test_utils;
 mod validation;
@@ -224,6 +225,42 @@ fn main() {
         let with_deps = args.iter().any(|a| a == "--with-deps" || a == "-d");
         run_install(with_deps);
         return;
+    }
+
+    // Handle profile commands (doesn't need daemon)
+    if clean.first().map(|s| s.as_str()) == Some("profile") {
+        profile::run_profile_command(&clean[1..]);
+        return;
+    }
+
+    // Handle push/clone/pull as top-level commands
+    match clean.first().map(|s| s.as_str()) {
+        Some("push") => {
+            let name = clean.get(1).unwrap_or_else(|| {
+                eprintln!("{} Usage: silicon-browser push <profile-name>", color::error_indicator());
+                exit(1);
+            });
+            profile::run_push(name);
+            return;
+        }
+        Some("clone") => {
+            let url = clean.get(1).unwrap_or_else(|| {
+                eprintln!("{} Usage: silicon-browser clone <url>", color::error_indicator());
+                exit(1);
+            });
+            profile::run_clone(url);
+            return;
+        }
+        Some("pull") => {
+            let name = clean.get(1).unwrap_or_else(|| {
+                eprintln!("{} Usage: silicon-browser pull <profile-name> [url]", color::error_indicator());
+                exit(1);
+            });
+            let url = clean.get(2).map(|s| s.as_str());
+            profile::run_pull(name, url);
+            return;
+        }
+        _ => {}
     }
 
     // Handle session separately (doesn't need daemon)
