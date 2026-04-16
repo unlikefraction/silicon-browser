@@ -175,6 +175,63 @@ silicon-browser diff url <url1> <url2> --wait-until networkidle  # Custom wait s
 silicon-browser diff url <url1> <url2> --selector "#main"  # Scope to element
 ```
 
+## Stealth & Anti-Detection
+
+silicon-browser is stealth-first. All anti-detection is enabled by default -- no configuration needed.
+
+**What's built in:**
+- Chrome 135 user agent, headers, and Client Hints metadata
+- Platform-aware WebGL (Apple M1 on macOS, RTX 3060 on Windows)
+- Function.prototype.toString protection (all patches look native)
+- SpeechSynthesis voice mocking, CSS media query normalization
+- Stack trace sanitization (removes CDP injection artifacts)
+- Canvas and AudioContext fingerprint noise
+
+**Headless mode:** By default, silicon-browser runs in **offscreen headed mode** (real Chrome window at off-screen coordinates). This passes ALL headless detection because it IS a real headed browser. On headless Linux servers, it auto-installs and starts Xvfb for a virtual display.
+
+```bash
+# Default: stealth headed mode (invisible but real browser)
+silicon-browser open https://example.com
+
+# Force traditional headless (for CI where stealth isn't needed)
+SILICON_BROWSER_HEADLESS_REAL=1 silicon-browser open https://example.com
+
+# Disable stealth patches entirely
+SILICON_BROWSER_NO_STEALTH=1 silicon-browser open https://example.com
+```
+
+**Headless Linux servers:** Xvfb is auto-detected, installed (via apt/yum/dnf/apk), and started. Zero configuration needed.
+
+## CAPTCHA Solving
+
+When a page shows a CAPTCHA or bot challenge, use `solve-captcha`:
+
+```bash
+silicon-browser open https://example.com
+silicon-browser solve-captcha
+```
+
+**Supported CAPTCHA types:**
+- **Cloudflare Turnstile** -- detects "Just a moment..." pages, clicks the checkbox via CDP
+- **reCAPTCHA v2 checkbox** -- human-like mouse movement to click "I'm not a robot"
+- **Text CAPTCHAs** -- local OCR engine (no external APIs), reads distorted text from canvas/images
+- **hCaptcha** -- checkbox click with behavioral simulation
+
+**How it works:**
+1. Detects CAPTCHA type on the current page
+2. For checkboxes: generates human-like mouse movement path (based on real recorded data) and clicks
+3. For text CAPTCHAs: screenshots the image, runs local OCR, enters the text, and submits
+4. All solving is local -- no external APIs, no LLM calls
+
+```bash
+# Auto-detect and solve
+silicon-browser solve-captcha
+
+# Check result
+silicon-browser eval "document.title"
+silicon-browser screenshot result.png
+```
+
 ## Common Patterns
 
 ### Form Submission

@@ -506,6 +506,14 @@ pub fn parse_command(args: &[String], flags: &Flags) -> Result<Value, ParseError
             })?;
             Ok(json!({ "id": id, "action": "pdf", "path": path }))
         }
+        "solve-captcha" | "solve_captcha" | "solvecaptcha" => {
+            let captcha_type = rest.first().copied();
+            let mut cmd = json!({ "id": id, "action": "solve_captcha" });
+            if let Some(t) = captcha_type {
+                cmd["type"] = json!(t);
+            }
+            Ok(cmd)
+        }
 
         // === Snapshot ===
         "snapshot" => {
