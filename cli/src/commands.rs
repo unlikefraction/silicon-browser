@@ -2344,6 +2344,7 @@ mod tests {
         Flags {
             session: "test".to_string(),
             json: false,
+            full: false,
             headed: false,
             debug: false,
             headers: None,
@@ -2383,6 +2384,7 @@ mod tests {
             action_policy: None,
             confirm_actions: None,
             confirm_interactive: false,
+            incognito: false,
             engine: None,
             screenshot_dir: None,
             screenshot_quality: None,

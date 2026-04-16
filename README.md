@@ -43,7 +43,7 @@ All stealth features are **on by default**. No configuration needed.
 # Install
 npm install -g silicon-browser
 
-# Download Chrome
+# Download bundled browsers
 silicon-browser install
 
 # Browse the web
@@ -75,7 +75,7 @@ This reduces context usage by up to 93% compared to screenshot-based approaches.
 Silicon Browser applies stealth at four layers:
 
 ### 1. CloakBrowser Binary (primary)
-A patched Chromium with 33 C++ source-level modifications. Since it IS a real Chromium binary, TLS fingerprints, HTTP/2 settings, and browser internals all match real Chrome. `silicon-browser install` downloads it automatically.
+A patched Chromium with 33 C++ source-level modifications. Since it IS a real Chromium binary, TLS fingerprints, HTTP/2 settings, and browser internals all match real Chrome. `silicon-browser install` downloads CloakBrowser plus Chrome for Testing, and Silicon Browser will retry with a fresh implicit profile if a stale default profile prevents CloakBrowser from bootstrapping.
 
 ### 2. Chrome Launch Flags
 Anti-automation flags are injected at Chrome startup:

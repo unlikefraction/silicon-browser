@@ -645,9 +645,7 @@ pub fn get_stealth_headers() -> Vec<(&'static str, &'static str)> {
 /// Does NOT include Sec-Ch-Ua (CloakBrowser sets its own matching the actual version).
 pub fn get_cloakbrowser_headers() -> Vec<(&'static str, &'static str)> {
     // Same principle: no Sec-Fetch-* overrides (let Chrome handle per-request).
-    vec![
-        ("Accept-Language", "en-US,en;q=0.9"),
-    ]
+    vec![("Accept-Language", "en-US,en;q=0.9")]
 }
 
 /// Returns Client Hints metadata for Emulation.setUserAgentOverride.
@@ -704,6 +702,6 @@ mod tests {
     fn stealth_headers_are_non_empty() {
         let headers = get_stealth_headers();
         assert!(!headers.is_empty());
-        assert!(headers.iter().any(|(k, _)| *k == "Accept"));
+        assert!(headers.iter().any(|(k, _)| *k == "Accept-Language"));
     }
 }

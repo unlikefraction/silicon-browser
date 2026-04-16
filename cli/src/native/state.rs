@@ -718,7 +718,9 @@ pub fn get_sessions_dir() -> PathBuf {
     if let Some(home) = dirs::home_dir() {
         home.join(".silicon-browser").join("sessions")
     } else {
-        std::env::temp_dir().join("silicon-browser").join("sessions")
+        std::env::temp_dir()
+            .join("silicon-browser")
+            .join("sessions")
     }
 }
 
@@ -785,7 +787,10 @@ mod tests {
 
     #[test]
     fn test_state_rename_nonexistent() {
-        let result = state_rename("/tmp/nonexistent-silicon-browser-state-file.json", "new-name");
+        let result = state_rename(
+            "/tmp/nonexistent-silicon-browser-state-file.json",
+            "new-name",
+        );
         assert!(result.is_err());
         assert!(result.unwrap_err().contains("not found"));
     }

@@ -386,12 +386,16 @@ pub fn parse_flags(args: &[String]) -> Flags {
         user_agent: env::var("SILICON_BROWSER_USER_AGENT")
             .ok()
             .or(config.user_agent),
-        provider: env::var("SILICON_BROWSER_PROVIDER").ok().or(config.provider),
+        provider: env::var("SILICON_BROWSER_PROVIDER")
+            .ok()
+            .or(config.provider),
         ignore_https_errors: env_var_is_truthy("SILICON_BROWSER_IGNORE_HTTPS_ERRORS")
             || config.ignore_https_errors.unwrap_or(false),
         allow_file_access: env_var_is_truthy("SILICON_BROWSER_ALLOW_FILE_ACCESS")
             || config.allow_file_access.unwrap_or(false),
-        device: env::var("SILICON_BROWSER_IOS_DEVICE").ok().or(config.device),
+        device: env::var("SILICON_BROWSER_IOS_DEVICE")
+            .ok()
+            .or(config.device),
         auto_connect: env_var_is_truthy("SILICON_BROWSER_AUTO_CONNECT")
             || config.auto_connect.unwrap_or(false),
         session_name: env::var("SILICON_BROWSER_SESSION_NAME")

@@ -641,7 +641,10 @@ pub fn run_install(with_deps: bool) {
 }
 
 fn install_cloakbrowser(rt: &tokio::runtime::Runtime) {
-    println!("{}", color::cyan("Installing CloakBrowser (stealth Chromium)..."));
+    println!(
+        "{}",
+        color::cyan("Installing CloakBrowser (stealth Chromium)...")
+    );
 
     let dest = get_cloakbrowser_dir();
 

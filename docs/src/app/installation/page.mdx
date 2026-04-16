@@ -5,8 +5,8 @@
 Installs the native Rust binary for maximum performance:
 
 ```bash
-npm install -g agent-browser
-agent-browser install  # Download Chrome from Chrome for Testing (first time)
+npm install -g silicon-browser
+silicon-browser install  # Download CloakBrowser + Chrome for Testing (first time)
 ```
 
 This is the fastest option -- commands run through the native Rust CLI directly with sub-millisecond parsing overhead.
@@ -14,8 +14,8 @@ This is the fastest option -- commands run through the native Rust CLI directly 
 ## Quick start (no install)
 
 ```bash
-npx agent-browser install   # Download Chrome (first time only)
-npx agent-browser open example.com
+npx silicon-browser install   # Download bundled browsers (first time only)
+npx silicon-browser open example.com
 ```
 
 ## Project installation (local dependency)
@@ -23,8 +23,8 @@ npx agent-browser open example.com
 For projects that want to pin the version in `package.json`:
 
 ```bash
-npm install agent-browser
-npx agent-browser install  # Download Chrome (first time)
+npm install silicon-browser
+npx silicon-browser install  # Download bundled browsers (first time)
 ```
 
 Then use via `npx` or `package.json` scripts.
@@ -32,15 +32,15 @@ Then use via `npx` or `package.json` scripts.
 ## Homebrew (macOS)
 
 ```bash
-brew install agent-browser
-agent-browser install  # Download Chrome (first time)
+brew install silicon-browser
+silicon-browser install  # Download bundled browsers (first time)
 ```
 
 ## Cargo (Rust)
 
 ```bash
-cargo install agent-browser
-agent-browser install  # Download Chrome (first time)
+cargo install silicon-browser
+silicon-browser install  # Download bundled browsers (first time)
 ```
 
 Compiles from source (~2-3 min). Requires the Rust toolchain ([rustup.rs](https://rustup.rs)).
@@ -48,12 +48,12 @@ Compiles from source (~2-3 min). Requires the Rust toolchain ([rustup.rs](https:
 ## From source
 
 ```bash
-git clone https://github.com/vercel-labs/agent-browser
-cd agent-browser
+git clone https://github.com/unlikefraction/silicon-browser
+cd silicon-browser
 pnpm install
 pnpm build
 pnpm build:native
-./bin/agent-browser install
+./bin/silicon-browser install
 pnpm link --global
 ```
 
@@ -62,7 +62,7 @@ pnpm link --global
 On Linux, install system dependencies:
 
 ```bash
-agent-browser install --with-deps
+silicon-browser install --with-deps
 ```
 
 ## Updating
@@ -70,7 +70,7 @@ agent-browser install --with-deps
 Upgrade to the latest version:
 
 ```bash
-agent-browser upgrade
+silicon-browser upgrade
 ```
 
 Detects your installation method (npm, Homebrew, or Cargo) and runs the appropriate update command automatically. Displays the version change on success, or informs you if you are already on the latest version.
@@ -85,10 +85,10 @@ Use a custom browser executable instead of bundled Chromium:
 
 ```bash
 # Via flag
-agent-browser --executable-path /path/to/chromium open example.com
+silicon-browser --executable-path /path/to/chromium open example.com
 
 # Via environment variable
-AGENT_BROWSER_EXECUTABLE_PATH=/path/to/chromium agent-browser open example.com
+SILICON_BROWSER_EXECUTABLE_PATH=/path/to/chromium silicon-browser open example.com
 ```
 
 ### Serverless example
@@ -104,7 +104,7 @@ agent-browser works with any AI agent out of the box. For richer context:
 Install the skill for your AI coding assistant:
 
 ```bash
-npx skills add vercel-labs/agent-browser
+npx skills add unlikefraction/silicon-browser
 ```
 
 This works with Claude Code, Codex, Cursor, Gemini CLI, GitHub Copilot, Goose, OpenCode, and Windsurf. The skill is fetched from the repository and stays up to date automatically.

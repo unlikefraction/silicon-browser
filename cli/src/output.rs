@@ -2393,6 +2393,9 @@ silicon-browser install - Install browser binaries
 Usage: silicon-browser install [--with-deps]
 
 Downloads and installs browser binaries required for automation.
+Installs CloakBrowser plus Chrome for Testing. Silicon Browser prefers
+CloakBrowser and automatically retries once with a fresh implicit default
+profile if a stale `silicon` profile blocks CloakBrowser startup.
 
 Options:
   -d, --with-deps      Also install system dependencies (Linux only)
@@ -3036,7 +3039,7 @@ Install:
   npm install -g silicon-browser           # npm
   brew install silicon-browser             # Homebrew
   cargo install silicon-browser            # Cargo
-  silicon-browser install                  # Download Chrome (first time)
+  silicon-browser install                  # Download CloakBrowser + Chrome for Testing
 
 Examples:
   silicon-browser open example.com

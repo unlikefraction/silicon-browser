@@ -203,10 +203,7 @@ pub fn run_push(name: &str) {
         color::bold(&format!("http://{}:{}", local_ip, port))
     );
     if let Some(ref url) = tunnel.public_url {
-        println!(
-            "  Public: {}",
-            color::bold(url)
-        );
+        println!("  Public: {}", color::bold(url));
     }
     println!("  OTP:    {}", color::bold(&otp));
     println!();
@@ -215,10 +212,7 @@ pub fn run_push(name: &str) {
         println!("    silicon-browser clone {}", url);
     } else {
         println!("  On the same network, run:");
-        println!(
-            "    silicon-browser clone http://{}:{}",
-            local_ip, port
-        );
+        println!("    silicon-browser clone http://{}:{}", local_ip, port);
     }
     println!();
     println!("  Waiting for clone...");
@@ -259,18 +253,11 @@ fn handle_push_connection(mut stream: TcpStream, encrypted: &[u8], name: &str, o
 
     // Parse the request — extract the path from "GET /path HTTP/1.1"
     let first_line = request.lines().next().unwrap_or("");
-    let request_path = first_line
-        .split_whitespace()
-        .nth(1)
-        .unwrap_or("/");
+    let request_path = first_line.split_whitespace().nth(1).unwrap_or("/");
 
     if request_path.starts_with("/info") {
         // Info endpoint: returns profile name and size (no auth needed)
-        let body = format!(
-            r#"{{"name":"{}","size":{}}}"#,
-            name,
-            encrypted.len()
-        );
+        let body = format!(r#"{{"name":"{}","size":{}}}"#, name, encrypted.len());
         let response = format!(
             "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nAccess-Control-Allow-Origin: *\r\n\r\n{}",
             body.len(),
@@ -306,8 +293,14 @@ fn handle_push_connection(mut stream: TcpStream, encrypted: &[u8], name: &str, o
                 body
             );
             let _ = stream.write_all(response.as_bytes());
-            eprintln!("  {} Invalid OTP attempt from {}", color::warning_indicator(),
-                stream.peer_addr().map(|a| a.to_string()).unwrap_or_else(|_| "unknown".into()));
+            eprintln!(
+                "  {} Invalid OTP attempt from {}",
+                color::warning_indicator(),
+                stream
+                    .peer_addr()
+                    .map(|a| a.to_string())
+                    .unwrap_or_else(|_| "unknown".into())
+            );
             return false;
         }
 
@@ -331,7 +324,10 @@ fn handle_push_connection(mut stream: TcpStream, encrypted: &[u8], name: &str, o
         eprintln!(
             "  {} Sent to {}",
             color::success_indicator(),
-            stream.peer_addr().map(|a| a.to_string()).unwrap_or_else(|_| "unknown".into())
+            stream
+                .peer_addr()
+                .map(|a| a.to_string())
+                .unwrap_or_else(|_| "unknown".into())
         );
         return true; // Successful transfer, shut down
     }
@@ -364,10 +360,7 @@ pub fn run_clone(url: &str) {
     };
 
     let size_mb = size as f64 / 1_048_576.0;
-    println!(
-        "Found profile '{}' ({:.1} MB)",
-        name, size_mb
-    );
+    println!("Found profile '{}' ({:.1} MB)", name, size_mb);
 
     // Prompt for OTP
     eprint!("OTP: ");
@@ -424,7 +417,10 @@ pub fn run_clone(url: &str) {
             println!("  Location: {}", profile_dir.display());
             println!();
             println!("  Use it:");
-            println!("    silicon-browser --profile {} open https://example.com", name);
+            println!(
+                "    silicon-browser --profile {} open https://example.com",
+                name
+            );
         }
         Err(e) => {
             eprintln!("{} {}", color::error_indicator(), e);
@@ -468,8 +464,15 @@ pub fn run_pull(name: &str, url: Option<&str>) {
             println!("Pulling '{}' from {} ({:.1} MB)", remote_name, url, size_mb);
         }
         Err(e) => {
-            eprintln!("{} Cannot reach push server: {}", color::error_indicator(), e);
-            eprintln!("  Make sure the other machine is running: silicon-browser push {}", name);
+            eprintln!(
+                "{} Cannot reach push server: {}",
+                color::error_indicator(),
+                e
+            );
+            eprintln!(
+                "  Make sure the other machine is running: silicon-browser push {}",
+                name
+            );
             exit(1);
         }
     }
@@ -588,7 +591,8 @@ fn http_get(url: &str) -> Result<Vec<u8>, String> {
                 .build()
                 .map_err(|e| format!("HTTP client error: {}", e))?;
 
-            let resp = client.get(url)
+            let resp = client
+                .get(url)
                 .send()
                 .await
                 .map_err(|e| format!("Request failed: {}", e))?;
@@ -607,7 +611,8 @@ fn http_get(url: &str) -> Result<Vec<u8>, String> {
             }
 
             // Read all bytes
-            let bytes = resp.bytes()
+            let bytes = resp
+                .bytes()
                 .await
                 .map_err(|e| format!("Failed to read response: {}", e))?;
             Ok(bytes.to_vec())
@@ -695,10 +700,14 @@ fn start_tunnel(local_port: u16) -> Tunnel {
     //   ...tunneled with tls termination, https://xxxxx.lhr.life
     let mut child = match Command::new("ssh")
         .args([
-            "-o", "StrictHostKeyChecking=no",
-            "-o", "ServerAliveInterval=30",
-            "-o", "ConnectTimeout=10",
-            "-R", &format!("80:localhost:{}", local_port),
+            "-o",
+            "StrictHostKeyChecking=no",
+            "-o",
+            "ServerAliveInterval=30",
+            "-o",
+            "ConnectTimeout=10",
+            "-R",
+            &format!("80:localhost:{}", local_port),
             "nokey@localhost.run",
         ])
         .stdin(Stdio::null())
@@ -766,14 +775,18 @@ fn extract_tunnel_url(line: &str) -> Option<String> {
     // Match patterns like "https://xxxx.lhr.life" or "https://xxxx.localhost.run"
     for word in line.split_whitespace() {
         let word = word.trim_end_matches(',');
-        if word.starts_with("https://") && (word.contains(".lhr.life") || word.contains(".localhost.run")) {
+        if word.starts_with("https://")
+            && (word.contains(".lhr.life") || word.contains(".localhost.run"))
+        {
             return Some(word.to_string());
         }
     }
     // Also check for bare domain patterns
     for word in line.split_whitespace() {
         let word = word.trim_end_matches(',');
-        if (word.ends_with(".lhr.life") || word.ends_with(".localhost.run")) && !word.starts_with("https://") {
+        if (word.ends_with(".lhr.life") || word.ends_with(".localhost.run"))
+            && !word.starts_with("https://")
+        {
             return Some(format!("https://{}", word));
         }
     }
@@ -788,11 +801,7 @@ fn extract_tunnel_url(line: &str) -> Option<String> {
 pub fn pack_profile(name: &str, password: &str, output: Option<&str>) {
     let profile_dir = get_profiles_dir().join(name);
     if !profile_dir.exists() {
-        eprintln!(
-            "{} Profile '{}' not found",
-            color::error_indicator(),
-            name
-        );
+        eprintln!("{} Profile '{}' not found", color::error_indicator(), name);
         exit(1);
     }
 
@@ -978,7 +987,10 @@ pub fn run_profile_command(args: &[String]) {
 
         Some("pack") => {
             let name = args.get(1).unwrap_or_else(|| {
-                eprintln!("{} Usage: silicon-browser profile pack <name> --password <pw>", color::error_indicator());
+                eprintln!(
+                    "{} Usage: silicon-browser profile pack <name> --password <pw>",
+                    color::error_indicator()
+                );
                 exit(1);
             });
             let password = get_password_from_args(args);
@@ -988,7 +1000,10 @@ pub fn run_profile_command(args: &[String]) {
 
         Some("unpack") => {
             let file = args.get(1).unwrap_or_else(|| {
-                eprintln!("{} Usage: silicon-browser profile unpack <file> --password <pw>", color::error_indicator());
+                eprintln!(
+                    "{} Usage: silicon-browser profile unpack <file> --password <pw>",
+                    color::error_indicator()
+                );
                 exit(1);
             });
             let password = get_password_from_args(args);
@@ -997,7 +1012,11 @@ pub fn run_profile_command(args: &[String]) {
         }
 
         Some(cmd) => {
-            eprintln!("{} Unknown profile command: {}", color::error_indicator(), cmd);
+            eprintln!(
+                "{} Unknown profile command: {}",
+                color::error_indicator(),
+                cmd
+            );
             eprintln!();
             eprintln!("Usage:");
             eprintln!("  silicon-browser profile list");

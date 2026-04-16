@@ -368,6 +368,8 @@ fn get_profiles_dir() -> PathBuf {
     if let Some(home) = dirs::home_dir() {
         home.join(".silicon-browser").join("tmp").join("profiles")
     } else {
-        std::env::temp_dir().join("silicon-browser").join("profiles")
+        std::env::temp_dir()
+            .join("silicon-browser")
+            .join("profiles")
     }
 }

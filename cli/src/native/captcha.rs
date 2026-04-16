@@ -159,7 +159,8 @@ pub fn get_captcha_detect_script() -> &'static str {
 /// JavaScript that extracts pixel data from a canvas CAPTCHA for local OCR.
 /// Returns base64-encoded PNG of the CAPTCHA image.
 pub fn get_canvas_extract_script(selector: &str) -> String {
-    format!(r#"(function() {{
+    format!(
+        r#"(function() {{
     const el = document.querySelector('{}');
     if (!el) return JSON.stringify({{ error: 'element not found' }});
 
@@ -177,7 +178,9 @@ pub fn get_canvas_extract_script(selector: &str) -> String {
     }}
 
     return JSON.stringify({{ error: 'unsupported element type: ' + el.tagName }});
-}})();"#, selector)
+}})();"#,
+        selector
+    )
 }
 
 /// JavaScript OCR for simple text CAPTCHAs.

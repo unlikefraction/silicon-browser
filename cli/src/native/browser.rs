@@ -1,6 +1,7 @@
 use serde_json::{json, Value};
 use std::collections::{HashMap, HashSet};
 use std::future::Future;
+use std::io::Write;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::sync::{broadcast, Mutex};
@@ -234,6 +235,14 @@ const LIGHTPANDA_TARGET_INIT_TIMEOUT: Duration = Duration::from_secs(10);
 
 impl BrowserManager {
     pub async fn launch(options: LaunchOptions, engine: Option<&str>) -> Result<Self, String> {
+        Self::launch_with_profile_recovery(options, engine, true).await
+    }
+
+    async fn launch_with_profile_recovery(
+        options: LaunchOptions,
+        engine: Option<&str>,
+        allow_default_profile_reset: bool,
+    ) -> Result<Self, String> {
         let engine = engine.unwrap_or("chrome");
 
         match engine {
@@ -263,6 +272,8 @@ impl BrowserManager {
         let color_scheme = options.color_scheme.clone();
         let download_path = options.download_path.clone();
 
+        let launch_options = options.clone();
+
         let (ws_url, process) = match engine {
             "lightpanda" => {
                 let lp_options = LightpandaLaunchOptions {
@@ -275,7 +286,7 @@ impl BrowserManager {
                 (url, BrowserProcess::Lightpanda(lp))
             }
             _ => {
-                let chrome = tokio::task::spawn_blocking(move || launch_chrome(&options))
+                let chrome = tokio::task::spawn_blocking(move || launch_chrome(&launch_options))
                     .await
                     .map_err(|e| format!("Chrome launch task failed: {}", e))??;
                 let url = chrome.ws_url.clone();
@@ -283,7 +294,7 @@ impl BrowserManager {
             }
         };
 
-        let manager = if engine == "lightpanda" {
+        let manager_result = if engine == "lightpanda" {
             initialize_lightpanda_manager(ws_url, process).await?
         } else {
             let client = Arc::new(CdpClient::connect(&ws_url).await?);
@@ -298,10 +309,40 @@ impl BrowserManager {
                 ignore_https_errors,
                 visited_origins: HashSet::new(),
             };
-            manager.discover_and_attach_targets().await?;
+
+            if let Err(err) = manager.discover_and_attach_targets().await {
+                if allow_default_profile_reset && should_reset_default_profile(&options, engine) {
+                    if std::env::var("SILICON_BROWSER_DEBUG").is_ok() {
+                        let _ = writeln!(
+                            std::io::stderr(),
+                            "[chrome] default profile bootstrap failed, backing up implicit profile and retrying once: {}",
+                            err
+                        );
+                    }
+                    if let Some(ref mut process) = manager.browser_process {
+                        process.kill();
+                    }
+                    let backup_path = super::cdp::chrome::backup_default_profile_dir()?;
+                    if std::env::var("SILICON_BROWSER_DEBUG").is_ok() {
+                        let _ = writeln!(
+                            std::io::stderr(),
+                            "[chrome] backed up implicit default profile to {}",
+                            backup_path.display()
+                        );
+                    }
+                    return Box::pin(Self::launch_with_profile_recovery(
+                        options,
+                        Some(engine),
+                        false,
+                    ))
+                    .await;
+                }
+                return Err(err);
+            }
             manager
         };
 
+        let manager = manager_result;
         let session_id = manager.active_session_id()?.to_string();
 
         if ignore_https_errors {
@@ -322,24 +363,23 @@ impl BrowserManager {
         {
             let stealth_disabled = std::env::var("SILICON_BROWSER_NO_STEALTH").is_ok();
             let using_cloakbrowser = crate::install::find_installed_cloakbrowser().is_some();
-            let ua = user_agent
-                .as_deref()
-                .or_else(|| {
-                    // Only set a fake UA for stock Chrome, never for CloakBrowser
-                    if stealth_disabled || using_cloakbrowser {
-                        None
-                    } else {
-                        Some(super::stealth::get_default_user_agent())
-                    }
-                });
+            let ua = user_agent.as_deref().or_else(|| {
+                // Only set a fake UA for stock Chrome, never for CloakBrowser
+                if stealth_disabled || using_cloakbrowser {
+                    None
+                } else {
+                    Some(super::stealth::get_default_user_agent())
+                }
+            });
             if let Some(ua) = ua {
                 // Pass userAgentMetadata for Client Hints (navigator.userAgentData)
                 // so getHighEntropyValues() returns consistent, realistic data.
-                let ua_metadata: Option<serde_json::Value> = if !stealth_disabled && !using_cloakbrowser {
-                    serde_json::from_str(super::stealth::get_user_agent_metadata()).ok()
-                } else {
-                    None
-                };
+                let ua_metadata: Option<serde_json::Value> =
+                    if !stealth_disabled && !using_cloakbrowser {
+                        serde_json::from_str(super::stealth::get_user_agent_metadata()).ok()
+                    } else {
+                        None
+                    };
                 let mut params = json!({ "userAgent": ua });
                 if let Some(meta) = ua_metadata {
                     params["userAgentMetadata"] = meta;
@@ -438,6 +478,12 @@ impl BrowserManager {
     }
 
     async fn discover_and_attach_targets(&mut self) -> Result<(), String> {
+        if std::env::var("SILICON_BROWSER_DEBUG").is_ok() {
+            let _ = writeln!(
+                std::io::stderr(),
+                "[cdp] discover: Target.setDiscoverTargets"
+            );
+        }
         self.client
             .send_command_typed::<_, Value>(
                 "Target.setDiscoverTargets",
@@ -446,6 +492,9 @@ impl BrowserManager {
             )
             .await?;
 
+        if std::env::var("SILICON_BROWSER_DEBUG").is_ok() {
+            let _ = writeln!(std::io::stderr(), "[cdp] discover: Target.getTargets");
+        }
         let result: GetTargetsResult = self
             .client
             .send_command_typed("Target.getTargets", &json!({}), None)
@@ -458,6 +507,9 @@ impl BrowserManager {
             .collect();
 
         if page_targets.is_empty() {
+            if std::env::var("SILICON_BROWSER_DEBUG").is_ok() {
+                let _ = writeln!(std::io::stderr(), "[cdp] discover: Target.createTarget");
+            }
             // Create a new tab
             let result: CreateTargetResult = self
                 .client
@@ -470,6 +522,12 @@ impl BrowserManager {
                 )
                 .await?;
 
+            if std::env::var("SILICON_BROWSER_DEBUG").is_ok() {
+                let _ = writeln!(
+                    std::io::stderr(),
+                    "[cdp] discover: Target.attachToTarget new"
+                );
+            }
             let attach_result: AttachToTargetResult = self
                 .client
                 .send_command_typed(
@@ -493,6 +551,14 @@ impl BrowserManager {
             self.enable_domains(&attach_result.session_id).await?;
         } else {
             for target in &page_targets {
+                if std::env::var("SILICON_BROWSER_DEBUG").is_ok() {
+                    let _ = writeln!(
+                        std::io::stderr(),
+                        "[cdp] discover: Target.attachToTarget existing {} {}",
+                        target.target_id,
+                        target.url
+                    );
+                }
                 let attach_result: AttachToTargetResult = self
                     .client
                     .send_command_typed(
@@ -527,9 +593,23 @@ impl BrowserManager {
     }
 
     async fn enable_domains(&self, session_id: &str) -> Result<(), String> {
+        if std::env::var("SILICON_BROWSER_DEBUG").is_ok() {
+            let _ = writeln!(
+                std::io::stderr(),
+                "[cdp] enable: Page.enable {}",
+                session_id
+            );
+        }
         self.client
             .send_command_no_params("Page.enable", Some(session_id))
             .await?;
+        if std::env::var("SILICON_BROWSER_DEBUG").is_ok() {
+            let _ = writeln!(
+                std::io::stderr(),
+                "[cdp] enable: Runtime.enable {}",
+                session_id
+            );
+        }
         self.client
             .send_command_no_params("Runtime.enable", Some(session_id))
             .await?;
@@ -540,6 +620,13 @@ impl BrowserManager {
             .client
             .send_command_no_params("Runtime.runIfWaitingForDebugger", Some(session_id))
             .await;
+        if std::env::var("SILICON_BROWSER_DEBUG").is_ok() {
+            let _ = writeln!(
+                std::io::stderr(),
+                "[cdp] enable: Network.enable {}",
+                session_id
+            );
+        }
         self.client
             .send_command_no_params("Network.enable", Some(session_id))
             .await?;
@@ -1333,6 +1420,23 @@ impl BrowserManager {
             .await?;
         Ok(())
     }
+}
+
+fn should_reset_default_profile(options: &LaunchOptions, engine: &str) -> bool {
+    if engine != "chrome" || options.incognito || options.profile.is_some() {
+        return false;
+    }
+
+    options
+        .executable_path
+        .as_deref()
+        .map(std::path::Path::new)
+        .map(super::cdp::chrome::is_cloakbrowser)
+        .unwrap_or_else(|| {
+            super::cdp::chrome::find_chrome()
+                .map(|path| super::cdp::chrome::is_cloakbrowser(&path))
+                .unwrap_or(false)
+        })
 }
 
 /// Core network-idle polling loop, extracted so it can be unit-tested without a

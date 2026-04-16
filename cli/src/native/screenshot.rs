@@ -589,7 +589,9 @@ fn round(value: f64) -> i64 {
 
 fn get_screenshot_dir() -> PathBuf {
     if let Some(home) = dirs::home_dir() {
-        home.join(".silicon-browser").join("tmp").join("screenshots")
+        home.join(".silicon-browser")
+            .join("tmp")
+            .join("screenshots")
     } else {
         std::env::temp_dir()
             .join("silicon-browser")

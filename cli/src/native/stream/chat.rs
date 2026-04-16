@@ -76,7 +76,13 @@ pub(super) async fn handle_models_request(
     let _ = stream.write_all(body.as_bytes()).await;
 }
 
-const SKILL_NAMES: &[&str] = &["silicon-browser", "slack", "electron", "dogfood", "agentcore"];
+const SKILL_NAMES: &[&str] = &[
+    "silicon-browser",
+    "slack",
+    "electron",
+    "dogfood",
+    "agentcore",
+];
 
 /// Locate the `skills/` directory by walking up from the executable.
 /// Works for npm installs (binary in `bin/`, skills at `../skills/`) and

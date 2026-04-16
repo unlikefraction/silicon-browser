@@ -6,7 +6,7 @@ allowed-tools: Bash(npx silicon-browser:*), Bash(silicon-browser:*)
 
 # Browser Automation with silicon-browser
 
-The CLI uses Chrome/Chromium via CDP directly. Install via `npm i -g silicon-browser`, `brew install silicon-browser`, or `cargo install silicon-browser`. Run `silicon-browser install` to download Chrome.
+The CLI uses Chrome/Chromium via CDP directly. Install via `npm i -g silicon-browser`, `brew install silicon-browser`, or `cargo install silicon-browser`. Run `silicon-browser install` to download CloakBrowser plus Chrome for Testing. Silicon Browser prefers CloakBrowser and will automatically recover from a stale implicit default profile if that profile prevents CloakBrowser from launching.
 
 ## Core Workflow
 

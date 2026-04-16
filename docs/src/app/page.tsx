@@ -273,7 +273,7 @@ export default function Home() {
           <div className="footer-links">
             <a href="https://github.com/unlikefraction/silicon-browser" target="_blank">github</a>
             <a href="https://npmjs.com/package/silicon-browser" target="_blank">npm</a>
-            <a href="https://github.com/vercel-labs/agent-browser" target="_blank">agent-browser</a>
+            <a href="https://github.com/vercel-labs/agent-browser" target="_blank">upstream</a>
             <a href="https://cloakbrowser.dev" target="_blank">cloakbrowser</a>
             <a href="https://unlikefraction.com" target="_blank">unlikefraction</a>
           </div>

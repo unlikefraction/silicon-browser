@@ -1,5 +1,5 @@
 # Multi-platform Rust cross-compilation image
-FROM rust:1.85-bookworm
+FROM public.ecr.aws/docker/library/rust:1.94-bookworm
 
 # Install cross-compilation toolchains
 RUN apt-get update && apt-get install -y \
@@ -21,7 +21,7 @@ RUN rustup target add \
 # Install cargo-zigbuild for easier cross-compilation (especially macOS)
 RUN curl -sSL https://ziglang.org/download/0.13.0/zig-linux-x86_64-0.13.0.tar.xz | tar -xJ -C /opt \
     && ln -s /opt/zig-linux-x86_64-0.13.0/zig /usr/local/bin/zig
-RUN cargo install cargo-zigbuild
+RUN cargo install cargo-zigbuild --version 0.21.8 --locked
 
 # Configure linkers for cross-compilation
 RUN mkdir -p /.cargo

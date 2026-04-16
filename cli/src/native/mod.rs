@@ -5,6 +5,8 @@ pub mod auth;
 #[allow(dead_code)]
 pub mod browser;
 #[allow(dead_code)]
+pub mod captcha;
+#[allow(dead_code)]
 pub mod cdp;
 #[allow(dead_code)]
 pub mod cookies;
@@ -33,6 +35,8 @@ pub mod snapshot;
 #[allow(dead_code)]
 pub mod state;
 #[allow(dead_code)]
+pub mod stealth;
+#[allow(dead_code)]
 pub mod storage;
 #[allow(dead_code)]
 pub mod stream;
@@ -40,10 +44,6 @@ pub mod stream;
 pub mod tracing;
 #[allow(dead_code)]
 pub mod webdriver;
-#[allow(dead_code)]
-pub mod stealth;
-#[allow(dead_code)]
-pub mod captcha;
 
 #[cfg(test)]
 mod e2e_tests;

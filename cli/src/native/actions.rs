@@ -271,7 +271,8 @@ impl DaemonState {
             )),
             event_tracker: EventTracker::new(),
             session_name: env::var("SILICON_BROWSER_SESSION_NAME").ok(),
-            session_id: env::var("SILICON_BROWSER_SESSION").unwrap_or_else(|_| "default".to_string()),
+            session_id: env::var("SILICON_BROWSER_SESSION")
+                .unwrap_or_else(|_| "default".to_string()),
             tracing_state: TracingState::new(),
             recording_state: RecordingState::new(),
             event_rx: None,

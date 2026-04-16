@@ -193,7 +193,10 @@ fn ensure_virtual_display() -> Result<String, String> {
         if !apt_result.map(|s| s.success()).unwrap_or(false) {
             // Try yum (RHEL/CentOS/Amazon Linux)
             let yum_result = Command::new("sh")
-                .args(["-c", "command -v yum && sudo yum install -y -q xorg-x11-server-Xvfb >/dev/null 2>&1"])
+                .args([
+                    "-c",
+                    "command -v yum && sudo yum install -y -q xorg-x11-server-Xvfb >/dev/null 2>&1",
+                ])
                 .status();
 
             if !yum_result.map(|s| s.success()).unwrap_or(false) {
@@ -205,11 +208,15 @@ fn ensure_virtual_display() -> Result<String, String> {
                 if !dnf_result.map(|s| s.success()).unwrap_or(false) {
                     // Try apk (Alpine)
                     let apk_result = Command::new("sh")
-                        .args(["-c", "command -v apk && sudo apk add --quiet xvfb >/dev/null 2>&1"])
+                        .args([
+                            "-c",
+                            "command -v apk && sudo apk add --quiet xvfb >/dev/null 2>&1",
+                        ])
                         .status();
 
                     if !apk_result.map(|s| s.success()).unwrap_or(false) {
-                        return Err("Could not install Xvfb. Install manually: apt install xvfb".to_string());
+                        return Err("Could not install Xvfb. Install manually: apt install xvfb"
+                            .to_string());
                     }
                 }
             }
@@ -247,10 +254,14 @@ fn ensure_virtual_display() -> Result<String, String> {
     let child = Command::new("Xvfb")
         .args([
             &display,
-            "-screen", "0", "1920x1080x24",
-            "-ac",           // disable access control (no auth needed)
-            "-nolisten", "tcp",
-            "+extension", "GLX",  // needed for WebGL
+            "-screen",
+            "0",
+            "1920x1080x24",
+            "-ac", // disable access control (no auth needed)
+            "-nolisten",
+            "tcp",
+            "+extension",
+            "GLX", // needed for WebGL
         ])
         .stdout(Stdio::null())
         .stderr(Stdio::null())
@@ -351,6 +362,51 @@ pub fn get_profile_fingerprint_seed(profile_dir: &Path) -> u64 {
     let _ = std::fs::write(&seed_path, seed.to_string());
 
     seed
+}
+
+/// Back up the implicit default profile directory and return the backup path.
+///
+/// Used as a recovery path when a stale or incompatible default profile causes
+/// CloakBrowser's initial CDP session bootstrap to fail. Explicit user-chosen
+/// profiles are never touched automatically.
+pub fn backup_default_profile_dir() -> Result<PathBuf, String> {
+    let profile_dir = resolve_profile(None, false)
+        .ok_or_else(|| "Default profile directory is unavailable".to_string())?;
+
+    if !profile_dir.exists() {
+        return Ok(profile_dir);
+    }
+
+    let timestamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_err(|e| format!("Failed to compute backup timestamp: {}", e))?
+        .as_secs();
+
+    let parent = profile_dir
+        .parent()
+        .ok_or_else(|| "Default profile directory has no parent".to_string())?;
+    let profile_name = profile_dir
+        .file_name()
+        .and_then(|name| name.to_str())
+        .ok_or_else(|| "Default profile directory name is invalid".to_string())?;
+
+    let mut backup_path = parent.join(format!("{profile_name}.backup-{timestamp}"));
+    let mut suffix = 1u32;
+    while backup_path.exists() {
+        backup_path = parent.join(format!("{profile_name}.backup-{timestamp}-{suffix}"));
+        suffix += 1;
+    }
+
+    std::fs::rename(&profile_dir, &backup_path).map_err(|e| {
+        format!(
+            "Failed to back up default profile {} -> {}: {}",
+            profile_dir.display(),
+            backup_path.display(),
+            e
+        )
+    })?;
+
+    Ok(backup_path)
 }
 
 struct ChromeArgs {
@@ -465,8 +521,10 @@ fn build_chrome_args(options: &LaunchOptions) -> Result<ChromeArgs, String> {
         (profile_dir.clone(), None)
     } else {
         // Incognito: use a temp dir that gets cleaned up
-        let dir =
-            std::env::temp_dir().join(format!("silicon-browser-incognito-{}", uuid::Uuid::new_v4()));
+        let dir = std::env::temp_dir().join(format!(
+            "silicon-browser-incognito-{}",
+            uuid::Uuid::new_v4()
+        ));
         std::fs::create_dir_all(&dir)
             .map_err(|e| format!("Failed to create incognito dir: {}", e))?;
         args.push(format!("--user-data-dir={}", dir.display()));
@@ -519,13 +577,6 @@ fn build_chrome_args(options: &LaunchOptions) -> Result<ChromeArgs, String> {
 }
 
 pub fn launch_chrome(options: &LaunchOptions) -> Result<ChromeProcess, String> {
-    let chrome_path = match &options.executable_path {
-        Some(p) => PathBuf::from(p),
-        None => {
-            find_chrome().ok_or("No browser found. Run `silicon-browser install` to download CloakBrowser + Chrome, or use --executable-path.")?
-        }
-    };
-
     // Profile name preprocessing: if --profile is a Chrome profile name (not a
     // path), resolve it to a directory, copy the profile to a temp dir, and
     // rewrite options so the retry loop uses the copied profile.
@@ -553,35 +604,55 @@ pub fn launch_chrome(options: &LaunchOptions) -> Result<ChromeProcess, String> {
 
     let effective_options = resolved_options.as_ref().unwrap_or(options);
 
-    let max_attempts = 3;
-    let mut last_err = String::new();
+    let chrome_candidates = match &options.executable_path {
+        Some(path) => vec![PathBuf::from(path)],
+        None => find_chrome_candidates(),
+    };
+    if chrome_candidates.is_empty() {
+        if let Some(ref dir) = profile_temp_dir {
+            let _ = std::fs::remove_dir_all(dir);
+        }
+        return Err(
+            "No browser found. Run `silicon-browser install` to download CloakBrowser + Chrome, or use --executable-path."
+                .to_string(),
+        );
+    }
 
-    for attempt in 1..=max_attempts {
-        match try_launch_chrome(&chrome_path, effective_options) {
-            Ok(mut process) => {
-                // Transfer profile temp dir ownership to ChromeProcess for cleanup on Drop.
-                // The try_launch_chrome temp_user_data_dir is None here because we set profile
-                // to the temp path (treated as a user-supplied path, no second temp dir).
-                if let Some(ref dir) = profile_temp_dir {
-                    process.temp_user_data_dir = Some(dir.clone());
+    let max_attempts = 3;
+    let mut launch_errors: Vec<String> = Vec::new();
+
+    for chrome_path in chrome_candidates {
+        let mut last_err = String::new();
+        for attempt in 1..=max_attempts {
+            match try_launch_chrome(&chrome_path, effective_options) {
+                Ok(mut process) => {
+                    // Transfer profile temp dir ownership to ChromeProcess for cleanup on Drop.
+                    // The try_launch_chrome temp_user_data_dir is None here because we set profile
+                    // to the temp path (treated as a user-supplied path, no second temp dir).
+                    if let Some(ref dir) = profile_temp_dir {
+                        process.temp_user_data_dir = Some(dir.clone());
+                    }
+                    return Ok(process);
                 }
-                return Ok(process);
-            }
-            Err(e) => {
-                last_err = e;
-                if attempt < max_attempts {
-                    // Use write! instead of eprintln! to avoid panicking
-                    // if the daemon's stderr pipe is broken (parent dropped it).
-                    let _ = writeln!(
-                        std::io::stderr(),
-                        "[chrome] Launch attempt {}/{} failed, retrying in 500ms...",
-                        attempt,
-                        max_attempts
-                    );
-                    std::thread::sleep(Duration::from_millis(500));
+                Err(e) => {
+                    last_err = e;
+                    if attempt < max_attempts {
+                        // Use write! instead of eprintln! to avoid panicking
+                        // if the daemon's stderr pipe is broken (parent dropped it).
+                        let _ = writeln!(
+                            std::io::stderr(),
+                            "[chrome] Launch attempt {}/{} failed for {}, retrying in 500ms...",
+                            attempt,
+                            max_attempts,
+                            chrome_path.display()
+                        );
+                        std::thread::sleep(Duration::from_millis(500));
+                    }
                 }
             }
         }
+
+        launch_errors.push(format!("{}: {}", chrome_path.display(), last_err));
     }
 
     // All retries failed: clean up profile temp dir if we created one
@@ -589,7 +660,10 @@ pub fn launch_chrome(options: &LaunchOptions) -> Result<ChromeProcess, String> {
         let _ = std::fs::remove_dir_all(dir);
     }
 
-    Err(last_err)
+    Err(format!(
+        "Failed to launch any discovered browser:\n{}",
+        launch_errors.join("\n")
+    ))
 }
 
 fn try_launch_chrome(chrome_path: &Path, options: &LaunchOptions) -> Result<ChromeProcess, String> {
@@ -612,7 +686,11 @@ fn try_launch_chrome(chrome_path: &Path, options: &LaunchOptions) -> Result<Chro
             let seed = std::env::var("SILICON_BROWSER_FINGERPRINT")
                 .ok()
                 .and_then(|s| s.parse::<u64>().ok())
-                .or_else(|| resolved_profile.as_ref().map(|dir| get_profile_fingerprint_seed(dir)))
+                .or_else(|| {
+                    resolved_profile
+                        .as_ref()
+                        .map(|dir| get_profile_fingerprint_seed(dir))
+                })
                 .unwrap_or_else(|| {
                     // Incognito: random seed each time
                     let mut buf = [0u8; 8];
@@ -641,6 +719,15 @@ fn try_launch_chrome(chrome_path: &Path, options: &LaunchOptions) -> Result<Chro
                 && !a.starts_with("--webrtc-ip-handling-policy")
                 && !a.contains("AutomationControlled")
         });
+    }
+
+    if std::env::var("SILICON_BROWSER_DEBUG").is_ok() {
+        let _ = writeln!(
+            std::io::stderr(),
+            "[chrome] launch path: {}\n[chrome] args: {}",
+            chrome_path.display(),
+            args.join(" ")
+        );
     }
 
     // Mitigate stale DevToolsActivePort risk (e.g., previous crash left it behind).
@@ -849,21 +936,28 @@ fn chrome_launch_error(message: &str, stderr_lines: &[String]) -> String {
     )
 }
 
-pub fn find_chrome() -> Option<PathBuf> {
+/// Returns browser candidates in launch priority order.
+///
+/// CloakBrowser stays first for stealth-first behavior, but the caller should
+/// continue to later candidates if a preferred browser is installed yet fails
+/// to complete a usable CDP launch.
+pub fn find_chrome_candidates() -> Vec<PathBuf> {
+    let mut candidates = Vec::new();
+
     // 1. CloakBrowser (preferred — stealth Chromium with C++ level patches)
     if let Some(p) = crate::install::find_installed_cloakbrowser() {
-        return Some(p);
+        candidates.push(p);
     }
 
-    // 2. Check Chrome downloaded by `silicon-browser install`
+    // 2. Chrome downloaded by `silicon-browser install`
     if let Some(p) = crate::install::find_installed_chrome() {
-        return Some(p);
+        candidates.push(p);
     }
 
     // If the cache directory exists but no Chrome was found, warn -- this
     // likely means the cache is corrupted or the directory layout is unexpected.
     let cache_dir = crate::install::get_browsers_dir();
-    if cache_dir.exists() {
+    if candidates.is_empty() && cache_dir.exists() {
         let _ = writeln!(
             std::io::stderr(),
             "Warning: Chrome cache directory exists ({}) but no Chrome binary found inside. \
@@ -875,23 +969,23 @@ pub fn find_chrome() -> Option<PathBuf> {
     // 3. Check system-installed Chrome
     #[cfg(target_os = "macos")]
     {
-        let candidates = [
+        let macos_candidates = [
             "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
             "/Applications/Google Chrome Canary.app/Contents/MacOS/Google Chrome Canary",
             "/Applications/Chromium.app/Contents/MacOS/Chromium",
             "/Applications/Brave Browser.app/Contents/MacOS/Brave Browser",
         ];
-        for c in &candidates {
+        for c in &macos_candidates {
             let p = PathBuf::from(c);
             if p.exists() {
-                return Some(p);
+                candidates.push(p);
             }
         }
     }
 
     #[cfg(target_os = "linux")]
     {
-        let candidates = [
+        let linux_candidates = [
             "google-chrome",
             "google-chrome-stable",
             "chromium-browser",
@@ -899,12 +993,12 @@ pub fn find_chrome() -> Option<PathBuf> {
             "brave-browser",
             "brave-browser-stable",
         ];
-        for name in &candidates {
+        for name in &linux_candidates {
             if let Ok(output) = Command::new("which").arg(name).output() {
                 if output.status.success() {
                     let path = String::from_utf8_lossy(&output.stdout).trim().to_string();
                     if !path.is_empty() {
-                        return Some(PathBuf::from(path));
+                        candidates.push(PathBuf::from(path));
                     }
                 }
             }
@@ -913,38 +1007,51 @@ pub fn find_chrome() -> Option<PathBuf> {
 
     #[cfg(target_os = "windows")]
     {
-        let candidates = [
+        let windows_candidates = [
             r"C:\Program Files\Google\Chrome\Application\chrome.exe",
             r"C:\Program Files (x86)\Google\Chrome\Application\chrome.exe",
         ];
         if let Ok(local) = std::env::var("LOCALAPPDATA") {
             let chrome = PathBuf::from(&local).join(r"Google\Chrome\Application\chrome.exe");
             if chrome.exists() {
-                return Some(chrome);
+                candidates.push(chrome);
             }
             let brave =
                 PathBuf::from(&local).join(r"BraveSoftware\Brave-Browser\Application\brave.exe");
             if brave.exists() {
-                return Some(brave);
+                candidates.push(brave);
             }
         }
-        for c in &candidates {
+        for c in &windows_candidates {
             let p = PathBuf::from(c);
             if p.exists() {
-                return Some(p);
+                candidates.push(p);
             }
         }
     }
 
     // 4. Fallback: check Puppeteer / Playwright browser caches
     if let Some(p) = find_puppeteer_chrome() {
-        return Some(p);
+        candidates.push(p);
     }
     if let Some(p) = find_playwright_chromium() {
-        return Some(p);
+        candidates.push(p);
     }
 
-    None
+    let mut deduped = Vec::new();
+    for candidate in candidates {
+        if !deduped
+            .iter()
+            .any(|existing: &PathBuf| existing == &candidate)
+        {
+            deduped.push(candidate);
+        }
+    }
+    deduped
+}
+
+pub fn find_chrome() -> Option<PathBuf> {
+    find_chrome_candidates().into_iter().next()
 }
 
 /// Check if a path points to a CloakBrowser binary (not stock Chrome).
@@ -1750,8 +1857,12 @@ mod tests {
             ..Default::default()
         };
         let result = build_chrome_args(&opts).unwrap();
-        assert!(!result.args.iter().any(|a| a == "--window-size=1920,1080"));
-        assert!(result.args.iter().any(|a| a == "--window-size=1920,1080"));
+        let window_size_args = result
+            .args
+            .iter()
+            .filter(|a| *a == "--window-size=1920,1080")
+            .count();
+        assert_eq!(window_size_args, 1);
         if let Some(ref dir) = result.temp_user_data_dir {
             let _ = std::fs::remove_dir_all(dir);
         }

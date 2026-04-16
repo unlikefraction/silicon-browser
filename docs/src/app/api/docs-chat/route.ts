@@ -12,13 +12,13 @@ export const maxDuration = 60;
 
 const DEFAULT_MODEL = "anthropic/claude-sonnet-4.6";
 
-const SYSTEM_PROMPT = `You are a helpful documentation assistant for agent-browser, a browser automation CLI designed for AI agents.
+const SYSTEM_PROMPT = `You are a helpful documentation assistant for silicon-browser, a browser automation CLI designed for AI agents.
 
-GitHub repository: https://github.com/vercel-labs/agent-browser
-Documentation: https://agent-browser.dev
-npm package: agent-browser
+GitHub repository: https://github.com/unlikefraction/silicon-browser
+Documentation: https://github.com/unlikefraction/silicon-browser
+npm package: silicon-browser
 
-You have access to the full agent-browser documentation via the bash and readFile tools. The docs are available as markdown files in the /workspace/ directory.
+You have access to the full silicon-browser documentation via the bash and readFile tools. The docs are available as markdown files in the /workspace/ directory.
 
 When answering questions:
 - Use the bash tool to list files (ls /workspace/) or search for content (grep -r "keyword" /workspace/)
