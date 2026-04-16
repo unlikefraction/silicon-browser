@@ -1,23 +1,23 @@
 # Browserless
 
-[Browserless](https://browserless.io) provides cloud browser infrastructure with a Sessions API. Use it when running agent-browser in environments where a local browser isn't available.
+[Browserless](https://browserless.io) provides cloud browser infrastructure with a Sessions API. Use it when running silicon-browser in environments where a local browser isn't available.
 
 ## Setup
 
 ```bash
 export BROWSERLESS_API_KEY="your-api-token"
-agent-browser -p browserless open https://example.com
+silicon-browser -p browserless open https://example.com
 ```
 
 Or use environment variables for CI/scripts:
 
 ```bash
-export AGENT_BROWSER_PROVIDER=browserless
+export SILICON_BROWSER_PROVIDER=browserless
 export BROWSERLESS_API_KEY="your-api-token"
-agent-browser open https://example.com
+silicon-browser open https://example.com
 ```
 
-The `-p` flag takes precedence over `AGENT_BROWSER_PROVIDER`.
+The `-p` flag takes precedence over `SILICON_BROWSER_PROVIDER`.
 
 ## Configuration
 
@@ -34,6 +34,6 @@ The `-p` flag takes precedence over `AGENT_BROWSER_PROVIDER`.
   </tbody>
 </table>
 
-When enabled, agent-browser connects to a Browserless cloud session instead of launching a local browser. All commands work identically.
+When enabled, silicon-browser connects to a Browserless cloud session instead of launching a local browser. All commands work identically.
 
 Get your API token from the [Browserless Dashboard](https://browserless.io).

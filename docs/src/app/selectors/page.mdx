@@ -6,7 +6,7 @@ Refs provide deterministic element selection from snapshots. Best for AI agents.
 
 ```bash
 # 1. Get snapshot with refs
-agent-browser snapshot
+silicon-browser snapshot
 # Output:
 # - heading "Example Domain" [ref=e1] [level=1]
 # - button "Submit" [ref=e2]
@@ -14,10 +14,10 @@ agent-browser snapshot
 # - link "Learn more" [ref=e4]
 
 # 2. Use refs to interact
-agent-browser click @e2                   # Click the button
-agent-browser fill @e3 "test@example.com" # Fill the textbox
-agent-browser get text @e1                # Get heading text
-agent-browser hover @e4                   # Hover the link
+silicon-browser click @e2                   # Click the button
+silicon-browser fill @e3 "test@example.com" # Fill the textbox
+silicon-browser get text @e1                # Get heading text
+silicon-browser hover @e4                   # Hover the link
 ```
 
 ### Why refs?
@@ -29,17 +29,17 @@ agent-browser hover @e4                   # Hover the link
 ## CSS selectors
 
 ```bash
-agent-browser click "#id"
-agent-browser click ".class"
-agent-browser click "div > button"
-agent-browser click "[data-testid='submit']"
+silicon-browser click "#id"
+silicon-browser click ".class"
+silicon-browser click "div > button"
+silicon-browser click "[data-testid='submit']"
 ```
 
 ## Text & XPath
 
 ```bash
-agent-browser click "text=Submit"
-agent-browser click "xpath=//button[@type='submit']"
+silicon-browser click "text=Submit"
+silicon-browser click "xpath=//button[@type='submit']"
 ```
 
 ## Semantic locators
@@ -47,8 +47,8 @@ agent-browser click "xpath=//button[@type='submit']"
 Find elements by role, label, or other semantic properties:
 
 ```bash
-agent-browser find role button click --name "Submit"
-agent-browser find label "Email" fill "test@test.com"
-agent-browser find placeholder "Search..." fill "query"
-agent-browser find testid "submit-btn" click
+silicon-browser find role button click --name "Submit"
+silicon-browser find label "Email" fill "test@test.com"
+silicon-browser find placeholder "Search..." fill "query"
+silicon-browser find testid "submit-btn" click
 ```

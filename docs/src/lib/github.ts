@@ -1,4 +1,4 @@
-const REPO = "vercel-labs/agent-browser";
+const REPO = "unlikefraction/silicon-browser";
 const REVALIDATE = 86400;
 
 export async function getStarCount(): Promise<string> {

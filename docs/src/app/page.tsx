@@ -9,19 +9,19 @@ export default function Home() {
   const [skillCopied, setSkillCopied] = useState(false);
 
   const copyInstall = () => {
-    navigator.clipboard.writeText("npm install -g silicon-browser && silicon-browser install");
+    navigator.clipboard.writeText("pnpm add -g silicon-browser && silicon-browser install");
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
   };
 
   const copySkill = async () => {
     try {
-      const r = await fetch("https://raw.githubusercontent.com/unlikefraction/silicon-browser/main/SKILL.md");
+      const r = await fetch("https://raw.githubusercontent.com/unlikefraction/silicon-browser/main/skills/silicon-browser/SKILL.md");
       await navigator.clipboard.writeText(await r.text());
       setSkillCopied(true);
       setTimeout(() => setSkillCopied(false), 2000);
     } catch {
-      window.open("https://raw.githubusercontent.com/unlikefraction/silicon-browser/main/SKILL.md", "_blank");
+      window.open("https://raw.githubusercontent.com/unlikefraction/silicon-browser/main/skills/silicon-browser/SKILL.md", "_blank");
     }
   };
 
@@ -64,7 +64,7 @@ export default function Home() {
         <div className="install-bar">
           <code>
             <span className="dollar">$ </span>
-            npm install -g silicon-browser && silicon-browser install
+            pnpm add -g silicon-browser && silicon-browser install
           </code>
           <button className="copy-btn" onClick={copyInstall}>
             {copied ? "copied" : "copy"}
@@ -220,7 +220,7 @@ export default function Home() {
                 <button className="btn-dark" onClick={copySkill}>
                   {skillCopied ? "copied to clipboard" : "copy to clipboard"}
                 </button>
-                <a href="https://raw.githubusercontent.com/unlikefraction/silicon-browser/main/SKILL.md" className="btn-outline" target="_blank">
+                <a href="https://raw.githubusercontent.com/unlikefraction/silicon-browser/main/skills/silicon-browser/SKILL.md" className="btn-outline" target="_blank">
                   download
                 </a>
               </div>
@@ -273,7 +273,7 @@ export default function Home() {
           <div className="footer-links">
             <a href="https://github.com/unlikefraction/silicon-browser" target="_blank">github</a>
             <a href="https://npmjs.com/package/silicon-browser" target="_blank">npm</a>
-            <a href="https://github.com/vercel-labs/agent-browser" target="_blank">upstream</a>
+            <a href="https://github.com/vercel-labs/silicon-browser" target="_blank">upstream</a>
             <a href="https://cloakbrowser.dev" target="_blank">cloakbrowser</a>
             <a href="https://unlikefraction.com" target="_blank">unlikefraction</a>
           </div>

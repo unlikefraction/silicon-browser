@@ -115,7 +115,7 @@ function ToolCallDisplay({
 }
 
 const SUGGESTIONS = [
-  "What is agent-browser?",
+  "What is silicon-browser?",
   "How do I install it?",
   "What commands are available?",
   "How do snapshots work?",
@@ -328,7 +328,7 @@ export function DocsChat({
     <>
       {/* Header */}
       <div className="flex items-center justify-between px-4 py-3 border-b border-border/50 shrink-0">
-        <span className="text-sm font-medium">agent-browser Docs</span>
+        <span className="text-sm font-medium">silicon-browser Docs</span>
         <div className="flex items-center gap-3">
           {showMessages && (
             <button

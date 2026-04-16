@@ -1,7 +1,7 @@
 # Next.js + Vercel
 
-Run agent-browser from a Next.js app on Vercel using Vercel Sandbox.
-A Linux microVM spins up on demand, runs agent-browser + Chrome, and
+Run silicon-browser from a Next.js app on Vercel using Vercel Sandbox.
+A Linux microVM spins up on demand, runs silicon-browser + Chrome, and
 shuts down. No binary size limits, no Chromium bundling complexity.
 
 ## Setup
@@ -14,14 +14,14 @@ pnpm add @vercel/sandbox
 
 The Vercel Sandbox runs Amazon Linux. Chromium requires system libraries
 that are not installed by default, so fresh sandboxes need a `dnf install`
-step before agent-browser can launch Chrome. Use a sandbox snapshot
+step before silicon-browser can launch Chrome. Use a sandbox snapshot
 (below) to skip this entirely in production.
 
 ```ts
 "use server";
 import { Sandbox } from "@vercel/sandbox";
 
-const snapshotId = process.env.AGENT_BROWSER_SNAPSHOT_ID;
+const snapshotId = process.env.SILICON_BROWSER_SNAPSHOT_ID;
 
 const CHROMIUM_SYSTEM_DEPS = [
   "nss", "nspr", "libxkbcommon", "atk", "at-spi2-atk", "at-spi2-core",
@@ -64,8 +64,8 @@ async function withBrowser<T>(
       "-c",
       `sudo dnf clean all 2>&1 && sudo dnf install -y --skip-broken ${CHROMIUM_SYSTEM_DEPS.join(" ")} 2>&1 && sudo ldconfig 2>&1`,
     ]);
-    await sandbox.runCommand("npm", ["install", "-g", "agent-browser"]);
-    await sandbox.runCommand("npx", ["agent-browser", "install"]);
+    await sandbox.runCommand("npm", ["install", "-g", "silicon-browser"]);
+    await sandbox.runCommand("npx", ["silicon-browser", "install"]);
   }
 
   try {
@@ -77,30 +77,30 @@ async function withBrowser<T>(
 
 export async function screenshotUrl(url: string) {
   return withBrowser(async (sandbox) => {
-    await sandbox.runCommand("agent-browser", ["open", url]);
+    await sandbox.runCommand("silicon-browser", ["open", url]);
 
-    const ssResult = await sandbox.runCommand("agent-browser", [
+    const ssResult = await sandbox.runCommand("silicon-browser", [
       "screenshot", "--json",
     ]);
     const ssPath = JSON.parse(await ssResult.stdout())?.data?.path;
     const b64Result = await sandbox.runCommand("base64", ["-w", "0", ssPath]);
     const screenshot = (await b64Result.stdout()).trim();
 
-    await sandbox.runCommand("agent-browser", ["close"]);
+    await sandbox.runCommand("silicon-browser", ["close"]);
     return { ok: true, screenshot };
   });
 }
 
 export async function snapshotUrl(url: string) {
   return withBrowser(async (sandbox) => {
-    await sandbox.runCommand("agent-browser", ["open", url]);
+    await sandbox.runCommand("silicon-browser", ["open", url]);
 
-    const result = await sandbox.runCommand("agent-browser", [
+    const result = await sandbox.runCommand("silicon-browser", [
       "snapshot", "-i", "-c",
     ]);
     const snapshot = await result.stdout();
 
-    await sandbox.runCommand("agent-browser", ["close"]);
+    await sandbox.runCommand("silicon-browser", ["close"]);
     return { ok: true, snapshot };
   });
 }
@@ -109,13 +109,13 @@ export async function snapshotUrl(url: string) {
 ## Sandbox snapshots
 
 Without optimization, each Sandbox run installs system dependencies +
-agent-browser + Chromium from scratch (~30 seconds). A **sandbox snapshot**
+silicon-browser + Chromium from scratch (~30 seconds). A **sandbox snapshot**
 is a saved VM image with everything pre-installed -- like a Docker image
-for Vercel Sandbox. When `AGENT_BROWSER_SNAPSHOT_ID` is set, the sandbox
+for Vercel Sandbox. When `SILICON_BROWSER_SNAPSHOT_ID` is set, the sandbox
 boots from that image instead of installing, bringing startup down to
 sub-second.
 
-This is different from an agent-browser *accessibility snapshot* (which
+This is different from a silicon-browser *accessibility snapshot* (which
 dumps a page's accessibility tree). A sandbox snapshot is a Vercel
 infrastructure concept.
 
@@ -126,10 +126,10 @@ npx tsx scripts/create-snapshot.ts
 ```
 
 The script spins up a fresh sandbox, installs system dependencies +
-agent-browser + Chromium, saves the VM state, and prints the snapshot ID:
+silicon-browser + Chromium, saves the VM state, and prints the snapshot ID:
 
 ```
-AGENT_BROWSER_SNAPSHOT_ID=snap_xxxxxxxxxxxx
+SILICON_BROWSER_SNAPSHOT_ID=snap_xxxxxxxxxxxx
 ```
 
 Add this to your Vercel project environment variables (or `.env.local`
@@ -162,13 +162,13 @@ For recurring tasks like daily monitoring, use Vercel Cron Jobs:
 // app/api/cron/monitor/route.ts
 export async function GET() {
   const result = await withBrowser(async (sandbox) => {
-    await sandbox.runCommand("agent-browser", [
+    await sandbox.runCommand("silicon-browser", [
       "open", "https://example.com/pricing",
     ]);
-    const snap = await sandbox.runCommand("agent-browser", [
+    const snap = await sandbox.runCommand("silicon-browser", [
       "snapshot", "-i", "-c",
     ]);
-    await sandbox.runCommand("agent-browser", ["close"]);
+    await sandbox.runCommand("silicon-browser", ["close"]);
     return await snap.stdout();
   });
 
@@ -193,7 +193,7 @@ export async function GET() {
     <tr><th>Variable</th><th>Description</th></tr>
   </thead>
   <tbody>
-    <tr><td><code>AGENT_BROWSER_SNAPSHOT_ID</code></td><td>Sandbox snapshot ID for sub-second startup (see above)</td></tr>
+    <tr><td><code>SILICON_BROWSER_SNAPSHOT_ID</code></td><td>Sandbox snapshot ID for sub-second startup (see above)</td></tr>
     <tr><td><code>VERCEL_TOKEN</code></td><td>Vercel personal access token (for local dev; OIDC is automatic on Vercel)</td></tr>
     <tr><td><code>VERCEL_TEAM_ID</code></td><td>Vercel team ID (for local dev)</td></tr>
     <tr><td><code>VERCEL_PROJECT_ID</code></td><td>Vercel project ID (for local dev)</td></tr>

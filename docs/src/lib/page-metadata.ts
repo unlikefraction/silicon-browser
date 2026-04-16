@@ -9,7 +9,7 @@ export function pageMetadata(slug: string): Metadata {
   if (!title) return {};
 
   const displayTitle = title.replace(/\n/g, " ");
-  const fullTitle = `${displayTitle} | agent-browser`;
+  const fullTitle = `${displayTitle} | silicon-browser`;
   const ogImageUrl = slug ? `/og/${slug}` : "/og";
 
   return {
@@ -17,7 +17,7 @@ export function pageMetadata(slug: string): Metadata {
     openGraph: {
       type: "website",
       locale: "en_US",
-      siteName: "agent-browser",
+      siteName: "silicon-browser",
       title: fullTitle,
       description: DESCRIPTION,
       images: [
@@ -25,7 +25,7 @@ export function pageMetadata(slug: string): Metadata {
           url: ogImageUrl,
           width: 1200,
           height: 630,
-          alt: `${displayTitle} - agent-browser`,
+          alt: `${displayTitle} - silicon-browser`,
         },
       ],
     },

@@ -1,14 +1,14 @@
 # Observability Dashboard
 
-Monitor agent-browser sessions in real time with a local web dashboard showing a live browser viewport and command activity feed.
+Monitor silicon-browser sessions in real time with a local web dashboard showing a live browser viewport and command activity feed.
 
 ## Usage
 
 The dashboard is bundled into the binary and requires no separate install. Start the server and open any session:
 
 ```bash
-agent-browser dashboard start
-agent-browser open example.com
+silicon-browser dashboard start
+silicon-browser open example.com
 ```
 
 Then open `http://localhost:4848` in your browser to see the live dashboard.
@@ -17,18 +17,18 @@ All sessions automatically stream to the dashboard. No extra flags are needed.
 
 ### Custom stream port
 
-By default each session binds its WebSocket stream server to an OS-assigned port. To use a specific port, set the `AGENT_BROWSER_STREAM_PORT` environment variable:
+By default each session binds its WebSocket stream server to an OS-assigned port. To use a specific port, set the `SILICON_BROWSER_STREAM_PORT` environment variable:
 
 ```bash
-AGENT_BROWSER_STREAM_PORT=9223 agent-browser open example.com
+SILICON_BROWSER_STREAM_PORT=9223 silicon-browser open example.com
 ```
 
 You can also use the runtime commands to control streaming on a running session:
 
 ```bash
-agent-browser stream enable --port 9223
-agent-browser stream status
-agent-browser stream disable
+silicon-browser stream enable --port 9223
+silicon-browser stream status
+silicon-browser stream disable
 ```
 
 ## Dashboard features
@@ -134,7 +134,7 @@ The Chat tab is always visible. Set the API key to enable responses:
 
 ```bash
 export AI_GATEWAY_API_KEY=gw_your_key_here
-agent-browser dashboard start
+silicon-browser dashboard start
 ```
 
 Optionally override the gateway URL or model:

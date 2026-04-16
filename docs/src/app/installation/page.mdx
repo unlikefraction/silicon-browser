@@ -5,7 +5,7 @@
 Installs the native Rust binary for maximum performance:
 
 ```bash
-npm install -g silicon-browser
+pnpm add -g silicon-browser
 silicon-browser install  # Download CloakBrowser + Chrome for Testing (first time)
 ```
 
@@ -14,8 +14,8 @@ This is the fastest option -- commands run through the native Rust CLI directly 
 ## Quick start (no install)
 
 ```bash
-npx silicon-browser install   # Download bundled browsers (first time only)
-npx silicon-browser open example.com
+pnpm dlx silicon-browser install   # Download bundled browsers (first time only)
+pnpm dlx silicon-browser open example.com
 ```
 
 ## Project installation (local dependency)
@@ -23,11 +23,11 @@ npx silicon-browser open example.com
 For projects that want to pin the version in `package.json`:
 
 ```bash
-npm install silicon-browser
-npx silicon-browser install  # Download bundled browsers (first time)
+pnpm add silicon-browser
+pnpm dlx silicon-browser install  # Download bundled browsers (first time)
 ```
 
-Then use via `npx` or `package.json` scripts.
+Then use via `pnpm dlx` or `package.json` scripts.
 
 ## Homebrew (macOS)
 
@@ -93,23 +93,23 @@ SILICON_BROWSER_EXECUTABLE_PATH=/path/to/chromium silicon-browser open example.c
 
 ### Serverless example
 
-Use `@sparticuz/chromium` or similar to obtain a Chromium executable path, then pass it via `--executable-path` or `AGENT_BROWSER_EXECUTABLE_PATH`.
+Use `@sparticuz/chromium` or similar to obtain a Chromium executable path, then pass it via `--executable-path` or `SILICON_BROWSER_EXECUTABLE_PATH`.
 
 ## AI agent setup
 
-agent-browser works with any AI agent out of the box. For richer context:
+silicon-browser works with any AI agent out of the box. For richer context:
 
 ### AI coding assistants (recommended)
 
 Install the skill for your AI coding assistant:
 
 ```bash
-npx skills add unlikefraction/silicon-browser
+pnpm dlx skills add unlikefraction/silicon-browser
 ```
 
 This works with Claude Code, Codex, Cursor, Gemini CLI, GitHub Copilot, Goose, OpenCode, and Windsurf. The skill is fetched from the repository and stays up to date automatically.
 
-> **Do not** copy `SKILL.md` from `node_modules` -- it will become stale as new features are added. Always use `npx skills add` or reference the repository version.
+> **Do not** copy `SKILL.md` from `node_modules` -- it will become stale as new features are added. Always use `pnpm dlx skills add` or reference the repository version.
 
 ### AGENTS.md / CLAUDE.md
 
@@ -118,11 +118,11 @@ Add to your instructions file:
 ```markdown
 ## Browser Automation
 
-Use `agent-browser` for web automation. Run `agent-browser --help` for all commands.
+Use `silicon-browser` for web automation. Run `silicon-browser --help` for all commands.
 
 Core workflow:
-1. `agent-browser open <url>` - Navigate to page
-2. `agent-browser snapshot -i` - Get interactive elements with refs (@e1, @e2)
-3. `agent-browser click @e1` / `fill @e2 "text"` - Interact using refs
+1. `silicon-browser open <url>` - Navigate to page
+2. `silicon-browser snapshot -i` - Get interactive elements with refs (@e1, @e2)
+3. `silicon-browser click @e1` / `fill @e2 "text"` - Interact using refs
 4. Re-snapshot after page changes
 ```

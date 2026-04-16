@@ -2,11 +2,11 @@
 
 [Lightpanda](https://lightpanda.io/) is a headless browser engine built from scratch in Zig for machines. It starts instantly, uses 10x less memory than Chrome, and executes 10x faster.
 
-agent-browser manages Lightpanda the same way it manages Chrome -- spawning the process, connecting via CDP, and shutting it down. All downstream commands (snapshot, click, fill, screenshot, etc.) work through the same CDP protocol path.
+silicon-browser manages Lightpanda the same way it manages Chrome -- spawning the process, connecting via CDP, and shutting it down. All downstream commands (snapshot, click, fill, screenshot, etc.) work through the same CDP protocol path.
 
 ## Installation
 
-Install the Lightpanda binary before using it with agent-browser:
+Install the Lightpanda binary before using it with silicon-browser:
 
 <table>
   <thead>
@@ -33,19 +33,19 @@ See the [Lightpanda installation docs](https://lightpanda.io/docs/open-source/in
 Use the `--engine` flag to select Lightpanda:
 
 ```bash
-agent-browser --engine lightpanda open example.com
-agent-browser --engine lightpanda snapshot
-agent-browser --engine lightpanda screenshot
+silicon-browser --engine lightpanda open example.com
+silicon-browser --engine lightpanda snapshot
+silicon-browser --engine lightpanda screenshot
 ```
 
 Or set it as the default via environment variable:
 
 ```bash
-export AGENT_BROWSER_ENGINE=lightpanda
-agent-browser open example.com
+export SILICON_BROWSER_ENGINE=lightpanda
+silicon-browser open example.com
 ```
 
-Or in your `agent-browser.json` config:
+Or in your `silicon-browser.json` config:
 
 ```json
 {
@@ -58,7 +58,7 @@ Or in your `agent-browser.json` config:
 If the `lightpanda` binary is not in your `PATH`, use `--executable-path`:
 
 ```bash
-agent-browser --engine lightpanda --executable-path /path/to/lightpanda open example.com
+silicon-browser --engine lightpanda --executable-path /path/to/lightpanda open example.com
 ```
 
 ## Differences from Chrome
@@ -79,7 +79,7 @@ Lightpanda is a purpose-built headless engine. Some Chrome-specific features are
   </tbody>
 </table>
 
-agent-browser returns a clear error if you combine `--engine lightpanda` with unsupported flags.
+silicon-browser returns a clear error if you combine `--engine lightpanda` with unsupported flags.
 
 ## When to Use Lightpanda
 

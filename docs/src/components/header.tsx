@@ -9,7 +9,10 @@ export async function Header() {
     <header className="sticky top-0 z-50 bg-white/90 backdrop-blur-sm dark:bg-neutral-950/90">
       <div className="flex h-14 items-center justify-between px-4 gap-6">
         <div className="flex items-center gap-2">
-          <Link href="https://vercel.com" title="Made with love by Vercel">
+          <Link
+            href="https://github.com/unlikefraction/silicon-browser"
+            title="Silicon Browser on GitHub"
+          >
             <svg
               data-testid="geist-icon"
               height="18"
@@ -48,14 +51,14 @@ export async function Header() {
               className="font-medium tracking-tight text-lg"
               style={{ fontFamily: "var(--font-geist-pixel-square)" }}
             >
-              agent-browser
+              silicon-browser
             </span>
           </Link>
         </div>
         <nav className="flex items-center gap-4">
           <Search />
           <a
-            href="https://github.com/vercel-labs/agent-browser"
+            href="https://github.com/unlikefraction/silicon-browser"
             target="_blank"
             rel="noopener noreferrer"
             className="flex items-center gap-1.5 text-sm text-neutral-500 hover:text-neutral-900 transition-colors dark:text-neutral-400 dark:hover:text-neutral-100"
@@ -71,7 +74,7 @@ export async function Header() {
             {stars && <span>{stars}</span>}
           </a>
           <a
-            href="https://www.npmjs.com/package/agent-browser"
+            href="https://www.npmjs.com/package/silicon-browser"
             target="_blank"
             rel="noopener noreferrer"
             className="text-sm text-neutral-500 hover:text-neutral-900 transition-colors dark:text-neutral-400 dark:hover:text-neutral-100"

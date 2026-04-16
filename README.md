@@ -41,7 +41,7 @@ All stealth features are **on by default**. No configuration needed.
 
 ```bash
 # Install
-npm install -g silicon-browser
+pnpm add -g silicon-browser
 
 # Download bundled browsers
 silicon-browser install

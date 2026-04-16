@@ -6,13 +6,13 @@ Connect to an existing browser via Chrome DevTools Protocol:
 # Start Chrome with: google-chrome --remote-debugging-port=9222
 
 # Connect once, then run commands without --cdp
-agent-browser connect 9222
-agent-browser snapshot
-agent-browser tab
-agent-browser close
+silicon-browser connect 9222
+silicon-browser snapshot
+silicon-browser tab
+silicon-browser close
 
 # Or pass --cdp on each command
-agent-browser --cdp 9222 snapshot
+silicon-browser --cdp 9222 snapshot
 ```
 
 ## Remote WebSocket URLs
@@ -21,10 +21,10 @@ Connect to remote browser services via WebSocket URL:
 
 ```bash
 # Connect to remote browser service
-agent-browser --cdp "wss://browser-service.com/cdp?token=..." snapshot
+silicon-browser --cdp "wss://browser-service.com/cdp?token=..." snapshot
 
 # Works with any CDP-compatible service
-agent-browser --cdp "ws://localhost:9222/devtools/browser/abc123" open example.com
+silicon-browser --cdp "ws://localhost:9222/devtools/browser/abc123" open example.com
 ```
 
 The `--cdp` flag accepts either:
@@ -38,11 +38,11 @@ Use `--auto-connect` to automatically discover and connect to a running Chrome i
 
 ```bash
 # Auto-discover running Chrome with remote debugging
-agent-browser --auto-connect open example.com
-agent-browser --auto-connect snapshot
+silicon-browser --auto-connect open example.com
+silicon-browser --auto-connect snapshot
 
 # Or via environment variable
-AGENT_BROWSER_AUTO_CONNECT=1 agent-browser snapshot
+SILICON_BROWSER_AUTO_CONNECT=1 silicon-browser snapshot
 ```
 
 Auto-connect discovers Chrome by:
@@ -62,14 +62,14 @@ This is useful when:
 Use `--color-scheme` to set a persistent preference when connecting via CDP:
 
 ```bash
-agent-browser --cdp 9222 --color-scheme dark open https://example.com
-agent-browser --cdp 9222 snapshot  # stays in dark mode
+silicon-browser --cdp 9222 --color-scheme dark open https://example.com
+silicon-browser --cdp 9222 snapshot  # stays in dark mode
 ```
 
 Or set it globally via config or environment variable:
 
 ```bash
-AGENT_BROWSER_COLOR_SCHEME=dark agent-browser --cdp 9222 open https://example.com
+SILICON_BROWSER_COLOR_SCHEME=dark silicon-browser --cdp 9222 open https://example.com
 ```
 
 ## Use cases
@@ -114,7 +114,7 @@ This enables control of:
 Use the `-p` flag to connect to a cloud browser provider instead of launching a local browser:
 
 ```bash
-agent-browser -p browserbase open https://example.com
+silicon-browser -p browserbase open https://example.com
 ```
 
 See the [Providers](/providers/browser-use) section for setup and configuration of each supported provider: [Browser Use](/providers/browser-use), [Browserbase](/providers/browserbase), [Browserless](/providers/browserless), and [Kernel](/providers/kernel).

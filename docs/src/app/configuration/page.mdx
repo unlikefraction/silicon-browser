@@ -1,30 +1,30 @@
 # Configuration
 
-Create an `agent-browser.json` file to set persistent defaults instead of repeating flags on every command.
+Create a `silicon-browser.json` file to set persistent defaults instead of repeating flags on every command.
 
 ## Config File Locations
 
-agent-browser checks two locations, merged in priority order:
+silicon-browser checks two locations, merged in priority order:
 
 <table>
   <thead>
     <tr><th>Priority</th><th>Location</th><th>Scope</th></tr>
   </thead>
   <tbody>
-    <tr><td>1 (lowest)</td><td><code>~/.agent-browser/config.json</code></td><td>User-level defaults</td></tr>
-    <tr><td>2</td><td><code>./agent-browser.json</code></td><td>Project-level overrides</td></tr>
-    <tr><td>3</td><td><code>AGENT_BROWSER_*</code> env vars</td><td>Override config values</td></tr>
+    <tr><td>1 (lowest)</td><td><code>~/.silicon-browser/config.json</code></td><td>User-level defaults</td></tr>
+    <tr><td>2</td><td><code>./silicon-browser.json</code></td><td>Project-level overrides</td></tr>
+    <tr><td>3</td><td><code>SILICON_BROWSER_*</code> env vars</td><td>Override config values</td></tr>
     <tr><td>4 (highest)</td><td>CLI flags</td><td>Override everything</td></tr>
   </tbody>
 </table>
 
 Project-level values override user-level values. Environment variables override both. CLI flags always win.
 
-Use `--config <path>` or the `AGENT_BROWSER_CONFIG` environment variable to load a specific config file instead of the default locations:
+Use `--config <path>` or the `SILICON_BROWSER_CONFIG` environment variable to load a specific config file instead of the default locations:
 
 ```bash
-agent-browser --config ./ci-config.json open example.com
-AGENT_BROWSER_CONFIG=./ci-config.json agent-browser open example.com
+silicon-browser --config ./ci-config.json open example.com
+SILICON_BROWSER_CONFIG=./ci-config.json silicon-browser open example.com
 ```
 
 ## Example Config
@@ -137,23 +137,23 @@ Every CLI flag can be set in the config file using its camelCase equivalent:
 Boolean flags accept an optional `true`/`false` value to override config settings:
 
 ```bash
-agent-browser --headed false open example.com
+silicon-browser --headed false open example.com
 ```
 
 A bare flag is equivalent to passing `true`:
 
 ```bash
-agent-browser --headed open example.com       # same as --headed true
-agent-browser --headed true open example.com  # explicit
+silicon-browser --headed open example.com       # same as --headed true
+silicon-browser --headed true open example.com  # explicit
 ```
 
 This applies to all boolean flags: `--headed`, `--debug`, `--json`, `--ignore-https-errors`, `--allow-file-access`, `--auto-connect`, `--content-boundaries`, `--confirm-interactive`.
 
 ## Extensions Merging
 
-Extensions from user-level and project-level configs are **concatenated**, not replaced. For example, if `~/.agent-browser/config.json` specifies `["/ext1"]` and `./agent-browser.json` specifies `["/ext2"]`, the result is `["/ext1", "/ext2"]`.
+Extensions from user-level and project-level configs are **concatenated**, not replaced. For example, if `~/.silicon-browser/config.json` specifies `["/ext1"]` and `./silicon-browser.json` specifies `["/ext2"]`, the result is `["/ext1", "/ext2"]`.
 
-The `AGENT_BROWSER_EXTENSIONS` environment variable and CLI `--extension` flags follow the standard priority rules (env replaces config, CLI appends).
+The `SILICON_BROWSER_EXTENSIONS` environment variable and CLI `--extension` flags follow the standard priority rules (env replaces config, CLI appends).
 
 ## Environment Variables
 
@@ -164,29 +164,29 @@ These environment variables configure additional daemon and runtime behavior:
     <tr><th>Variable</th><th>Description</th><th>Default</th></tr>
   </thead>
   <tbody>
-    <tr><td><code>AGENT_BROWSER_AUTO_CONNECT</code></td><td>Auto-discover and connect to a running Chrome instance.</td><td>(disabled)</td></tr>
-    <tr><td><code>AGENT_BROWSER_ALLOW_FILE_ACCESS</code></td><td>Allow <code>file://</code> URLs to access local files.</td><td>(disabled)</td></tr>
-    <tr><td><code>AGENT_BROWSER_COLOR_SCHEME</code></td><td>Color scheme preference (<code>dark</code>, <code>light</code>, <code>no-preference</code>).</td><td>(none)</td></tr>
-    <tr><td><code>AGENT_BROWSER_DOWNLOAD_PATH</code></td><td>Default directory for browser downloads.</td><td>(temp directory)</td></tr>
-    <tr><td><code>AGENT_BROWSER_DEFAULT_TIMEOUT</code></td><td>Default timeout in ms. Keep below 30000 to avoid IPC timeouts.</td><td><code>25000</code></td></tr>
-    <tr><td><code>AGENT_BROWSER_SESSION_NAME</code></td><td>Auto-save/load state persistence name.</td><td>(none)</td></tr>
-    <tr><td><code>AGENT_BROWSER_STATE_EXPIRE_DAYS</code></td><td>Auto-delete saved session states older than N days.</td><td><code>30</code></td></tr>
-    <tr><td><code>AGENT_BROWSER_ENCRYPTION_KEY</code></td><td>64-char hex key for AES-256-GCM session encryption.</td><td>(none)</td></tr>
-    <tr><td><code>AGENT_BROWSER_EXTENSIONS</code></td><td>Comma-separated browser extension paths. Extensions work in both headed and headless mode.</td><td>(none)</td></tr>
-    <tr><td><code>AGENT_BROWSER_HEADED</code></td><td>Show browser window instead of running headless (<code>1</code> to enable).</td><td>(disabled)</td></tr>
-    <tr><td><code>AGENT_BROWSER_STREAM_PORT</code></td><td>Override the WebSocket streaming port. By default, an OS-assigned port is used. Set this to bind to a specific port (e.g., <code>9223</code>).</td><td>OS-assigned</td></tr>
-    <tr><td><code>AGENT_BROWSER_IDLE_TIMEOUT_MS</code></td><td>Auto-shutdown the daemon after N ms of inactivity (no commands received). Useful for ephemeral environments.</td><td>(disabled)</td></tr>
-    <tr><td><code>AGENT_BROWSER_IOS_DEVICE</code></td><td>Default iOS device name for the <code>ios</code> provider.</td><td>(none)</td></tr>
-    <tr><td><code>AGENT_BROWSER_IOS_UDID</code></td><td>Default iOS device UDID for the <code>ios</code> provider.</td><td>(none)</td></tr>
-    <tr><td><code>AGENT_BROWSER_DEBUG</code></td><td>Enable debug output (<code>1</code> to enable).</td><td>(disabled)</td></tr>
-    <tr><td><code>AGENT_BROWSER_CONTENT_BOUNDARIES</code></td><td>Wrap page output in boundary markers for LLM safety.</td><td>(disabled)</td></tr>
-    <tr><td><code>AGENT_BROWSER_MAX_OUTPUT</code></td><td>Max characters for page output (truncates beyond limit).</td><td>(unlimited)</td></tr>
-    <tr><td><code>AGENT_BROWSER_ALLOWED_DOMAINS</code></td><td>Comma-separated allowed domain patterns (e.g., <code>example.com,*.example.com</code>).</td><td>(unrestricted)</td></tr>
-    <tr><td><code>AGENT_BROWSER_ACTION_POLICY</code></td><td>Path to action policy JSON file.</td><td>(none)</td></tr>
-    <tr><td><code>AGENT_BROWSER_CONFIRM_ACTIONS</code></td><td>Comma-separated action categories requiring confirmation.</td><td>(none)</td></tr>
-    <tr><td><code>AGENT_BROWSER_CONFIRM_INTERACTIVE</code></td><td>Enable interactive confirmation prompts (auto-denies if stdin is not a TTY).</td><td>(disabled)</td></tr>
-    <tr><td><code>AGENT_BROWSER_ENGINE</code></td><td>Browser engine to use: <code>chrome</code> (default), <code>lightpanda</code>.</td><td><code>chrome</code></td></tr>
-    <tr><td><code>AGENT_BROWSER_NO_AUTO_DIALOG</code></td><td>Disable automatic dismissal of <code>alert</code>/<code>beforeunload</code> dialogs.</td><td>(disabled)</td></tr>
+    <tr><td><code>SILICON_BROWSER_AUTO_CONNECT</code></td><td>Auto-discover and connect to a running Chrome instance.</td><td>(disabled)</td></tr>
+    <tr><td><code>SILICON_BROWSER_ALLOW_FILE_ACCESS</code></td><td>Allow <code>file://</code> URLs to access local files.</td><td>(disabled)</td></tr>
+    <tr><td><code>SILICON_BROWSER_COLOR_SCHEME</code></td><td>Color scheme preference (<code>dark</code>, <code>light</code>, <code>no-preference</code>).</td><td>(none)</td></tr>
+    <tr><td><code>SILICON_BROWSER_DOWNLOAD_PATH</code></td><td>Default directory for browser downloads.</td><td>(temp directory)</td></tr>
+    <tr><td><code>SILICON_BROWSER_DEFAULT_TIMEOUT</code></td><td>Default timeout in ms. Keep below 30000 to avoid IPC timeouts.</td><td><code>25000</code></td></tr>
+    <tr><td><code>SILICON_BROWSER_SESSION_NAME</code></td><td>Auto-save/load state persistence name.</td><td>(none)</td></tr>
+    <tr><td><code>SILICON_BROWSER_STATE_EXPIRE_DAYS</code></td><td>Auto-delete saved session states older than N days.</td><td><code>30</code></td></tr>
+    <tr><td><code>SILICON_BROWSER_ENCRYPTION_KEY</code></td><td>64-char hex key for AES-256-GCM session encryption.</td><td>(none)</td></tr>
+    <tr><td><code>SILICON_BROWSER_EXTENSIONS</code></td><td>Comma-separated browser extension paths. Extensions work in both headed and headless mode.</td><td>(none)</td></tr>
+    <tr><td><code>SILICON_BROWSER_HEADED</code></td><td>Show browser window instead of running headless (<code>1</code> to enable).</td><td>(disabled)</td></tr>
+    <tr><td><code>SILICON_BROWSER_STREAM_PORT</code></td><td>Override the WebSocket streaming port. By default, an OS-assigned port is used. Set this to bind to a specific port (e.g., <code>9223</code>).</td><td>OS-assigned</td></tr>
+    <tr><td><code>SILICON_BROWSER_IDLE_TIMEOUT_MS</code></td><td>Auto-shutdown the daemon after N ms of inactivity (no commands received). Useful for ephemeral environments.</td><td>(disabled)</td></tr>
+    <tr><td><code>SILICON_BROWSER_IOS_DEVICE</code></td><td>Default iOS device name for the <code>ios</code> provider.</td><td>(none)</td></tr>
+    <tr><td><code>SILICON_BROWSER_IOS_UDID</code></td><td>Default iOS device UDID for the <code>ios</code> provider.</td><td>(none)</td></tr>
+    <tr><td><code>SILICON_BROWSER_DEBUG</code></td><td>Enable debug output (<code>1</code> to enable).</td><td>(disabled)</td></tr>
+    <tr><td><code>SILICON_BROWSER_CONTENT_BOUNDARIES</code></td><td>Wrap page output in boundary markers for LLM safety.</td><td>(disabled)</td></tr>
+    <tr><td><code>SILICON_BROWSER_MAX_OUTPUT</code></td><td>Max characters for page output (truncates beyond limit).</td><td>(unlimited)</td></tr>
+    <tr><td><code>SILICON_BROWSER_ALLOWED_DOMAINS</code></td><td>Comma-separated allowed domain patterns (e.g., <code>example.com,*.example.com</code>).</td><td>(unrestricted)</td></tr>
+    <tr><td><code>SILICON_BROWSER_ACTION_POLICY</code></td><td>Path to action policy JSON file.</td><td>(none)</td></tr>
+    <tr><td><code>SILICON_BROWSER_CONFIRM_ACTIONS</code></td><td>Comma-separated action categories requiring confirmation.</td><td>(none)</td></tr>
+    <tr><td><code>SILICON_BROWSER_CONFIRM_INTERACTIVE</code></td><td>Enable interactive confirmation prompts (auto-denies if stdin is not a TTY).</td><td>(disabled)</td></tr>
+    <tr><td><code>SILICON_BROWSER_ENGINE</code></td><td>Browser engine to use: <code>chrome</code> (default), <code>lightpanda</code>.</td><td><code>chrome</code></td></tr>
+    <tr><td><code>SILICON_BROWSER_NO_AUTO_DIALOG</code></td><td>Disable automatic dismissal of <code>alert</code>/<code>beforeunload</code> dialogs.</td><td>(disabled)</td></tr>
     <tr><td><code>AI_GATEWAY_URL</code></td><td>Vercel AI Gateway base URL.</td><td><code>https://ai-gateway.vercel.sh</code></td></tr>
     <tr><td><code>AI_GATEWAY_API_KEY</code></td><td>API key for the Vercel AI Gateway. Required to enable AI chat.</td><td>(none)</td></tr>
     <tr><td><code>AI_GATEWAY_MODEL</code></td><td>Default AI model for dashboard chat.</td><td><code>anthropic/claude-sonnet-4.6</code></td></tr>
@@ -195,9 +195,9 @@ These environment variables configure additional daemon and runtime behavior:
 
 ## Error Handling
 
-- **Auto-discovered config files** (`~/.agent-browser/config.json`, `./agent-browser.json`) that are missing are silently ignored.
+- **Auto-discovered config files** (`~/.silicon-browser/config.json`, `./silicon-browser.json`) that are missing are silently ignored.
 - **`--config <path>`** with a missing or malformed file exits with an error.
 - **Malformed JSON** in auto-discovered files prints a warning to stderr and continues without that file.
 - **Unknown keys** are silently ignored for forward compatibility.
 
-> **Tip:** If your project-level `agent-browser.json` contains environment-specific values (paths, proxies), consider adding it to `.gitignore`.
+> **Tip:** If your project-level `silicon-browser.json` contains environment-specific values (paths, proxies), consider adding it to `.gitignore`.

@@ -4,21 +4,21 @@ Run multiple isolated browser instances:
 
 ```bash
 # Different sessions
-agent-browser --session agent1 open site-a.com
-agent-browser --session agent2 open site-b.com
+silicon-browser --session agent1 open site-a.com
+silicon-browser --session agent2 open site-b.com
 
 # Or via environment variable
-AGENT_BROWSER_SESSION=agent1 agent-browser click "#btn"
+SILICON_BROWSER_SESSION=agent1 silicon-browser click "#btn"
 
 # List active sessions
-agent-browser session list
+silicon-browser session list
 # Output:
 # Active sessions:
 # -> default
 #    agent1
 
 # Show current session
-agent-browser session
+silicon-browser session
 ```
 
 ## Session isolation
@@ -32,20 +32,20 @@ Each session has its own:
 
 ## Chrome profile reuse
 
-The simplest way to reuse your existing login state: pass a Chrome profile name to `--profile`. agent-browser copies the profile to a temp directory (read-only snapshot) and launches Chrome with your existing cookies and sessions.
+The simplest way to reuse your existing login state: pass a Chrome profile name to `--profile`. silicon-browser copies the profile to a temp directory (read-only snapshot) and launches Chrome with your existing cookies and sessions.
 
 ```bash
 # List available Chrome profiles
-agent-browser profiles
+silicon-browser profiles
 
 # Reuse your default Chrome profile's login state
-agent-browser --profile Default open https://gmail.com
+silicon-browser --profile Default open https://gmail.com
 
 # Use a named profile (by display name or directory name)
-agent-browser --profile "Work" open https://app.example.com
+silicon-browser --profile "Work" open https://app.example.com
 
 # Or via environment variable
-AGENT_BROWSER_PROFILE=Default agent-browser open https://gmail.com
+SILICON_BROWSER_PROFILE=Default silicon-browser open https://gmail.com
 ```
 
 <table>
@@ -67,13 +67,13 @@ For a custom profile directory that persists state across browser restarts, pass
 
 ```bash
 # Use a persistent profile directory
-agent-browser --profile ~/.myapp-profile open myapp.com
+silicon-browser --profile ~/.myapp-profile open myapp.com
 
 # Login once, then reuse the authenticated session
-agent-browser --profile ~/.myapp-profile open myapp.com/dashboard
+silicon-browser --profile ~/.myapp-profile open myapp.com/dashboard
 
 # Or via environment variable
-AGENT_BROWSER_PROFILE=~/.myapp-profile agent-browser open myapp.com
+SILICON_BROWSER_PROFILE=~/.myapp-profile silicon-browser open myapp.com
 ```
 
 The profile directory stores:
@@ -86,7 +86,7 @@ The profile directory stores:
 
 ## Import auth from your browser
 
-If you are already logged in to a site in Chrome, you can grab that auth state and reuse it in agent-browser. This is the fastest way to bypass login flows, OAuth, SSO, or 2FA.
+If you are already logged in to a site in Chrome, you can grab that auth state and reuse it in silicon-browser. This is the fastest way to bypass login flows, OAuth, SSO, or 2FA.
 
 **Step 1:** Start Chrome with remote debugging:
 
@@ -105,24 +105,24 @@ Log in to your target site(s) in this Chrome window.
 **Step 2:** Connect and save the authenticated state:
 
 ```bash
-agent-browser --auto-connect state save ./my-auth.json
+silicon-browser --auto-connect state save ./my-auth.json
 ```
 
 **Step 3:** Use the saved auth in future sessions:
 
 ```bash
 # Load auth at launch
-agent-browser --state ./my-auth.json open https://app.example.com/dashboard
+silicon-browser --state ./my-auth.json open https://app.example.com/dashboard
 
 # Or load into an existing session
-agent-browser state load ./my-auth.json
-agent-browser open https://app.example.com/dashboard
+silicon-browser state load ./my-auth.json
+silicon-browser open https://app.example.com/dashboard
 ```
 
 Combine with `--session-name` so the imported auth auto-persists across restarts:
 
 ```bash
-agent-browser --session-name myapp state load ./my-auth.json
+silicon-browser --session-name myapp state load ./my-auth.json
 # From now on, state auto-saves/restores for "myapp"
 ```
 
@@ -134,17 +134,17 @@ Use `--session-name` to automatically save and restore cookies and localStorage 
 
 ```bash
 # Auto-save/load state for "twitter" session
-agent-browser --session-name twitter open twitter.com
+silicon-browser --session-name twitter open twitter.com
 
 # Login once, then state persists automatically
-agent-browser --session-name twitter click "#login"
+silicon-browser --session-name twitter click "#login"
 
 # Or via environment variable
-export AGENT_BROWSER_SESSION_NAME=twitter
-agent-browser open twitter.com
+export SILICON_BROWSER_SESSION_NAME=twitter
+silicon-browser open twitter.com
 ```
 
-State files are stored in `~/.agent-browser/sessions/` and automatically loaded on daemon start.
+State files are stored in `~/.silicon-browser/sessions/` and automatically loaded on daemon start.
 
 ### Session name rules
 
@@ -152,13 +152,13 @@ Session names must contain only alphanumeric characters, hyphens, and underscore
 
 ```bash
 # Valid session names
-agent-browser --session-name my-project open example.com
-agent-browser --session-name test_session_v2 open example.com
+silicon-browser --session-name my-project open example.com
+silicon-browser --session-name test_session_v2 open example.com
 
 # Invalid (will be rejected)
-agent-browser --session-name "../bad" open example.com    # path traversal
-agent-browser --session-name "my session" open example.com # spaces
-agent-browser --session-name "foo/bar" open example.com    # slashes
+silicon-browser --session-name "../bad" open example.com    # path traversal
+silicon-browser --session-name "my session" open example.com # spaces
+silicon-browser --session-name "foo/bar" open example.com    # slashes
 ```
 
 ## State encryption
@@ -170,13 +170,13 @@ Encrypt saved state files (cookies, localStorage) using AES-256-GCM:
 openssl rand -hex 32
 
 # Set the encryption key
-export AGENT_BROWSER_ENCRYPTION_KEY=<your-64-char-hex-key>
+export SILICON_BROWSER_ENCRYPTION_KEY=<your-64-char-hex-key>
 
 # State files are now encrypted automatically
-agent-browser --session-name secure-session open example.com
+silicon-browser --session-name secure-session open example.com
 
 # List states shows encryption status
-agent-browser state list
+silicon-browser state list
 ```
 
 ## State auto-expiration
@@ -185,33 +185,33 @@ Automatically delete old state files to prevent accumulation:
 
 ```bash
 # Set expiration (default: 30 days)
-export AGENT_BROWSER_STATE_EXPIRE_DAYS=7
+export SILICON_BROWSER_STATE_EXPIRE_DAYS=7
 
 # Manually clean old states
-agent-browser state clean --older-than 7
+silicon-browser state clean --older-than 7
 ```
 
 ## State management commands
 
 ```bash
 # List all saved states
-agent-browser state list
+silicon-browser state list
 
 # Show state summary (cookies, origins, domains)
-agent-browser state show my-session-default.json
+silicon-browser state show my-session-default.json
 
 # Rename a state file
-agent-browser state rename old-name new-name
+silicon-browser state rename old-name new-name
 
 # Clear states for a specific session name
-agent-browser state clear my-session
+silicon-browser state clear my-session
 
 # Clear all saved states
-agent-browser state clear --all
+silicon-browser state clear --all
 
 # Manual save/load (for custom paths)
-agent-browser state save ./backup.json
-agent-browser state load ./backup.json
+silicon-browser state save ./backup.json
+silicon-browser state load ./backup.json
 ```
 
 ## Authenticated sessions
@@ -220,14 +220,14 @@ Use `--headers` to set HTTP headers for a specific origin:
 
 ```bash
 # Headers scoped to api.example.com only
-agent-browser open api.example.com --headers '{"Authorization": "Bearer <token>"}'
+silicon-browser open api.example.com --headers '{"Authorization": "Bearer <token>"}'
 
 # Requests to api.example.com include the auth header
-agent-browser snapshot -i --json
-agent-browser click @e2
+silicon-browser snapshot -i --json
+silicon-browser click @e2
 
 # Navigate to another domain - headers NOT sent
-agent-browser open other-site.com
+silicon-browser open other-site.com
 ```
 
 Useful for:
@@ -240,8 +240,8 @@ Useful for:
 ## Multiple origins
 
 ```bash
-agent-browser open api.example.com --headers '{"Authorization": "Bearer token1"}'
-agent-browser open api.acme.com --headers '{"Authorization": "Bearer token2"}'
+silicon-browser open api.example.com --headers '{"Authorization": "Bearer token1"}'
+silicon-browser open api.acme.com --headers '{"Authorization": "Bearer token2"}'
 ```
 
 ## Global headers
@@ -249,7 +249,7 @@ agent-browser open api.acme.com --headers '{"Authorization": "Bearer token2"}'
 For headers on all domains:
 
 ```bash
-agent-browser set headers '{"X-Custom-Header": "value"}'
+silicon-browser set headers '{"X-Custom-Header": "value"}'
 ```
 
 ## Environment variables
@@ -259,9 +259,9 @@ agent-browser set headers '{"X-Custom-Header": "value"}'
     <tr><th>Variable</th><th>Description</th></tr>
   </thead>
   <tbody>
-    <tr><td><code>AGENT_BROWSER_SESSION</code></td><td>Browser session ID (default: "default")</td></tr>
-    <tr><td><code>AGENT_BROWSER_SESSION_NAME</code></td><td>Auto-save/load state persistence name</td></tr>
-    <tr><td><code>AGENT_BROWSER_ENCRYPTION_KEY</code></td><td>64-char hex key for AES-256-GCM encryption</td></tr>
-    <tr><td><code>AGENT_BROWSER_STATE_EXPIRE_DAYS</code></td><td>Auto-delete states older than N days (default: 30)</td></tr>
+    <tr><td><code>SILICON_BROWSER_SESSION</code></td><td>Browser session ID (default: "default")</td></tr>
+    <tr><td><code>SILICON_BROWSER_SESSION_NAME</code></td><td>Auto-save/load state persistence name</td></tr>
+    <tr><td><code>SILICON_BROWSER_ENCRYPTION_KEY</code></td><td>64-char hex key for AES-256-GCM encryption</td></tr>
+    <tr><td><code>SILICON_BROWSER_STATE_EXPIRE_DAYS</code></td><td>Auto-delete states older than N days (default: 30)</td></tr>
   </tbody>
 </table>

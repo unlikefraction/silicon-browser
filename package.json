@@ -21,7 +21,7 @@
     "build:macos": "pnpm run version:sync && (cargo build --release --manifest-path cli/Cargo.toml --target aarch64-apple-darwin & cargo build --release --manifest-path cli/Cargo.toml --target x86_64-apple-darwin & wait) && cp cli/target/aarch64-apple-darwin/release/silicon-browser bin/silicon-browser-darwin-arm64 && cp cli/target/x86_64-apple-darwin/release/silicon-browser bin/silicon-browser-darwin-x64",
     "build:windows": "pnpm run version:sync && docker compose -f docker/docker-compose.yml run --rm build-windows",
     "build:all-platforms": "pnpm run version:sync && (pnpm run build:linux & pnpm run build:windows & wait) && pnpm run build:macos",
-    "build:docker": "docker build -t agent-browser-builder -f docker/Dockerfile.build .",
+    "build:docker": "docker build -t silicon-browser-builder -f docker/Dockerfile.build .",
     "release": "pnpm run version:sync && pnpm run build:all-platforms && pnpm publish",
     "postinstall": "node scripts/postinstall.js",
     "build:dashboard": "cd packages/dashboard && pnpm build"

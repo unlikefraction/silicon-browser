@@ -6,18 +6,18 @@
 
 ```bash
 export KERNEL_API_KEY="your-api-key"
-agent-browser -p kernel open https://example.com
+silicon-browser -p kernel open https://example.com
 ```
 
 Or use environment variables for CI/scripts:
 
 ```bash
-export AGENT_BROWSER_PROVIDER=kernel
+export SILICON_BROWSER_PROVIDER=kernel
 export KERNEL_API_KEY="your-api-key"
-agent-browser open https://example.com
+silicon-browser open https://example.com
 ```
 
-The `-p` flag takes precedence over `AGENT_BROWSER_PROVIDER`.
+The `-p` flag takes precedence over `SILICON_BROWSER_PROVIDER`.
 
 ## Configuration
 
@@ -36,6 +36,6 @@ The `-p` flag takes precedence over `AGENT_BROWSER_PROVIDER`.
 
 **Profile persistence:** When `KERNEL_PROFILE_NAME` is set, the profile will be created if it doesn't already exist. Cookies, logins, and session data are automatically saved back to the profile when the browser session ends, making them available for future sessions.
 
-When enabled, agent-browser connects to a Kernel cloud session instead of launching a local browser. All commands work identically.
+When enabled, silicon-browser connects to a Kernel cloud session instead of launching a local browser. All commands work identically.
 
 Get your API key from the [Kernel Dashboard](https://dashboard.onkernel.com).
