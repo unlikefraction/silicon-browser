@@ -303,10 +303,20 @@ pub fn launch_chrome(options: &LaunchOptions) -> Result<ChromeProcess, String> {
             args.push("--fingerprint-device-memory=8".to_string());
         }
 
-        // Remove flags that CloakBrowser handles natively / that conflict
+        // Remove flags that CloakBrowser handles natively / that conflict.
+        // --disable-blink-features=AutomationControlled causes a yellow warning
+        // bar in headed mode ("unsupported command-line flag") which is a giveaway.
         args.retain(|a| {
             !a.starts_with("--enable-automation")
                 && !a.starts_with("--enable-unsafe-swiftshader")
+                && !a.starts_with("--disable-blink-features")
+                && !a.starts_with("--disable-infobars")
+                && !a.starts_with("--disable-ipc-flooding-protection")
+                && !a.starts_with("--enable-gpu-rasterization")
+                && !a.starts_with("--enable-zero-copy")
+                && !a.starts_with("--enforce-webrtc-ip-permission-check")
+                && !a.starts_with("--webrtc-ip-handling-policy")
+                && !a.contains("AutomationControlled")
         });
     }
 

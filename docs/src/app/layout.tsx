@@ -13,6 +13,12 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
+  icons: {
+    icon: [
+      { url: "/sb-logo-light.svg", media: "(prefers-color-scheme: light)" },
+      { url: "/sb-logo-dark.svg", media: "(prefers-color-scheme: dark)" },
+    ],
+  },
   metadataBase: new URL("https://silicon-browser.unlikefraction.com"),
   title: {
     default: "silicon-browser | The Most Reliable Browser for Your AI Agent",

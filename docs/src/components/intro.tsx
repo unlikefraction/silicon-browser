@@ -184,7 +184,7 @@ export function Intro({ onDone }: { onDone: () => void }) {
         if (nameText) {
           ctx.save();
           ctx.globalAlpha = nameOpacity;
-          ctx.font = "21px ApfelGrotezk, sans-serif";
+          ctx.font = "14px monospace";
           ctx.fillStyle = "#ede8e0";
           ctx.textAlign = "center";
           ctx.textBaseline = "middle";

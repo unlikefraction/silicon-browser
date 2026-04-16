@@ -42,8 +42,13 @@ export default function Home() {
           </h1>
           <div className="hero-sub">
             <div className="hero-tagline">
-              stealth-first browser cli<br />
-              for ai agents
+              most reliable browser cli<br />
+              for your ai agent<br /><br />
+              by <a href="https://unlikefraction.com" target="_blank" style={{ color: "#1a1a1a", textDecoration: "none" }}>unlikefraction</a>
+              {"  "}
+              <a href="https://twitter.com/unlikefraction" target="_blank" style={{ color: "#999", textDecoration: "none" }}>twitter</a>
+              {"  "}
+              <a href="https://github.com/unlikefraction" target="_blank" style={{ color: "#999", textDecoration: "none" }}>github</a>
             </div>
             <nav className="hero-nav">
               <a href="#stealth">stealth</a>
@@ -69,7 +74,7 @@ export default function Home() {
         {/* Stealth */}
         <section className="section" id="stealth">
           <div className="section-label">stealth</div>
-          <h2>passes<br />everything.</h2>
+          <h2>stealth by<br />default.</h2>
           <p>
             CloakBrowser&apos;s 33 C++ patches at the Chromium source level.
             Not JavaScript injection — binary-level stealth that anti-bot
@@ -161,25 +166,44 @@ export default function Home() {
         {/* Push/Clone */}
         <section className="section" id="sync">
           <div className="section-label">sync</div>
-          <h2>push /<br />clone.</h2>
+          <h2>secure push<br />/ clone.</h2>
           <p>
             Login on your laptop. Use the session on your server. No SSH keys.
             No cloud. Just a URL and a 6-digit OTP. Auto-tunneled.
           </p>
-          <div className="flow-box">
-{`YOUR LAPTOP                              YOUR SERVER
-┌──────────────────────────┐              ┌──────────────────────┐
-│                          │              │                      │
-│  `}<span className="hl">silicon-browser push work</span>{`   │              │                      │
-│                          │              │                      │
-│  ● Serving 'work'        │              │                      │
-│    Public: `}<span className="hl">https://a1.lhr.life</span>{`           │                      │
-│    OTP:    `}<span className="hl">483921</span>{`         │──────────►  │  `}<span className="hl">silicon-browser clone</span>{`  │
-│                          │              │    `}<span className="hl">https://a1.lhr.life</span>{`  │
-│  ✓ Sent!                 │              │    OTP: `}<span className="hl">483921</span>{`         │
-│                          │              │  ✓ Cloned!             │
-└──────────────────────────┘              └──────────────────────┘`}
+          <div className="sync-grid">
+            <div className="sync-terminal">
+              <div className="sync-label">your mac</div>
+              <div className="sync-content">
+                <span className="dim">$ </span>silicon-browser --profile work --headed open https://shopify.com{"\n"}
+                <span className="dim"># login manually, solve captchas, 2FA...</span>{"\n"}
+                <span className="dim">$ </span>silicon-browser close{"\n\n"}
+                <span className="dim">$ </span><span className="accent">silicon-browser push work</span>{"\n\n"}
+                <span className="accent">{"●"}</span> Serving &apos;work&apos;{"\n"}
+                {"  "}Public: <span className="accent">https://a1b2.lhr.life</span>{"\n"}
+                {"  "}OTP:{"    "}<span className="accent">483921</span>{"\n\n"}
+                <span className="green">{"✓"}</span> Sent!
+              </div>
+            </div>
+            <div className="sync-arrow">
+              <span>{"→"}</span>
+            </div>
+            <div className="sync-terminal">
+              <div className="sync-label">your server</div>
+              <div className="sync-content">
+                <span className="dim">$ </span><span className="accent">silicon-browser clone</span>{"\n"}
+                {"  "}https://a1b2.lhr.life{"\n\n"}
+                OTP: <span className="accent">483921</span>{"\n\n"}
+                <span className="green">{"✓"}</span> Cloned profile &apos;work&apos;{"\n\n"}
+                <span className="dim"># already logged in — no captcha, no 2FA</span>{"\n"}
+                <span className="dim">$ </span>silicon-browser --profile work open https://shopify.com/admin{"\n"}
+                <span className="green">{"✓"}</span> Shopify Admin
+              </div>
+            </div>
           </div>
+          <p style={{ color: "#999", fontSize: "13px", marginTop: "1rem" }}>
+            AES-256-GCM encrypted. Auto-tunneled via localhost.run. Server shuts down after one transfer.
+          </p>
         </section>
 
         {/* Skill */}
@@ -192,12 +216,14 @@ export default function Home() {
               Drop it in your agent&apos;s context.
             </p>
             <div className="skill-actions">
-              <button className="btn-dark" onClick={copySkill}>
-                {skillCopied ? "copied to clipboard" : "copy to clipboard"}
-              </button>
-              <a href="https://raw.githubusercontent.com/unlikefraction/silicon-browser/main/SKILL.md" className="btn-outline" target="_blank">
-                download
-              </a>
+              <div className="skill-actions-row">
+                <button className="btn-dark" onClick={copySkill}>
+                  {skillCopied ? "copied to clipboard" : "copy to clipboard"}
+                </button>
+                <a href="https://raw.githubusercontent.com/unlikefraction/silicon-browser/main/SKILL.md" className="btn-outline" target="_blank">
+                  download
+                </a>
+              </div>
               <a href="https://github.com/unlikefraction/silicon-browser/blob/main/SKILL.md" className="btn-outline" target="_blank">
                 view on github
               </a>
