@@ -124,13 +124,13 @@ jobs:
 
       - name: Copy CLI binary to bin directory
         run: |
-          Copy-Item cli/target/x86_64-pc-windows-msvc/release/agent-browser.exe bin/agent-browser-win32-x64.exe
+          Copy-Item cli/target/x86_64-pc-windows-msvc/release/silicon-browser.exe bin/silicon-browser-win32-x64.exe
 
-      - name: Test agent-browser install command
+      - name: Test silicon-browser install command
         run: |
           $env:PATH = "$pwd\bin;$env:PATH"
           for ($i = 1; $i -le 3; $i++) {
-            bin/agent-browser-win32-x64.exe install
+            bin/silicon-browser-win32-x64.exe install
             if ($LASTEXITCODE -eq 0) { exit 0 }
             Write-Host "Attempt $i failed, retrying in 10 seconds..."
             Start-Sleep -Seconds 10
@@ -143,14 +143,14 @@ jobs:
         run: |
           $env:PATH = "$pwd\bin;$env:PATH"
           Write-Host "--- Opening page ---"
-          bin/agent-browser-win32-x64.exe open https://example.com
+          bin/silicon-browser-win32-x64.exe open https://example.com
           if ($LASTEXITCODE -ne 0) { Write-Error "open failed"; exit 1 }
           Write-Host "--- Taking snapshot ---"
-          $snapshot = bin/agent-browser-win32-x64.exe snapshot
+          $snapshot = bin/silicon-browser-win32-x64.exe snapshot
           if ($LASTEXITCODE -ne 0) { Write-Error "snapshot failed"; exit 1 }
           Write-Host $snapshot
           Write-Host "--- Closing browser ---"
-          bin/agent-browser-win32-x64.exe close
+          bin/silicon-browser-win32-x64.exe close
           if ($LASTEXITCODE -ne 0) { Write-Error "close failed"; exit 1 }
           Write-Host "--- Windows daemon lifecycle test passed ---"
         shell: pwsh
@@ -166,13 +166,13 @@ jobs:
         include:
           - os: ubuntu-latest
             target: x86_64-unknown-linux-gnu
-            binary: agent-browser-linux-x64
+            binary: silicon-browser-linux-x64
           - os: macos-latest
             target: aarch64-apple-darwin
-            binary: agent-browser-darwin-arm64
+            binary: silicon-browser-darwin-arm64
           - os: windows-latest
             target: x86_64-pc-windows-msvc
-            binary: agent-browser-win32-x64.exe
+            binary: silicon-browser-win32-x64.exe
 
     steps:
       - name: Checkout repository
@@ -204,23 +204,23 @@ jobs:
 
       - name: Copy CLI binary to bin directory (Unix)
         if: runner.os != 'Windows'
-        run: cp cli/target/${{ matrix.target }}/release/agent-browser bin/${{ matrix.binary }}
+        run: cp cli/target/${{ matrix.target }}/release/silicon-browser bin/${{ matrix.binary }}
 
       - name: Copy CLI binary to bin directory (Windows)
         if: runner.os == 'Windows'
-        run: Copy-Item cli/target/${{ matrix.target }}/release/agent-browser.exe bin/${{ matrix.binary }}
+        run: Copy-Item cli/target/${{ matrix.target }}/release/silicon-browser.exe bin/${{ matrix.binary }}
 
       - name: Test npm global install
         run: |
           npm pack
-          npm install -g agent-browser-*.tgz
-          agent-browser --version
+          npm install -g silicon-browser-*.tgz
+          silicon-browser --version
         shell: bash
 
       - name: Verify symlink points to native binary (Unix)
         if: runner.os != 'Windows'
         run: |
-          SYMLINK=$(npm prefix -g)/bin/agent-browser
+          SYMLINK=$(npm prefix -g)/bin/silicon-browser
           TARGET=$(readlink "$SYMLINK")
           echo "Symlink: $SYMLINK"
           echo "Target: $TARGET"
@@ -234,12 +234,12 @@ jobs:
       - name: Verify shim points to native binary (Windows)
         if: runner.os == 'Windows'
         run: |
-          $shimPath = "$(npm prefix -g)\agent-browser.cmd"
+          $shimPath = "$(npm prefix -g)\silicon-browser.cmd"
           $content = Get-Content $shimPath -Raw
           echo "Shim path: $shimPath"
           echo "Shim content:"
           echo $content
-          if ($content -notmatch "agent-browser-win32-x64\.exe") {
+          if ($content -notmatch "silicon-browser-win32-x64\.exe") {
             echo "ERROR: Shim should point to native .exe, not JS wrapper"
             exit 1
           }

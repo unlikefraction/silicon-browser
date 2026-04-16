@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
 /**
- * Postinstall script for agent-browser
+ * Postinstall script for silicon-browser
  * 
  * Downloads the platform-specific native binary if not present.
  * On global installs, patches npm's bin entry to use the native binary directly:
@@ -35,7 +35,7 @@ function isMusl() {
 const osKey = platform() === 'linux' && isMusl() ? 'linux-musl' : platform();
 const platformKey = `${osKey}-${arch()}`;
 const ext = platform() === 'win32' ? '.exe' : '';
-const binaryName = `agent-browser-${platformKey}${ext}`;
+const binaryName = `silicon-browser-${platformKey}${ext}`;
 const binaryPath = join(binDir, binaryName);
 
 // Package info
@@ -45,7 +45,7 @@ const packageJson = JSON.parse(
 const version = packageJson.version;
 
 // GitHub release URL
-const GITHUB_REPO = 'vercel-labs/agent-browser';
+const GITHUB_REPO = 'unlikefraction/silicon-browser';
 const DOWNLOAD_URL = `https://github.com/${GITHUB_REPO}/releases/download/v${version}/${binaryName}`;
 
 async function downloadFile(url, dest) {
@@ -132,11 +132,11 @@ function showInstallReminder() {
   console.log('');
   console.log('  To download Chrome, run:');
   console.log('');
-  console.log('    agent-browser install');
+  console.log('    silicon-browser install');
   console.log('');
   console.log('  On Linux, include system dependencies with:');
   console.log('');
-  console.log('    agent-browser install --with-deps');
+  console.log('    silicon-browser install --with-deps');
   console.log('');
 }
 
@@ -166,7 +166,7 @@ async function fixUnixSymlink() {
     return; // npm not available
   }
 
-  const symlinkPath = join(npmBinDir, 'agent-browser');
+  const symlinkPath = join(npmBinDir, 'silicon-browser');
 
   // Check if symlink exists (indicates global install)
   try {
@@ -203,19 +203,19 @@ async function fixWindowsShims() {
     return;
   }
 
-  const cmdShim = join(npmBinDir, 'agent-browser.cmd');
-  const ps1Shim = join(npmBinDir, 'agent-browser.ps1');
+  const cmdShim = join(npmBinDir, 'silicon-browser.cmd');
+  const ps1Shim = join(npmBinDir, 'silicon-browser.ps1');
 
   // Shims may not exist yet during postinstall (npm creates them after
   // lifecycle scripts). If missing, fall back: the JS wrapper at
-  // bin/agent-browser.js handles Windows correctly via child_process.spawn.
+  // bin/silicon-browser.js handles Windows correctly via child_process.spawn.
   if (!existsSync(cmdShim)) {
     return;
   }
 
   // Detect architecture so ARM64 Windows is handled correctly
   const cpuArch = arch() === 'arm64' ? 'arm64' : 'x64';
-  const relativeBinaryPath = `node_modules\\agent-browser\\bin\\agent-browser-win32-${cpuArch}.exe`;
+  const relativeBinaryPath = `node_modules\\silicon-browser\\bin\\silicon-browser-win32-${cpuArch}.exe`;
   const absoluteBinaryPath = join(npmBinDir, relativeBinaryPath);
 
   // Only rewrite shims if the native binary actually exists

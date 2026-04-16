@@ -3,9 +3,9 @@ export const metadata = pageMetadata("security")
 
 # Security
 
-agent-browser includes security features to protect against credential exposure, prompt injection via untrusted page content, and unauthorized browser actions.
+silicon-browser includes security features to protect against credential exposure, prompt injection via untrusted page content, and unauthorized browser actions.
 
-All security features are opt-in. By default, agent-browser imposes no restrictions on navigation, actions, or output. Enable these features as needed for your deployment -- existing workflows are unaffected until you explicitly activate a feature.
+All security features are opt-in. By default, silicon-browser imposes no restrictions on navigation, actions, or output. Enable these features as needed for your deployment -- existing workflows are unaffected until you explicitly activate a feature.
 
 ## Threat Model
 
@@ -20,7 +20,7 @@ These features are designed to mitigate the following threats when an LLM-based 
 ### Known limitations
 
 - **WebSocket/EventSource blocking is best-effort.** It works by overriding browser constructors via an init script. If the `eval` action category is allowed, page scripts could theoretically restore the original constructors. Deny `eval` via `--action-policy` for maximum protection.
-- **Domain filter timing on remote connections.** When connecting to a pre-existing browser via CDP or a cloud provider, pages may have already loaded content before the domain filter is installed. agent-browser navigates disallowed pages to `about:blank` after the filter is active, but resources loaded before that point are not retroactively blocked.
+- **Domain filter timing on remote connections.** When connecting to a pre-existing browser via CDP or a cloud provider, pages may have already loaded content before the domain filter is installed. silicon-browser navigates disallowed pages to `about:blank` after the filter is active, but resources loaded before that point are not retroactively blocked.
 - **Content boundaries are defense-in-depth.** They rely on the LLM and orchestrator respecting the structural markers. A sufficiently capable adversarial page could attempt to mimic the boundary format, though the per-process CSPRNG nonce makes this impractical to predict.
 - **Confirmation timeout.** Pending confirmations auto-deny after 60 seconds. Orchestrators must respond within that window.
 - **Non-TTY auto-deny.** When `--confirm-interactive` is set but stdin is not a terminal (e.g., piped input), actions are automatically denied to prevent accidental approval in non-interactive contexts.
@@ -30,30 +30,30 @@ These features are designed to mitigate the following threats when an LLM-based 
 Store credentials locally and reference them by name. The LLM never sees passwords.
 
 ```bash
-# Save credentials (encrypted if AGENT_BROWSER_ENCRYPTION_KEY is set)
+# Save credentials (encrypted if SILICON_BROWSER_ENCRYPTION_KEY is set)
 # Recommended: pipe password via stdin to avoid shell history / process listing exposure
-echo "pass" | agent-browser auth save github --url https://github.com/login --username user --password-stdin
+echo "pass" | silicon-browser auth save github --url https://github.com/login --username user --password-stdin
 
 # Or pass directly (a warning will be shown)
-agent-browser auth save github --url https://github.com/login --username user --password pass
+silicon-browser auth save github --url https://github.com/login --username user --password pass
 
 # Login using saved credentials
-agent-browser auth login github
+silicon-browser auth login github
 
 # List saved profiles (names and URLs only, no secrets)
-agent-browser auth list
+silicon-browser auth list
 
 # Show profile metadata
-agent-browser auth show github
+silicon-browser auth show github
 
 # Delete a profile
-agent-browser auth delete github
+silicon-browser auth delete github
 ```
 
 Custom selectors can be specified if auto-detection fails:
 
 ```bash
-agent-browser auth save myapp \
+silicon-browser auth save myapp \
   --url https://app.example.com/login \
   --username user --password pass \
   --username-selector "#email" \
@@ -61,7 +61,7 @@ agent-browser auth save myapp \
   --submit-selector "button.login"
 ```
 
-Profiles are stored in `~/.agent-browser/auth/` and always encrypted with AES-256-GCM. If `AGENT_BROWSER_ENCRYPTION_KEY` is not set, a key is auto-generated at `~/.agent-browser/.encryption-key` on first use. Back up this file or set the environment variable explicitly for portability.
+Profiles are stored in `~/.silicon-browser/auth/` and always encrypted with AES-256-GCM. If `SILICON_BROWSER_ENCRYPTION_KEY` is not set, a key is auto-generated at `~/.silicon-browser/.encryption-key` on first use. Back up this file or set the environment variable explicitly for portability.
 
 File permissions are enforced on both Unix (`chmod 600`/`700`) and Windows (`icacls` restricted to the current user) to prevent other users from reading encryption keys or auth profiles.
 
@@ -70,9 +70,9 @@ File permissions are enforced on both Unix (`chmod 600`/`700`) and Windows (`ica
 When `--content-boundaries` is enabled, all page-sourced output is wrapped in structural markers so LLMs can distinguish tool output from untrusted page content:
 
 ```
---- AGENT_BROWSER_PAGE_CONTENT nonce=a1b2c3d4 origin=https://example.com ---
+--- SILICON_BROWSER_PAGE_CONTENT nonce=a1b2c3d4 origin=https://example.com ---
 [snapshot / text / html / eval output here]
---- END_AGENT_BROWSER_PAGE_CONTENT nonce=a1b2c3d4 ---
+--- END_SILICON_BROWSER_PAGE_CONTENT nonce=a1b2c3d4 ---
 ```
 
 The nonce is a random value generated per CLI process invocation, making it unpredictable to page content that might attempt to spoof the boundary.
@@ -80,9 +80,9 @@ The nonce is a random value generated per CLI process invocation, making it unpr
 Enable via flag or environment variable:
 
 ```bash
-agent-browser --content-boundaries snapshot
+silicon-browser --content-boundaries snapshot
 # or
-export AGENT_BROWSER_CONTENT_BOUNDARIES=1
+export SILICON_BROWSER_CONTENT_BOUNDARIES=1
 ```
 
 Affected output types: `snapshot`, `get text`, `get html`, `eval`, `console`.
@@ -102,9 +102,9 @@ In `--json` mode, boundary metadata is injected into the JSON response as a `_bo
 Restrict which domains the browser can interact with, preventing redirect-based attacks and data exfiltration:
 
 ```bash
-agent-browser --allowed-domains "example.com,*.example.com,github.com" open https://example.com
+silicon-browser --allowed-domains "example.com,*.example.com,github.com" open https://example.com
 # or
-export AGENT_BROWSER_ALLOWED_DOMAINS="example.com,*.example.com"
+export SILICON_BROWSER_ALLOWED_DOMAINS="example.com,*.example.com"
 ```
 
 Supports exact match (`github.com`) and wildcard prefix (`*.example.com`, which also matches the bare domain `example.com`). Both page navigations and sub-resource requests (scripts, images, fetch, XHR, etc.) to non-allowed domains are blocked, preventing data exfiltration. WebSocket and EventSource connections are also blocked via constructor-level patching. Non-http(s) sub-resources (data URIs, blobs) are still allowed. When a request is blocked, the command returns an error.
@@ -130,9 +130,9 @@ Config file:
 Gate actions using a static policy file. The policy is enforced by the daemon -- denied actions fail immediately.
 
 ```bash
-agent-browser --action-policy ./policy.json open https://example.com
+silicon-browser --action-policy ./policy.json open https://example.com
 # or
-export AGENT_BROWSER_ACTION_POLICY=./policy.json
+export SILICON_BROWSER_ACTION_POLICY=./policy.json
 ```
 
 Example policy (permissive with specific denials):
@@ -182,17 +182,17 @@ For actions that require explicit approval, use `--confirm-actions` to specify c
 
 ```bash
 # Orchestrator mode: returns confirmation_required response
-agent-browser --confirm-actions eval,download eval "document.title"
+silicon-browser --confirm-actions eval,download eval "document.title"
 
 # Then approve or deny:
-agent-browser confirm c_8f3a1234
-agent-browser deny c_8f3a1234
+silicon-browser confirm c_8f3a1234
+silicon-browser deny c_8f3a1234
 ```
 
 For interactive (human-in-the-loop) confirmation:
 
 ```bash
-agent-browser --confirm-actions eval,download --confirm-interactive eval "document.title"
+silicon-browser --confirm-actions eval,download --confirm-interactive eval "document.title"
 # Prompts: Allow? [y/N]
 ```
 
@@ -205,9 +205,9 @@ Pending confirmations auto-deny after 60 seconds.
 Prevent context flooding by truncating large page outputs:
 
 ```bash
-agent-browser --max-output 50000 get text body
+silicon-browser --max-output 50000 get text body
 # or
-export AGENT_BROWSER_MAX_OUTPUT=50000
+export SILICON_BROWSER_MAX_OUTPUT=50000
 ```
 
 Affected output types: `snapshot`, `get text`, `get html`, `eval`, `console`.
@@ -219,13 +219,13 @@ Affected output types: `snapshot`, `get text`, `get html`, `eval`, `console`.
     <tr><th>Variable</th><th>Description</th></tr>
   </thead>
   <tbody>
-    <tr><td><code>AGENT_BROWSER_CONTENT_BOUNDARIES</code></td><td>Wrap page output in boundary markers</td></tr>
-    <tr><td><code>AGENT_BROWSER_MAX_OUTPUT</code></td><td>Max characters for page output</td></tr>
-    <tr><td><code>AGENT_BROWSER_ALLOWED_DOMAINS</code></td><td>Comma-separated allowed domain patterns</td></tr>
-    <tr><td><code>AGENT_BROWSER_ACTION_POLICY</code></td><td>Path to action policy JSON file</td></tr>
-    <tr><td><code>AGENT_BROWSER_CONFIRM_ACTIONS</code></td><td>Comma-separated action categories requiring confirmation</td></tr>
-    <tr><td><code>AGENT_BROWSER_CONFIRM_INTERACTIVE</code></td><td>Enable interactive confirmation prompts</td></tr>
-    <tr><td><code>AGENT_BROWSER_ENCRYPTION_KEY</code></td><td>64-char hex key for AES-256-GCM encryption (auth vault + sessions)</td></tr>
+    <tr><td><code>SILICON_BROWSER_CONTENT_BOUNDARIES</code></td><td>Wrap page output in boundary markers</td></tr>
+    <tr><td><code>SILICON_BROWSER_MAX_OUTPUT</code></td><td>Max characters for page output</td></tr>
+    <tr><td><code>SILICON_BROWSER_ALLOWED_DOMAINS</code></td><td>Comma-separated allowed domain patterns</td></tr>
+    <tr><td><code>SILICON_BROWSER_ACTION_POLICY</code></td><td>Path to action policy JSON file</td></tr>
+    <tr><td><code>SILICON_BROWSER_CONFIRM_ACTIONS</code></td><td>Comma-separated action categories requiring confirmation</td></tr>
+    <tr><td><code>SILICON_BROWSER_CONFIRM_INTERACTIVE</code></td><td>Enable interactive confirmation prompts</td></tr>
+    <tr><td><code>SILICON_BROWSER_ENCRYPTION_KEY</code></td><td>64-char hex key for AES-256-GCM encryption (auth vault + sessions)</td></tr>
   </tbody>
 </table>
 

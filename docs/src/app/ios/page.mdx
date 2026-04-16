@@ -28,7 +28,7 @@ appium driver install xcuitest
 See all iOS simulators available on your system:
 
 ```bash
-agent-browser device list
+silicon-browser device list
 
 # Output:
 # Available iOS Simulators:
@@ -49,36 +49,36 @@ identical to desktop:
 
 ```bash
 # Launch Safari on iPhone 16 Pro
-agent-browser -p ios --device "iPhone 16 Pro" open https://example.com
+silicon-browser -p ios --device "iPhone 16 Pro" open https://example.com
 
 # Get snapshot with refs (same as desktop)
-agent-browser -p ios snapshot -i
+silicon-browser -p ios snapshot -i
 
 # Interact using refs
-agent-browser -p ios tap @e1
-agent-browser -p ios fill @e2 "text"
+silicon-browser -p ios tap @e1
+silicon-browser -p ios fill @e2 "text"
 
 # Take screenshot
-agent-browser -p ios screenshot mobile.png
+silicon-browser -p ios screenshot mobile.png
 
 # Close session (shuts down simulator)
-agent-browser -p ios close
+silicon-browser -p ios close
 ```
 
 ## Mobile-specific commands
 
 ```bash
 # Swipe gestures
-agent-browser -p ios swipe up
-agent-browser -p ios swipe down
-agent-browser -p ios swipe left
-agent-browser -p ios swipe right
+silicon-browser -p ios swipe up
+silicon-browser -p ios swipe down
+silicon-browser -p ios swipe left
+silicon-browser -p ios swipe right
 
 # Swipe with distance (pixels)
-agent-browser -p ios swipe up 500
+silicon-browser -p ios swipe up 500
 
 # Tap (alias for click, semantically clearer for touch)
-agent-browser -p ios tap @e1
+silicon-browser -p ios tap @e1
 ```
 
 ## Environment variables
@@ -86,13 +86,13 @@ agent-browser -p ios tap @e1
 Configure iOS mode via environment variables:
 
 ```bash
-export AGENT_BROWSER_PROVIDER=ios
-export AGENT_BROWSER_IOS_DEVICE="iPhone 16 Pro"
+export SILICON_BROWSER_PROVIDER=ios
+export SILICON_BROWSER_IOS_DEVICE="iPhone 16 Pro"
 
 # Now all commands use iOS
-agent-browser open https://example.com
-agent-browser snapshot -i
-agent-browser tap @e1
+silicon-browser open https://example.com
+silicon-browser snapshot -i
+silicon-browser tap @e1
 ```
 
 <table>
@@ -100,9 +100,9 @@ agent-browser tap @e1
     <tr><th>Variable</th><th>Description</th></tr>
   </thead>
   <tbody>
-    <tr><td><code>AGENT_BROWSER_PROVIDER</code></td><td>Set to <code>ios</code> to enable iOS mode</td></tr>
-    <tr><td><code>AGENT_BROWSER_IOS_DEVICE</code></td><td>Device name (e.g., "iPhone 16 Pro")</td></tr>
-    <tr><td><code>AGENT_BROWSER_IOS_UDID</code></td><td>Device UDID (alternative to device name)</td></tr>
+    <tr><td><code>SILICON_BROWSER_PROVIDER</code></td><td>Set to <code>ios</code> to enable iOS mode</td></tr>
+    <tr><td><code>SILICON_BROWSER_IOS_DEVICE</code></td><td>Device name (e.g., "iPhone 16 Pro")</td></tr>
+    <tr><td><code>SILICON_BROWSER_IOS_UDID</code></td><td>Device UDID (alternative to device name)</td></tr>
   </tbody>
 </table>
 
@@ -149,14 +149,14 @@ In Xcode:
 3. Select your Team (requires Apple Developer account, free tier works)
 4. Let Xcode manage signing automatically
 
-### 3. Use with agent-browser
+### 3. Use with silicon-browser
 
 ```bash
 # Connect device via USB, then use the UDID
-agent-browser -p ios --device "<DEVICE_UDID>" open https://example.com
+silicon-browser -p ios --device "<DEVICE_UDID>" open https://example.com
 
 # Or use the device name if unique
-agent-browser -p ios --device "John's iPhone" open https://example.com
+silicon-browser -p ios --device "John's iPhone" open https://example.com
 ```
 
 ### Real device notes
@@ -208,4 +208,4 @@ Open Xcode and download iOS Simulator runtimes from **Settings → Platforms**.
 ### Simulator won't boot
 
 Try booting the simulator manually from Xcode or the Simulator app to
-ensure it works, then retry with agent-browser.
+ensure it works, then retry with silicon-browser.

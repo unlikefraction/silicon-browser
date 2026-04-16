@@ -4,9 +4,9 @@ use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-const CONFIG_DIR: &str = ".agent-browser";
+const CONFIG_DIR: &str = ".silicon-browser";
 const CONFIG_FILENAME: &str = "config.json";
-const PROJECT_CONFIG_FILENAME: &str = "agent-browser.json";
+const PROJECT_CONFIG_FILENAME: &str = "silicon-browser.json";
 
 #[derive(Debug, Default, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
@@ -186,9 +186,9 @@ pub fn load_config(args: &[String]) -> Result<Config, String> {
     let explicit = extract_config_path(args)
         .map(|p| ("--config", p))
         .or_else(|| {
-            env::var("AGENT_BROWSER_CONFIG")
+            env::var("SILICON_BROWSER_CONFIG")
                 .ok()
-                .map(|p| ("AGENT_BROWSER_CONFIG", Some(p)))
+                .map(|p| ("SILICON_BROWSER_CONFIG", Some(p)))
         });
 
     if let Some((source, maybe_path)) = explicit {
@@ -245,6 +245,7 @@ pub struct Flags {
     pub action_policy: Option<String>,
     pub confirm_actions: Option<String>,
     pub confirm_interactive: bool,
+    pub incognito: bool,
     pub engine: Option<String>,
     pub screenshot_dir: Option<String>,
     pub screenshot_quality: Option<u32>,
@@ -272,7 +273,7 @@ pub fn parse_flags(args: &[String]) -> Flags {
         std::process::exit(1);
     });
 
-    let extensions_env = env::var("AGENT_BROWSER_EXTENSIONS")
+    let extensions_env = env::var("SILICON_BROWSER_EXTENSIONS")
         .ok()
         .map(|s| {
             s.split(',')
@@ -289,55 +290,55 @@ pub fn parse_flags(args: &[String]) -> Flags {
     };
 
     let mut flags = Flags {
-        json: env_var_is_truthy("AGENT_BROWSER_JSON") || config.json.unwrap_or(false),
-        full: env_var_is_truthy("AGENT_BROWSER_FULL") || config.full.unwrap_or(false),
-        headed: env_var_is_truthy("AGENT_BROWSER_HEADED") || config.headed.unwrap_or(false),
-        debug: env_var_is_truthy("AGENT_BROWSER_DEBUG") || config.debug.unwrap_or(false),
-        session: env::var("AGENT_BROWSER_SESSION")
+        json: env_var_is_truthy("SILICON_BROWSER_JSON") || config.json.unwrap_or(false),
+        full: env_var_is_truthy("SILICON_BROWSER_FULL") || config.full.unwrap_or(false),
+        headed: env_var_is_truthy("SILICON_BROWSER_HEADED") || config.headed.unwrap_or(false),
+        debug: env_var_is_truthy("SILICON_BROWSER_DEBUG") || config.debug.unwrap_or(false),
+        session: env::var("SILICON_BROWSER_SESSION")
             .ok()
             .or(config.session)
             .unwrap_or_else(|| "default".to_string()),
         headers: config.headers,
-        executable_path: env::var("AGENT_BROWSER_EXECUTABLE_PATH")
+        executable_path: env::var("SILICON_BROWSER_EXECUTABLE_PATH")
             .ok()
             .or(config.executable_path),
         cdp: config.cdp,
         extensions,
-        profile: env::var("AGENT_BROWSER_PROFILE").ok().or(config.profile),
-        state: env::var("AGENT_BROWSER_STATE").ok().or(config.state),
-        proxy: env::var("AGENT_BROWSER_PROXY").ok().or(config.proxy),
-        proxy_bypass: env::var("AGENT_BROWSER_PROXY_BYPASS")
+        profile: env::var("SILICON_BROWSER_PROFILE").ok().or(config.profile),
+        state: env::var("SILICON_BROWSER_STATE").ok().or(config.state),
+        proxy: env::var("SILICON_BROWSER_PROXY").ok().or(config.proxy),
+        proxy_bypass: env::var("SILICON_BROWSER_PROXY_BYPASS")
             .ok()
             .or(config.proxy_bypass),
-        args: env::var("AGENT_BROWSER_ARGS").ok().or(config.args),
-        user_agent: env::var("AGENT_BROWSER_USER_AGENT")
+        args: env::var("SILICON_BROWSER_ARGS").ok().or(config.args),
+        user_agent: env::var("SILICON_BROWSER_USER_AGENT")
             .ok()
             .or(config.user_agent),
-        provider: env::var("AGENT_BROWSER_PROVIDER").ok().or(config.provider),
-        ignore_https_errors: env_var_is_truthy("AGENT_BROWSER_IGNORE_HTTPS_ERRORS")
+        provider: env::var("SILICON_BROWSER_PROVIDER").ok().or(config.provider),
+        ignore_https_errors: env_var_is_truthy("SILICON_BROWSER_IGNORE_HTTPS_ERRORS")
             || config.ignore_https_errors.unwrap_or(false),
-        allow_file_access: env_var_is_truthy("AGENT_BROWSER_ALLOW_FILE_ACCESS")
+        allow_file_access: env_var_is_truthy("SILICON_BROWSER_ALLOW_FILE_ACCESS")
             || config.allow_file_access.unwrap_or(false),
-        device: env::var("AGENT_BROWSER_IOS_DEVICE").ok().or(config.device),
-        auto_connect: env_var_is_truthy("AGENT_BROWSER_AUTO_CONNECT")
+        device: env::var("SILICON_BROWSER_IOS_DEVICE").ok().or(config.device),
+        auto_connect: env_var_is_truthy("SILICON_BROWSER_AUTO_CONNECT")
             || config.auto_connect.unwrap_or(false),
-        session_name: env::var("AGENT_BROWSER_SESSION_NAME")
+        session_name: env::var("SILICON_BROWSER_SESSION_NAME")
             .ok()
             .or(config.session_name),
-        annotate: env_var_is_truthy("AGENT_BROWSER_ANNOTATE") || config.annotate.unwrap_or(false),
-        color_scheme: env::var("AGENT_BROWSER_COLOR_SCHEME")
+        annotate: env_var_is_truthy("SILICON_BROWSER_ANNOTATE") || config.annotate.unwrap_or(false),
+        color_scheme: env::var("SILICON_BROWSER_COLOR_SCHEME")
             .ok()
             .or(config.color_scheme),
-        download_path: env::var("AGENT_BROWSER_DOWNLOAD_PATH")
+        download_path: env::var("SILICON_BROWSER_DOWNLOAD_PATH")
             .ok()
             .or(config.download_path),
-        content_boundaries: env_var_is_truthy("AGENT_BROWSER_CONTENT_BOUNDARIES")
+        content_boundaries: env_var_is_truthy("SILICON_BROWSER_CONTENT_BOUNDARIES")
             || config.content_boundaries.unwrap_or(false),
-        max_output: env::var("AGENT_BROWSER_MAX_OUTPUT")
+        max_output: env::var("SILICON_BROWSER_MAX_OUTPUT")
             .ok()
             .and_then(|s| s.parse().ok())
             .or(config.max_output),
-        allowed_domains: env::var("AGENT_BROWSER_ALLOWED_DOMAINS")
+        allowed_domains: env::var("SILICON_BROWSER_ALLOWED_DOMAINS")
             .ok()
             .map(|s| {
                 s.split(',')
@@ -346,23 +347,24 @@ pub fn parse_flags(args: &[String]) -> Flags {
                     .collect()
             })
             .or(config.allowed_domains),
-        action_policy: env::var("AGENT_BROWSER_ACTION_POLICY")
+        action_policy: env::var("SILICON_BROWSER_ACTION_POLICY")
             .ok()
             .or(config.action_policy),
-        confirm_actions: env::var("AGENT_BROWSER_CONFIRM_ACTIONS")
+        confirm_actions: env::var("SILICON_BROWSER_CONFIRM_ACTIONS")
             .ok()
             .or(config.confirm_actions),
-        confirm_interactive: env_var_is_truthy("AGENT_BROWSER_CONFIRM_INTERACTIVE")
+        confirm_interactive: env_var_is_truthy("SILICON_BROWSER_CONFIRM_INTERACTIVE")
             || config.confirm_interactive.unwrap_or(false),
-        engine: env::var("AGENT_BROWSER_ENGINE").ok().or(config.engine),
-        screenshot_dir: env::var("AGENT_BROWSER_SCREENSHOT_DIR")
+        incognito: env_var_is_truthy("SILICON_BROWSER_INCOGNITO"),
+        engine: env::var("SILICON_BROWSER_ENGINE").ok().or(config.engine),
+        screenshot_dir: env::var("SILICON_BROWSER_SCREENSHOT_DIR")
             .ok()
             .or(config.screenshot_dir),
-        screenshot_quality: env::var("AGENT_BROWSER_SCREENSHOT_QUALITY")
+        screenshot_quality: env::var("SILICON_BROWSER_SCREENSHOT_QUALITY")
             .ok()
             .and_then(|s| s.parse().ok())
             .or(config.screenshot_quality),
-        screenshot_format: env::var("AGENT_BROWSER_SCREENSHOT_FORMAT")
+        screenshot_format: env::var("SILICON_BROWSER_SCREENSHOT_FORMAT")
             .ok()
             .or(config.screenshot_format)
             .filter(|s| s == "png" || s == "jpeg"),
@@ -506,6 +508,9 @@ pub fn parse_flags(args: &[String]) -> Flags {
                 if consumed {
                     i += 1;
                 }
+            }
+            "--incognito" => {
+                flags.incognito = true;
             }
             "--device" => {
                 if let Some(d) = args.get(i + 1) {
@@ -661,6 +666,7 @@ pub fn clean_args(args: &[String]) -> Vec<String> {
         "--annotate",
         "--content-boundaries",
         "--confirm-interactive",
+        "--incognito",
     ];
     // Global flags that always take a value (need to skip the next arg too)
     const GLOBAL_FLAGS_WITH_VALUE: &[&str] = &[
@@ -1036,7 +1042,7 @@ mod tests {
 
     #[test]
     fn test_load_config_missing_file_returns_none() {
-        let result = read_config_file(&PathBuf::from("/nonexistent/agent-browser.json"));
+        let result = read_config_file(&PathBuf::from("/nonexistent/silicon-browser.json"));
         assert!(result.is_none());
     }
 

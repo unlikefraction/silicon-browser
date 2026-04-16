@@ -82,10 +82,10 @@ impl Connection {
 }
 
 /// Get the base directory for socket/pid files.
-/// Priority: AGENT_BROWSER_SOCKET_DIR > XDG_RUNTIME_DIR > ~/.agent-browser > tmpdir
+/// Priority: SILICON_BROWSER_SOCKET_DIR > XDG_RUNTIME_DIR > ~/.silicon-browser > tmpdir
 pub fn get_socket_dir() -> PathBuf {
     // 1. Explicit override (ignore empty string)
-    if let Ok(dir) = env::var("AGENT_BROWSER_SOCKET_DIR") {
+    if let Ok(dir) = env::var("SILICON_BROWSER_SOCKET_DIR") {
         if !dir.is_empty() {
             return PathBuf::from(dir);
         }
@@ -94,17 +94,17 @@ pub fn get_socket_dir() -> PathBuf {
     // 2. XDG_RUNTIME_DIR (Linux standard, ignore empty string)
     if let Ok(runtime_dir) = env::var("XDG_RUNTIME_DIR") {
         if !runtime_dir.is_empty() {
-            return PathBuf::from(runtime_dir).join("agent-browser");
+            return PathBuf::from(runtime_dir).join("silicon-browser");
         }
     }
 
     // 3. Home directory fallback (like Docker Desktop's ~/.docker/run/)
     if let Some(home) = dirs::home_dir() {
-        return home.join(".agent-browser");
+        return home.join(".silicon-browser");
     }
 
     // 4. Last resort: temp dir
-    env::temp_dir().join("agent-browser")
+    env::temp_dir().join("silicon-browser")
 }
 
 #[cfg(unix)]
@@ -233,72 +233,76 @@ pub struct DaemonOptions<'a> {
     pub allowed_domains: Option<&'a [String]>,
     pub action_policy: Option<&'a str>,
     pub confirm_actions: Option<&'a str>,
+    pub incognito: bool,
     pub engine: Option<&'a str>,
 }
 
 fn apply_daemon_env(cmd: &mut Command, session: &str, opts: &DaemonOptions) {
-    cmd.env("AGENT_BROWSER_DAEMON", "1")
-        .env("AGENT_BROWSER_SESSION", session);
+    cmd.env("SILICON_BROWSER_DAEMON", "1")
+        .env("SILICON_BROWSER_SESSION", session);
 
     if opts.headed {
-        cmd.env("AGENT_BROWSER_HEADED", "1");
+        cmd.env("SILICON_BROWSER_HEADED", "1");
     }
     if opts.debug {
-        cmd.env("AGENT_BROWSER_DEBUG", "1");
+        cmd.env("SILICON_BROWSER_DEBUG", "1");
     }
     if let Some(path) = opts.executable_path {
-        cmd.env("AGENT_BROWSER_EXECUTABLE_PATH", path);
+        cmd.env("SILICON_BROWSER_EXECUTABLE_PATH", path);
     }
     if !opts.extensions.is_empty() {
-        cmd.env("AGENT_BROWSER_EXTENSIONS", opts.extensions.join(","));
+        cmd.env("SILICON_BROWSER_EXTENSIONS", opts.extensions.join(","));
     }
     if let Some(a) = opts.args {
-        cmd.env("AGENT_BROWSER_ARGS", a);
+        cmd.env("SILICON_BROWSER_ARGS", a);
     }
     if let Some(ua) = opts.user_agent {
-        cmd.env("AGENT_BROWSER_USER_AGENT", ua);
+        cmd.env("SILICON_BROWSER_USER_AGENT", ua);
     }
     if let Some(p) = opts.proxy {
-        cmd.env("AGENT_BROWSER_PROXY", p);
+        cmd.env("SILICON_BROWSER_PROXY", p);
     }
     if let Some(pb) = opts.proxy_bypass {
-        cmd.env("AGENT_BROWSER_PROXY_BYPASS", pb);
+        cmd.env("SILICON_BROWSER_PROXY_BYPASS", pb);
     }
     if opts.ignore_https_errors {
-        cmd.env("AGENT_BROWSER_IGNORE_HTTPS_ERRORS", "1");
+        cmd.env("SILICON_BROWSER_IGNORE_HTTPS_ERRORS", "1");
     }
     if opts.allow_file_access {
-        cmd.env("AGENT_BROWSER_ALLOW_FILE_ACCESS", "1");
+        cmd.env("SILICON_BROWSER_ALLOW_FILE_ACCESS", "1");
     }
     if let Some(prof) = opts.profile {
-        cmd.env("AGENT_BROWSER_PROFILE", prof);
+        cmd.env("SILICON_BROWSER_PROFILE", prof);
     }
     if let Some(st) = opts.state {
-        cmd.env("AGENT_BROWSER_STATE", st);
+        cmd.env("SILICON_BROWSER_STATE", st);
     }
     if let Some(p) = opts.provider {
-        cmd.env("AGENT_BROWSER_PROVIDER", p);
+        cmd.env("SILICON_BROWSER_PROVIDER", p);
     }
     if let Some(d) = opts.device {
-        cmd.env("AGENT_BROWSER_IOS_DEVICE", d);
+        cmd.env("SILICON_BROWSER_IOS_DEVICE", d);
     }
     if let Some(sn) = opts.session_name {
-        cmd.env("AGENT_BROWSER_SESSION_NAME", sn);
+        cmd.env("SILICON_BROWSER_SESSION_NAME", sn);
     }
     if let Some(dp) = opts.download_path {
-        cmd.env("AGENT_BROWSER_DOWNLOAD_PATH", dp);
+        cmd.env("SILICON_BROWSER_DOWNLOAD_PATH", dp);
     }
     if let Some(ad) = opts.allowed_domains {
-        cmd.env("AGENT_BROWSER_ALLOWED_DOMAINS", ad.join(","));
+        cmd.env("SILICON_BROWSER_ALLOWED_DOMAINS", ad.join(","));
     }
     if let Some(ap) = opts.action_policy {
-        cmd.env("AGENT_BROWSER_ACTION_POLICY", ap);
+        cmd.env("SILICON_BROWSER_ACTION_POLICY", ap);
     }
     if let Some(ca) = opts.confirm_actions {
-        cmd.env("AGENT_BROWSER_CONFIRM_ACTIONS", ca);
+        cmd.env("SILICON_BROWSER_CONFIRM_ACTIONS", ca);
+    }
+    if opts.incognito {
+        cmd.env("SILICON_BROWSER_INCOGNITO", "1");
     }
     if let Some(engine) = opts.engine {
-        cmd.env("AGENT_BROWSER_ENGINE", engine);
+        cmd.env("SILICON_BROWSER_ENGINE", engine);
     }
 }
 
@@ -334,7 +338,7 @@ pub fn ensure_daemon(session: &str, opts: &DaemonOptions) -> Result<DaemonResult
         if path_len > 103 {
             return Err(format!(
                 "Session name '{}' is too long. Socket path would be {} bytes (max 103).\n\
-                 Use a shorter session name or set AGENT_BROWSER_SOCKET_DIR to a shorter path.",
+                 Use a shorter session name or set SILICON_BROWSER_SOCKET_DIR to a shorter path.",
                 session, path_len
             ));
         }
@@ -368,7 +372,7 @@ pub fn ensure_daemon(session: &str, opts: &DaemonOptions) -> Result<DaemonResult
         use std::os::unix::process::CommandExt;
 
         let mut cmd = Command::new(&exe_path);
-        cmd.env("AGENT_BROWSER_DAEMON", "1");
+        cmd.env("SILICON_BROWSER_DAEMON", "1");
         apply_daemon_env(&mut cmd, session, opts);
 
         unsafe {
@@ -392,7 +396,7 @@ pub fn ensure_daemon(session: &str, opts: &DaemonOptions) -> Result<DaemonResult
         use std::os::windows::process::CommandExt;
 
         let mut cmd = Command::new(&exe_path);
-        cmd.env("AGENT_BROWSER_DAEMON", "1");
+        cmd.env("SILICON_BROWSER_DAEMON", "1");
         apply_daemon_env(&mut cmd, session, opts);
 
         const CREATE_NEW_PROCESS_GROUP: u32 = 0x00000200;
@@ -556,9 +560,9 @@ mod tests {
 
     #[test]
     fn test_get_socket_dir_explicit_override() {
-        let _guard = EnvGuard::new(&["AGENT_BROWSER_SOCKET_DIR", "XDG_RUNTIME_DIR"]);
+        let _guard = EnvGuard::new(&["SILICON_BROWSER_SOCKET_DIR", "XDG_RUNTIME_DIR"]);
 
-        _guard.set("AGENT_BROWSER_SOCKET_DIR", "/custom/socket/path");
+        _guard.set("SILICON_BROWSER_SOCKET_DIR", "/custom/socket/path");
         _guard.remove("XDG_RUNTIME_DIR");
 
         assert_eq!(get_socket_dir(), PathBuf::from("/custom/socket/path"));
@@ -566,50 +570,50 @@ mod tests {
 
     #[test]
     fn test_get_socket_dir_ignores_empty_socket_dir() {
-        let _guard = EnvGuard::new(&["AGENT_BROWSER_SOCKET_DIR", "XDG_RUNTIME_DIR"]);
+        let _guard = EnvGuard::new(&["SILICON_BROWSER_SOCKET_DIR", "XDG_RUNTIME_DIR"]);
 
-        _guard.set("AGENT_BROWSER_SOCKET_DIR", "");
+        _guard.set("SILICON_BROWSER_SOCKET_DIR", "");
         _guard.remove("XDG_RUNTIME_DIR");
 
         assert!(get_socket_dir()
             .to_string_lossy()
-            .ends_with(".agent-browser"));
+            .ends_with(".silicon-browser"));
     }
 
     #[test]
     fn test_get_socket_dir_xdg_runtime() {
-        let _guard = EnvGuard::new(&["AGENT_BROWSER_SOCKET_DIR", "XDG_RUNTIME_DIR"]);
+        let _guard = EnvGuard::new(&["SILICON_BROWSER_SOCKET_DIR", "XDG_RUNTIME_DIR"]);
 
-        _guard.remove("AGENT_BROWSER_SOCKET_DIR");
+        _guard.remove("SILICON_BROWSER_SOCKET_DIR");
         _guard.set("XDG_RUNTIME_DIR", "/run/user/1000");
 
         assert_eq!(
             get_socket_dir(),
-            PathBuf::from("/run/user/1000/agent-browser")
+            PathBuf::from("/run/user/1000/silicon-browser")
         );
     }
 
     #[test]
     fn test_get_socket_dir_ignores_empty_xdg_runtime() {
-        let _guard = EnvGuard::new(&["AGENT_BROWSER_SOCKET_DIR", "XDG_RUNTIME_DIR"]);
+        let _guard = EnvGuard::new(&["SILICON_BROWSER_SOCKET_DIR", "XDG_RUNTIME_DIR"]);
 
-        _guard.set("AGENT_BROWSER_SOCKET_DIR", "");
+        _guard.set("SILICON_BROWSER_SOCKET_DIR", "");
         _guard.set("XDG_RUNTIME_DIR", "");
 
         assert!(get_socket_dir()
             .to_string_lossy()
-            .ends_with(".agent-browser"));
+            .ends_with(".silicon-browser"));
     }
 
     #[test]
     fn test_get_socket_dir_home_fallback() {
-        let _guard = EnvGuard::new(&["AGENT_BROWSER_SOCKET_DIR", "XDG_RUNTIME_DIR"]);
+        let _guard = EnvGuard::new(&["SILICON_BROWSER_SOCKET_DIR", "XDG_RUNTIME_DIR"]);
 
-        _guard.remove("AGENT_BROWSER_SOCKET_DIR");
+        _guard.remove("SILICON_BROWSER_SOCKET_DIR");
         _guard.remove("XDG_RUNTIME_DIR");
 
         let result = get_socket_dir();
-        assert!(result.to_string_lossy().ends_with(".agent-browser"));
+        assert!(result.to_string_lossy().ends_with(".silicon-browser"));
         assert!(
             result.to_string_lossy().contains("home") || result.to_string_lossy().contains("Users")
         );

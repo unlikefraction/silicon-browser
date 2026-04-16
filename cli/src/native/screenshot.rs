@@ -6,7 +6,7 @@ use super::cdp::client::CdpClient;
 use super::cdp::types::*;
 use super::element::RefMap;
 
-const ANNOTATION_OVERLAY_ID: &str = "__agent_browser_annotations__";
+const ANNOTATION_OVERLAY_ID: &str = "__silicon_browser_annotations__";
 
 #[derive(Debug, Clone)]
 struct Rect {
@@ -520,10 +520,10 @@ fn round(value: f64) -> i64 {
 
 fn get_screenshot_dir() -> PathBuf {
     if let Some(home) = dirs::home_dir() {
-        home.join(".agent-browser").join("tmp").join("screenshots")
+        home.join(".silicon-browser").join("tmp").join("screenshots")
     } else {
         std::env::temp_dir()
-            .join("agent-browser")
+            .join("silicon-browser")
             .join("screenshots")
     }
 }

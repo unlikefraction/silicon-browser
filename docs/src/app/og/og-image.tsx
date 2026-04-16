@@ -59,7 +59,7 @@ export async function renderOgImage(title: string) {
             color: "white",
           }}
         >
-          agent-browser
+          silicon-browser
         </span>
       </div>
 

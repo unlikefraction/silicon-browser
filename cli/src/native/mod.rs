@@ -40,6 +40,8 @@ pub mod stream;
 pub mod tracing;
 #[allow(dead_code)]
 pub mod webdriver;
+#[allow(dead_code)]
+pub mod stealth;
 
 #[cfg(test)]
 mod e2e_tests;

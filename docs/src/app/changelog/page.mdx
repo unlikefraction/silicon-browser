@@ -10,7 +10,7 @@ export const metadata = pageMetadata("changelog")
 
 ### Full Native Rust
 
-agent-browser is now 100% native Rust. The Node.js/Playwright daemon has been completely removed -- no Node.js runtime or Playwright dependency is required to run the daemon. The Rust native daemon is now the only implementation.
+silicon-browser is now 100% native Rust. The Node.js/Playwright daemon has been completely removed -- no Node.js runtime or Playwright dependency is required to run the daemon. The Rust native daemon is now the only implementation.
 
 <table>
   <thead>
@@ -44,10 +44,10 @@ agent-browser is now 100% native Rust. The Node.js/Playwright daemon has been co
 </table>
 
 ```bash
-npm install -g agent-browser      # 7 MB install
-agent-browser install              # download Chrome
-agent-browser open example.com
-agent-browser snapshot
+npm install -g silicon-browser      # 7 MB install
+silicon-browser install              # download Chrome
+silicon-browser open example.com
+silicon-browser snapshot
 ```
 
 ### Improvements
@@ -71,28 +71,28 @@ agent-browser snapshot
 
 ### New Features
 
-- **Browserless.io provider** -- Added browserless.io as a browser provider, supported in both Node.js and native daemon paths. Connect to remote Browserless instances using the `--provider browserless` flag or `AGENT_BROWSER_PROVIDER=browserless` environment variable.
+- **Browserless.io provider** -- Added browserless.io as a browser provider, supported in both Node.js and native daemon paths. Connect to remote Browserless instances using the `--provider browserless` flag or `SILICON_BROWSER_PROVIDER=browserless` environment variable.
 
 ```bash
 export BROWSERLESS_API_KEY="your-api-key"
-agent-browser --provider browserless open example.com
-agent-browser --provider browserless screenshot ./page.png
+silicon-browser --provider browserless open example.com
+silicon-browser --provider browserless screenshot ./page.png
 ```
 
 - **`clipboard` command** -- Read from and write to the browser clipboard. Supports `read`, `write`, `copy` (simulates Ctrl+C), and `paste` (simulates Ctrl+V) operations.
 
 ```bash
-agent-browser clipboard read
-agent-browser clipboard write "Hello, World!"
-agent-browser clipboard copy
-agent-browser clipboard paste
+silicon-browser clipboard read
+silicon-browser clipboard write "Hello, World!"
+silicon-browser clipboard copy
+silicon-browser clipboard paste
 ```
 
-- **Screenshot output configuration** -- New global flags for persistent screenshot settings: `--screenshot-dir`, `--screenshot-quality`, and `--screenshot-format`. Also available as environment variables `AGENT_BROWSER_SCREENSHOT_DIR`, `AGENT_BROWSER_SCREENSHOT_QUALITY`, and `AGENT_BROWSER_SCREENSHOT_FORMAT`.
+- **Screenshot output configuration** -- New global flags for persistent screenshot settings: `--screenshot-dir`, `--screenshot-quality`, and `--screenshot-format`. Also available as environment variables `SILICON_BROWSER_SCREENSHOT_DIR`, `SILICON_BROWSER_SCREENSHOT_QUALITY`, and `SILICON_BROWSER_SCREENSHOT_FORMAT`.
 
 ```bash
-agent-browser screenshot --screenshot-dir ./shots
-agent-browser screenshot --screenshot-format jpeg --screenshot-quality 80
+silicon-browser screenshot --screenshot-dir ./shots
+silicon-browser screenshot --screenshot-format jpeg --screenshot-quality 80
 ```
 
 ### Bug Fixes
@@ -114,15 +114,15 @@ agent-browser screenshot --screenshot-format jpeg --screenshot-quality 80
 - **`inspect` command** -- Opens Chrome DevTools for the active page by launching a local proxy server that forwards the DevTools frontend to the browser's CDP WebSocket. Agent commands continue to work while DevTools is open.
 
 ```bash
-agent-browser open example.com
-agent-browser inspect          # opens DevTools in your browser
-agent-browser click "Submit"   # commands still work while DevTools is open
+silicon-browser open example.com
+silicon-browser inspect          # opens DevTools in your browser
+silicon-browser click "Submit"   # commands still work while DevTools is open
 ```
 
 - **`get cdp-url` subcommand** -- Retrieve the Chrome DevTools Protocol WebSocket URL for the active page, useful for connecting external debugging tools.
 
 ```bash
-agent-browser get cdp-url
+silicon-browser get cdp-url
 ```
 
 - **Screenshot annotate** -- The `--annotate` flag overlays numbered labels on interactive elements in screenshots.
@@ -159,10 +159,10 @@ agent-browser get cdp-url
 
 ### New Features
 
-- **Lightpanda browser engine support** -- Added `--engine <name>` flag to select the browser engine (`chrome` by default, or `lightpanda`), implying `--native` mode. Configurable via `AGENT_BROWSER_ENGINE` environment variable.
+- **Lightpanda browser engine support** -- Added `--engine <name>` flag to select the browser engine (`chrome` by default, or `lightpanda`), implying `--native` mode. Configurable via `SILICON_BROWSER_ENGINE` environment variable.
 
 ```bash
-agent-browser --engine lightpanda open example.com
+silicon-browser --engine lightpanda open example.com
 ```
 
 - **Dialog dismiss command** -- Added support for `dismiss` subcommand in dialog command parsing.
@@ -191,18 +191,18 @@ agent-browser --engine lightpanda open example.com
 
 ### New Features
 
-- **Native Rust daemon (experimental).** A pure Rust daemon that communicates with Chrome directly via the Chrome DevTools Protocol (CDP), eliminating Node.js and Playwright dependencies entirely. Enable with `--native`, `AGENT_BROWSER_NATIVE=1`, or `"native": true` in your config file. Supports 150+ commands with full parity to the default Node.js daemon.
+- **Native Rust daemon (experimental).** A pure Rust daemon that communicates with Chrome directly via the Chrome DevTools Protocol (CDP), eliminating Node.js and Playwright dependencies entirely. Enable with `--native`, `SILICON_BROWSER_NATIVE=1`, or `"native": true` in your config file. Supports 150+ commands with full parity to the default Node.js daemon.
 
 ```bash
 # Via flag
-agent-browser --native open example.com
+silicon-browser --native open example.com
 
 # Via environment variable
-export AGENT_BROWSER_NATIVE=1
-agent-browser open example.com
+export SILICON_BROWSER_NATIVE=1
+silicon-browser open example.com
 ```
 
-Or add to `agent-browser.json`:
+Or add to `silicon-browser.json`:
 
 ```json
 {"native": true}
@@ -235,7 +235,7 @@ The native daemon also includes a WebDriver backend for Safari and iOS support.
 - Playwright trace format is not available (uses Chrome's built-in tracing)
 - HAR export is not available
 - Network route interception uses CDP Fetch domain instead of Playwright's route API
-- The native and Node.js daemons share the same session socket. Use `agent-browser close` before switching between modes.
+- The native and Node.js daemons share the same session socket. Use `silicon-browser close` before switching between modes.
 
 See the [Native Mode](/native-mode) page for full details.
 
@@ -253,27 +253,27 @@ See the [Native Mode](/native-mode) page for full details.
 - **Action policy** -- `--action-policy` gates actions using a static JSON policy file with `allow`/`deny` lists across 13 action categories. Auth vault operations bypass policy enforcement.
 - **Action confirmation** -- `--confirm-actions` requires explicit approval for sensitive action categories. New `confirm` and `deny` commands for orchestrator use. `--confirm-interactive` enables human-in-the-loop terminal prompts (auto-denies if stdin is not a TTY). Pending confirmations auto-deny after 60 seconds.
 - **Output length limits** -- `--max-output` truncates large page outputs to prevent LLM context flooding.
-- **`--download-path` option** -- Set a default download directory via flag, `AGENT_BROWSER_DOWNLOAD_PATH` env var, or `downloadPath` config key. Without it, downloads go to a temporary directory deleted when the browser closes.
-- **`--selector` flag for scroll** -- Scroll within a specific container element instead of the page: `agent-browser scroll down 500 --selector "div.scroll-container"`
+- **`--download-path` option** -- Set a default download directory via flag, `SILICON_BROWSER_DOWNLOAD_PATH` env var, or `downloadPath` config key. Without it, downloads go to a temporary directory deleted when the browser closes.
+- **`--selector` flag for scroll** -- Scroll within a specific container element instead of the page: `silicon-browser scroll down 500 --selector "div.scroll-container"`
 
 ```bash
 # Auth vault
-echo "pass" | agent-browser auth save github --url https://github.com/login --username user --password-stdin
-agent-browser auth login github
+echo "pass" | silicon-browser auth save github --url https://github.com/login --username user --password-stdin
+silicon-browser auth login github
 
 # Security flags
-agent-browser --content-boundaries --allowed-domains "example.com,*.example.com" --max-output 50000 open https://example.com
+silicon-browser --content-boundaries --allowed-domains "example.com,*.example.com" --max-output 50000 open https://example.com
 
 # Download path
-agent-browser --download-path ./downloads open https://example.com
+silicon-browser --download-path ./downloads open https://example.com
 
 # Scroll within container
-agent-browser scroll down 500 --selector "div.content"
+silicon-browser scroll down 500 --selector "div.content"
 ```
 
 ### Environment Variables
 
-Six new environment variables for security configuration: `AGENT_BROWSER_CONTENT_BOUNDARIES`, `AGENT_BROWSER_MAX_OUTPUT`, `AGENT_BROWSER_ALLOWED_DOMAINS`, `AGENT_BROWSER_ACTION_POLICY`, `AGENT_BROWSER_CONFIRM_ACTIONS`, `AGENT_BROWSER_CONFIRM_INTERACTIVE`.
+Six new environment variables for security configuration: `SILICON_BROWSER_CONTENT_BOUNDARIES`, `SILICON_BROWSER_MAX_OUTPUT`, `SILICON_BROWSER_ALLOWED_DOMAINS`, `SILICON_BROWSER_ACTION_POLICY`, `SILICON_BROWSER_CONFIRM_ACTIONS`, `SILICON_BROWSER_CONFIRM_INTERACTIVE`.
 
 ---
 
@@ -284,17 +284,17 @@ Six new environment variables for security configuration: `AGENT_BROWSER_CONTENT
 ### New Features
 
 - **`keyboard` command** -- Type with real keystrokes, insert text, and press shortcuts at the currently focused element without needing a selector (`keyboard type`, `keyboard inserttext`).
-- **`--color-scheme` flag** -- Persistent dark/light mode preference across browser sessions via flag or `AGENT_BROWSER_COLOR_SCHEME` env var.
+- **`--color-scheme` flag** -- Persistent dark/light mode preference across browser sessions via flag or `SILICON_BROWSER_COLOR_SCHEME` env var.
 
 ```bash
-agent-browser keyboard type "Hello world"
-agent-browser keyboard inserttext "pasted text"
-agent-browser --color-scheme dark open https://example.com
+silicon-browser keyboard type "Hello world"
+silicon-browser keyboard inserttext "pasted text"
+silicon-browser --color-scheme dark open https://example.com
 ```
 
 ### Bug Fixes
 
-- Fixed IPC EAGAIN errors (os error 35/11) with backpressure-aware socket writes, command serialization, and lowered default Playwright timeout to 25s (configurable via `AGENT_BROWSER_DEFAULT_TIMEOUT`).
+- Fixed IPC EAGAIN errors (os error 35/11) with backpressure-aware socket writes, command serialization, and lowered default Playwright timeout to 25s (configurable via `SILICON_BROWSER_DEFAULT_TIMEOUT`).
 - Fixed remote debugging (CDP) reconnection.
 - Fixed state load failing when no browser is running.
 - Fixed `--annotate` flag warning appearing when not explicitly passed via CLI.
@@ -310,9 +310,9 @@ agent-browser --color-scheme dark open https://example.com
 - **Diff commands** -- Compare snapshots, screenshots, and URLs between page states. Run visual pixel diffs against baseline images, compare accessibility tree snapshots with customizable depth and selectors, and diff two URLs side-by-side with optional screenshot comparison.
 
 ```bash
-agent-browser diff snapshot
-agent-browser diff screenshot --baseline before.png
-agent-browser diff url https://staging.example.com https://prod.example.com
+silicon-browser diff snapshot
+silicon-browser diff screenshot --baseline before.png
+silicon-browser diff url https://staging.example.com https://prod.example.com
 ```
 
 ---
@@ -323,10 +323,10 @@ agent-browser diff url https://staging.example.com https://prod.example.com
 
 ### New Features
 
-- **Annotated screenshots** -- `--annotate` flag overlays numbered labels on interactive elements and prints a legend mapping each label to its element ref. Enables multimodal AI models to reason about visual layout while using the same `@eN` refs for subsequent interactions. Also settable via `AGENT_BROWSER_ANNOTATE` env var.
+- **Annotated screenshots** -- `--annotate` flag overlays numbered labels on interactive elements and prints a legend mapping each label to its element ref. Enables multimodal AI models to reason about visual layout while using the same `@eN` refs for subsequent interactions. Also settable via `SILICON_BROWSER_ANNOTATE` env var.
 
 ```bash
-agent-browser screenshot --annotate
+silicon-browser screenshot --annotate
 ```
 
 ---
@@ -347,7 +347,7 @@ agent-browser screenshot --annotate
 
 ### New Features
 
-- **Configuration file support** -- Automatic loading from user (`~/.agent-browser/config.json`) and project (`./agent-browser.json`) directories with priority-based merging.
+- **Configuration file support** -- Automatic loading from user (`~/.silicon-browser/config.json`) and project (`./silicon-browser.json`) directories with priority-based merging.
 - **Profiler commands** -- Chrome DevTools profiling with `profiler start` and `profiler stop`.
 - **Browser extension loading** -- `--extension` flag to load browser extensions.
 - **Storage state management** -- `state save` and `state load` commands for auth state persistence.
@@ -371,12 +371,12 @@ agent-browser screenshot --annotate
 
 ```bash
 # Persist session state
-agent-browser --session-name myapp open https://example.com
+silicon-browser --session-name myapp open https://example.com
 
 # Manage saved states
-agent-browser state list
-agent-browser state show myapp
-agent-browser state clear myapp
+silicon-browser state list
+silicon-browser state show myapp
+silicon-browser state clear myapp
 ```
 
 ---
@@ -424,8 +424,8 @@ agent-browser state clear myapp
 - **`-C`/`--cursor` flag for snapshots** - Include cursor-interactive elements like divs with onclick handlers or `cursor:pointer` styles
 
 ```bash
-agent-browser --allow-file-access open file:///path/to/document.pdf
-agent-browser snapshot -C
+silicon-browser --allow-file-access open file:///path/to/document.pdf
+silicon-browser snapshot -C
 ```
 
 ---
@@ -440,14 +440,14 @@ agent-browser snapshot -C
 
 ```bash
 # List available iOS simulators
-agent-browser device list
+silicon-browser device list
 
 # Launch on iOS device
-agent-browser -p ios --device "iPhone 16 Pro" open https://example.com
+silicon-browser -p ios --device "iPhone 16 Pro" open https://example.com
 
 # Touch interactions
-agent-browser tap @e1
-agent-browser swipe up
+silicon-browser tap @e1
+silicon-browser swipe up
 ```
 
 ---
@@ -572,29 +572,29 @@ agent-browser swipe up
 
 ```bash
 # Via -p flag
-agent-browser -p kernel open https://example.com
+silicon-browser -p kernel open https://example.com
 
 # Via environment variable
-export AGENT_BROWSER_PROVIDER=kernel
+export SILICON_BROWSER_PROVIDER=kernel
 export KERNEL_API_KEY=your-api-key
-agent-browser open https://example.com
+silicon-browser open https://example.com
 
 # With persistent profile
 export KERNEL_PROFILE_NAME=my-profile
-agent-browser open https://example.com
+silicon-browser open https://example.com
 ```
 
 - **Ignore HTTPS certificate errors** - New flag for working with self-signed certificates and development environments
 
 ```bash
-agent-browser --ignore-https-errors open https://localhost:3000
+silicon-browser --ignore-https-errors open https://localhost:3000
 ```
 
 - **Enhanced cookie management** - Extended `cookies set` command with additional flags for setting cookies before page load
 
 ```bash
-agent-browser cookies set session_id "abc123" --url https://app.example.com --httpOnly --secure
-agent-browser cookies set token "xyz" --domain .example.com --path /api --expires 1735689600
+silicon-browser cookies set session_id "abc123" --url https://app.example.com --httpOnly --secure
+silicon-browser cookies set token "xyz" --domain .example.com --path /api --expires 1735689600
 ```
 
 ### Bug Fixes
@@ -631,40 +631,40 @@ agent-browser cookies set token "xyz" --domain .example.com --path /api --expire
 
 ```bash
 # Via -p flag (recommended)
-agent-browser -p browserbase open https://example.com
-agent-browser -p browseruse open https://example.com
+silicon-browser -p browserbase open https://example.com
+silicon-browser -p browseruse open https://example.com
 
 # Via environment variable
-export AGENT_BROWSER_PROVIDER=browserbase
-agent-browser open https://example.com
+export SILICON_BROWSER_PROVIDER=browserbase
+silicon-browser open https://example.com
 ```
 
 - **Persistent browser profiles** - Store cookies, localStorage, and login sessions across browser restarts
 
 ```bash
-agent-browser --profile ~/.myapp-profile open myapp.com
+silicon-browser --profile ~/.myapp-profile open myapp.com
 # Login persists across restarts
 ```
 
 - **Remote CDP WebSocket URLs** - Connect to remote browser services via WebSocket
 
 ```bash
-agent-browser --cdp "wss://browser-service.com/cdp?token=..." snapshot
+silicon-browser --cdp "wss://browser-service.com/cdp?token=..." snapshot
 ```
 
 - **`download` command** - Trigger downloads and wait for completion
 
 ```bash
-agent-browser download @e1 ./file.pdf
-agent-browser wait --download ./output.zip --timeout 30000
+silicon-browser download @e1 ./file.pdf
+silicon-browser wait --download ./output.zip --timeout 30000
 ```
 
 - **Browser launch configuration** - Fine-grained control over browser startup
 
 ```bash
-agent-browser --args "--disable-gpu,--no-sandbox" open example.com
-agent-browser --user-agent "Custom UA" open example.com
-agent-browser --proxy-bypass "localhost,*.internal" open example.com
+silicon-browser --args "--disable-gpu,--no-sandbox" open example.com
+silicon-browser --user-agent "Custom UA" open example.com
+silicon-browser --proxy-bypass "localhost,*.internal" open example.com
 ```
 
 - **Enhanced skills** - Hierarchical structure with references and templates for Claude Code
@@ -673,7 +673,7 @@ agent-browser --proxy-bypass "localhost,*.internal" open example.com
 
 - Screenshot command now supports refs and has improved error messages
 - WebSocket URLs work in `connect` command
-- Fixed socket file location (uses `~/.agent-browser` instead of TMPDIR)
+- Fixed socket file location (uses `~/.silicon-browser` instead of TMPDIR)
 - Windows binary path fix (.exe extension)
 - State load and path-based actions now show correct output messages
 
@@ -694,28 +694,28 @@ agent-browser --proxy-bypass "localhost,*.internal" open example.com
 - **Video recording** - Record browser sessions to WebM using Playwright's native recording
 
 ```bash
-agent-browser record start ./demo.webm
-agent-browser click @e1
-agent-browser record stop
+silicon-browser record start ./demo.webm
+silicon-browser click @e1
+silicon-browser record stop
 ```
 
 - **`connect` command** - Connect to a browser via CDP and persist the connection for subsequent commands
 
 ```bash
-agent-browser connect 9222
-agent-browser snapshot  # No --cdp needed after connect
+silicon-browser connect 9222
+silicon-browser snapshot  # No --cdp needed after connect
 ```
 
 - **`--proxy` flag** - Configure browser proxy with optional authentication
 
 ```bash
-agent-browser --proxy http://user:pass@proxy.com:8080 open example.com
+silicon-browser --proxy http://user:pass@proxy.com:8080 open example.com
 ```
 
 - **`get styles` command** - Extract computed styles from elements
 
 ```bash
-agent-browser get styles "button"
+silicon-browser get styles "button"
 ```
 
 - **Claude marketplace plugin** - Added `.claude-plugin/marketplace.json` for Claude Code integration
@@ -732,7 +732,7 @@ agent-browser get styles "button"
 - Support URL parameter in `tab new` command
 - Allow `about:`, `data:`, and `file:` URL schemes
 - Detect stale unix socket by attempting connection
-- Respect `AGENT_BROWSER_HEADED` environment variable
+- Respect `SILICON_BROWSER_HEADED` environment variable
 - Handle SIGPIPE to prevent panic when piping to `head`/`tail`
 - Fix null path validation in screenshot command
 

@@ -9,11 +9,11 @@ where a human can watch and interact alongside an AI agent.
 
 ## Enable streaming
 
-Set the `AGENT_BROWSER_STREAM_PORT` environment variable to start
+Set the `SILICON_BROWSER_STREAM_PORT` environment variable to start
 a WebSocket server:
 
 ```bash
-AGENT_BROWSER_STREAM_PORT=9223 agent-browser open example.com
+SILICON_BROWSER_STREAM_PORT=9223 silicon-browser open example.com
 ```
 
 The server streams viewport frames and accepts input events (mouse, keyboard, touch).
@@ -176,7 +176,7 @@ Send input events to control the browser remotely.
 For advanced use, control streaming directly via the TypeScript API:
 
 ```typescript
-import { BrowserManager } from 'agent-browser';
+import { BrowserManager } from 'silicon-browser';
 
 const browser = new BrowserManager();
 await browser.launch({ headless: true });

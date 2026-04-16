@@ -137,10 +137,10 @@ async fn e2e_lightpanda_auto_launch_can_open_page() {
         _ => return,
     };
 
-    let prev_engine = std::env::var("AGENT_BROWSER_ENGINE").ok();
-    let prev_path = std::env::var("AGENT_BROWSER_EXECUTABLE_PATH").ok();
-    std::env::set_var("AGENT_BROWSER_ENGINE", "lightpanda");
-    std::env::set_var("AGENT_BROWSER_EXECUTABLE_PATH", &lightpanda_bin);
+    let prev_engine = std::env::var("SILICON_BROWSER_ENGINE").ok();
+    let prev_path = std::env::var("SILICON_BROWSER_EXECUTABLE_PATH").ok();
+    std::env::set_var("SILICON_BROWSER_ENGINE", "lightpanda");
+    std::env::set_var("SILICON_BROWSER_EXECUTABLE_PATH", &lightpanda_bin);
 
     let mut state = DaemonState::new();
 
@@ -155,12 +155,12 @@ async fn e2e_lightpanda_auto_launch_can_open_page() {
     .expect("Lightpanda auto-launch should not hang");
 
     match prev_engine {
-        Some(value) => std::env::set_var("AGENT_BROWSER_ENGINE", value),
-        None => std::env::remove_var("AGENT_BROWSER_ENGINE"),
+        Some(value) => std::env::set_var("SILICON_BROWSER_ENGINE", value),
+        None => std::env::remove_var("SILICON_BROWSER_ENGINE"),
     }
     match prev_path {
-        Some(value) => std::env::set_var("AGENT_BROWSER_EXECUTABLE_PATH", value),
-        None => std::env::remove_var("AGENT_BROWSER_EXECUTABLE_PATH"),
+        Some(value) => std::env::set_var("SILICON_BROWSER_EXECUTABLE_PATH", value),
+        None => std::env::remove_var("SILICON_BROWSER_EXECUTABLE_PATH"),
     }
 
     assert_success(&resp);
@@ -271,7 +271,7 @@ async fn e2e_screenshot() {
 
     // Named screenshot
     let tmp_path = std::env::temp_dir()
-        .join("agent-browser-e2e-test-screenshot.png")
+        .join("silicon-browser-e2e-test-screenshot.png")
         .to_string_lossy()
         .to_string();
     let resp = execute_command(
@@ -324,7 +324,7 @@ async fn e2e_screenshot() {
         &json!({
             "id": "7",
             "action": "evaluate",
-            "script": "document.getElementById('__agent_browser_annotations__') === null"
+            "script": "document.getElementById('__silicon_browser_annotations__') === null"
         }),
         &mut state,
     )
@@ -1185,7 +1185,7 @@ async fn e2e_state_management() {
 
     // Save state
     let tmp_state = std::env::temp_dir()
-        .join("agent-browser-e2e-state.json")
+        .join("silicon-browser-e2e-state.json")
         .to_string_lossy()
         .to_string();
     let resp = execute_command(
@@ -1525,7 +1525,7 @@ async fn e2e_error_handling() {
 #[ignore]
 async fn e2e_profile_cookie_persistence() {
     let profile_dir = std::env::temp_dir().join(format!(
-        "agent-browser-e2e-profile-{}",
+        "silicon-browser-e2e-profile-{}",
         uuid::Uuid::new_v4()
     ));
 

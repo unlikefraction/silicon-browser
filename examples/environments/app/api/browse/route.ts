@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
-import * as sandbox from "@/lib/agent-browser-sandbox";
-import type { StepEvent } from "@/lib/agent-browser-sandbox";
+import * as sandbox from "@/lib/silicon-browser-sandbox";
+import type { StepEvent } from "@/lib/silicon-browser-sandbox";
 import { ALLOWED_URLS } from "@/lib/constants";
 import { minuteRateLimit, dailyRateLimit } from "@/lib/rate-limit";
 

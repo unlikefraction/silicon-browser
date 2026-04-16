@@ -2,7 +2,7 @@
  * Node.js Daemon vs Rust Native Daemon benchmark.
  *
  * Compares the last published npm version (Node.js daemon) against the
- * Rust-only build from a given branch, running real agent-browser commands
+ * Rust-only build from a given branch, running real silicon-browser commands
  * inside a Vercel Sandbox.
  *
  * Captures:
@@ -101,7 +101,7 @@ const config = parseArgs();
 // ---------------------------------------------------------------------------
 
 const TIMEOUT_MS = 30 * 60 * 1000;
-const REPO_URL = "https://github.com/vercel-labs/agent-browser.git";
+const REPO_URL = "https://github.com/unlikefraction/silicon-browser.git";
 
 const CHROMIUM_SYSTEM_DEPS = [
   "nss",
@@ -222,19 +222,19 @@ async function findDaemonPids(
   sandbox: SandboxInstance,
   _session: string,
 ): Promise<number[]> {
-  // The daemon process name is "agent-browser" but session/daemon flags are
+  // The daemon process name is "silicon-browser" but session/daemon flags are
   // env vars, not command-line args, so we can't grep them from `ps`.
-  // Instead, find all agent-browser processes that look like long-running daemons
+  // Instead, find all silicon-browser processes that look like long-running daemons
   // (not short-lived CLI invocations -- those exit immediately).
   const raw = await shellSafe(
     sandbox,
-    `pgrep -x agent-browser 2>/dev/null || true`,
+    `pgrep -x silicon-browser 2>/dev/null || true`,
   );
   if (!raw) {
     // Fallback: broader match on process name
     const fallback = await shellSafe(
       sandbox,
-      `pgrep -f 'agent-browser' 2>/dev/null | head -5 || true`,
+      `pgrep -f 'silicon-browser' 2>/dev/null | head -5 || true`,
     );
     if (!fallback) return [];
     return fallback.split("\n").map(Number).filter(Boolean);
@@ -320,7 +320,7 @@ async function collectDaemonMetrics(
   binarySizeBytes: number,
   distributionSizeBytes: number,
 ): Promise<DaemonMetrics> {
-  // Find daemon PIDs -- the agent-browser process itself
+  // Find daemon PIDs -- the silicon-browser process itself
   const daemonPids = await findDaemonPids(sandbox, session);
 
   // Also find the full process tree (daemon + Chrome children)
@@ -332,11 +332,11 @@ async function collectDaemonMetrics(
   allPids = [...new Set(allPids)];
 
   // If no daemon PIDs found via pgrep, fall back to grabbing all
-  // agent-browser and chrome processes for metrics
+  // silicon-browser and chrome processes for metrics
   if (allPids.length === 0) {
     const fallback = await shellSafe(
       sandbox,
-      `ps -eo pid,comm | grep -E 'agent-browser|chrome' | grep -v grep | awk '{print $1}' || true`,
+      `ps -eo pid,comm | grep -E 'silicon-browser|chrome' | grep -v grep | awk '{print $1}' || true`,
     );
     if (fallback) {
       allPids = fallback.split("\n").map(Number).filter(Boolean);
@@ -387,7 +387,7 @@ async function getBinarySize(
   // Follow symlinks to get the real binary/script size
   const raw = await shellSafe(
     sandbox,
-    `stat -L -c %s "$(readlink -f "$(which agent-browser)")" 2>/dev/null || echo 0`,
+    `stat -L -c %s "$(readlink -f "$(which silicon-browser)")" 2>/dev/null || echo 0`,
   );
   return Number(raw) || 0;
 }
@@ -400,7 +400,7 @@ async function getDistributionSize(
     // Total size of the npm package + Playwright browser
     const npmPkg = await shellSafe(
       sandbox,
-      `du -sb "$(npm root -g)/agent-browser" 2>/dev/null | awk '{print $1}' || echo 0`,
+      `du -sb "$(npm root -g)/silicon-browser" 2>/dev/null | awk '{print $1}' || echo 0`,
     );
     const pwBrowser = await shellSafe(
       sandbox,
@@ -411,13 +411,13 @@ async function getDistributionSize(
     // Rust binary + Chrome for Testing (checks multiple possible cache paths)
     const binary = await shellSafe(
       sandbox,
-      `stat -L -c %s "$(readlink -f "$(which agent-browser)")" 2>/dev/null || echo 0`,
+      `stat -L -c %s "$(readlink -f "$(which silicon-browser)")" 2>/dev/null || echo 0`,
     );
     const chrome = await shellSafe(
       sandbox,
       [
         `size=0`,
-        `for d in "$HOME/.cache/agent-browser" "$HOME/.cache/ms-playwright" "$HOME/.agent-browser/chrome"; do`,
+        `for d in "$HOME/.cache/silicon-browser" "$HOME/.cache/ms-playwright" "$HOME/.silicon-browser/chrome"; do`,
         `  if [ -d "$d" ]; then size=$(du -sb "$d" 2>/dev/null | awk '{print $1}'); break; fi`,
         `done`,
         `echo $size`,
@@ -445,7 +445,7 @@ function formatKb(kb: number): string {
 type DaemonMode = "node" | "native";
 
 function daemonEnv(mode: DaemonMode): Record<string, string> {
-  return { AGENT_BROWSER_SESSION: `bench-${mode}` };
+  return { SILICON_BROWSER_SESSION: `bench-${mode}` };
 }
 
 async function agentBrowser(
@@ -454,7 +454,7 @@ async function agentBrowser(
   mode: DaemonMode,
 ): Promise<void> {
   const result = await sandbox.runCommand({
-    cmd: "agent-browser",
+    cmd: "silicon-browser",
     args,
     env: daemonEnv(mode),
   });
@@ -462,7 +462,7 @@ async function agentBrowser(
     const stderr = await result.stderr();
     const stdout = await result.stdout();
     throw new Error(
-      `agent-browser ${args.join(" ")} failed (exit ${result.exitCode}): ${stderr || stdout}`,
+      `silicon-browser ${args.join(" ")} failed (exit ${result.exitCode}): ${stderr || stdout}`,
     );
   }
 }
@@ -474,7 +474,7 @@ async function timedAgentBrowser(
 ): Promise<number> {
   const start = Date.now();
   const result = await sandbox.runCommand({
-    cmd: "agent-browser",
+    cmd: "silicon-browser",
     args,
     env: daemonEnv(mode),
   });
@@ -483,7 +483,7 @@ async function timedAgentBrowser(
     const stderr = await result.stderr();
     const stdout = await result.stdout();
     throw new Error(
-      `agent-browser ${args.join(" ")} failed (exit ${result.exitCode}): ${stderr || stdout}`,
+      `silicon-browser ${args.join(" ")} failed (exit ${result.exitCode}): ${stderr || stdout}`,
     );
   }
   return elapsed;
@@ -651,10 +651,10 @@ async function installChromiumDeps(sandbox: SandboxInstance) {
 }
 
 async function installNodeDaemon(sandbox: SandboxInstance) {
-  console.log("Installing agent-browser from npm (Node.js daemon)...");
-  await run(sandbox, "npm", ["install", "-g", "agent-browser"]);
-  await run(sandbox, "npx", ["agent-browser", "install"]);
-  const version = await shell(sandbox, "agent-browser --version 2>&1 || true");
+  console.log("Installing silicon-browser from npm (Node.js daemon)...");
+  await run(sandbox, "npm", ["install", "-g", "silicon-browser"]);
+  await run(sandbox, "npx", ["silicon-browser", "install"]);
+  const version = await shell(sandbox, "silicon-browser --version 2>&1 || true");
   console.log(`  version: ${version.trim()}`);
 }
 
@@ -677,7 +677,7 @@ async function installNativeDaemon(sandbox: SandboxInstance, branch: string) {
   const cloneStart = Date.now();
   await shell(
     sandbox,
-    `git clone --depth 1 --branch ${branch} ${REPO_URL} /tmp/agent-browser 2>&1`,
+    `git clone --depth 1 --branch ${branch} ${REPO_URL} /tmp/silicon-browser 2>&1`,
   );
   console.log(`  Cloned (${Math.round((Date.now() - cloneStart) / 1000)}s)`);
 
@@ -685,18 +685,18 @@ async function installNativeDaemon(sandbox: SandboxInstance, branch: string) {
   const buildStart = Date.now();
   await shell(
     sandbox,
-    "source $HOME/.cargo/env && cd /tmp/agent-browser/cli && cargo build --release 2>&1",
+    "source $HOME/.cargo/env && cd /tmp/silicon-browser/cli && cargo build --release 2>&1",
   );
   console.log(`  Built (${Math.round((Date.now() - buildStart) / 1000)}s)`);
 
-  const npmBinPath = (await shell(sandbox, "which agent-browser")).trim();
+  const npmBinPath = (await shell(sandbox, "which silicon-browser")).trim();
   console.log(`  Replacing ${npmBinPath} with native build...`);
   await shell(
     sandbox,
-    `sudo cp /tmp/agent-browser/cli/target/release/agent-browser ${npmBinPath}`,
+    `sudo cp /tmp/silicon-browser/cli/target/release/silicon-browser ${npmBinPath}`,
   );
 
-  const version = await shell(sandbox, "agent-browser --version 2>&1 || true");
+  const version = await shell(sandbox, "silicon-browser --version 2>&1 || true");
   console.log(`  version: ${version.trim()}`);
 }
 
@@ -818,7 +818,7 @@ function printResults(node: DaemonResults, native: DaemonResults) {
 // ---------------------------------------------------------------------------
 
 async function main() {
-  console.log("agent-browser Daemon Benchmark (Node.js vs Rust Native)");
+  console.log("silicon-browser Daemon Benchmark (Node.js vs Rust Native)");
   console.log(`Branch: ${config.branch}`);
   console.log(`Iterations: ${config.iterations} (+ ${config.warmup} warmup)`);
   console.log(`vCPUs: ${config.vcpus}\n`);

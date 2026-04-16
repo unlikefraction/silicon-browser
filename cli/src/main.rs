@@ -178,15 +178,15 @@ fn main() {
         env::set_var("MSYS2_ARG_CONV_EXCL", "*");
     }
 
-    // Native daemon mode: when AGENT_BROWSER_DAEMON is set, run as the daemon process
-    if env::var("AGENT_BROWSER_DAEMON").is_ok() {
+    // Native daemon mode: when SILICON_BROWSER_DAEMON is set, run as the daemon process
+    if env::var("SILICON_BROWSER_DAEMON").is_ok() {
         // Ignore SIGPIPE so the daemon isn't killed when the parent drops
         // the piped stderr handle after confirming the daemon is ready.
         #[cfg(unix)]
         unsafe {
             libc::signal(libc::SIGPIPE, libc::SIG_IGN);
         }
-        let session = env::var("AGENT_BROWSER_SESSION").unwrap_or_else(|_| "default".to_string());
+        let session = env::var("SILICON_BROWSER_SESSION").unwrap_or_else(|_| "default".to_string());
         let rt = tokio::runtime::Runtime::new().expect("Failed to create tokio runtime");
         rt.block_on(native::daemon::run_daemon(&session));
         return;
@@ -315,6 +315,7 @@ fn main() {
         allowed_domains: flags.allowed_domains.as_deref(),
         action_policy: flags.action_policy.as_deref(),
         confirm_actions: flags.confirm_actions.as_deref(),
+        incognito: flags.incognito,
         engine: flags.engine.as_deref(),
     };
     let daemon_result = match ensure_daemon(&flags.session, &daemon_opts) {
@@ -381,7 +382,7 @@ fn main() {
 
         if !ignored_flags.is_empty() && !flags.json {
             eprintln!(
-                "{} {} ignored: daemon already running. Use 'agent-browser close' first to restart with new options.",
+                "{} {} ignored: daemon already running. Use 'silicon-browser close' first to restart with new options.",
                 color::warning_indicator(),
                 ignored_flags.join(", ")
             );
@@ -604,6 +605,7 @@ fn main() {
         || flags.cli_headed  // User explicitly set --headed (even if false)
         || flags.executable_path.is_some()
         || flags.profile.is_some()
+        || flags.incognito
         || flags.state.is_some()
         || flags.proxy.is_some()
         || flags.args.is_some()
@@ -634,6 +636,11 @@ fn main() {
         // Add profile path if specified
         if let Some(ref profile_path) = flags.profile {
             cmd_obj.insert("profile".to_string(), json!(profile_path));
+        }
+
+        // Add incognito flag
+        if flags.incognito {
+            cmd_obj.insert("incognito".to_string(), json!(true));
         }
 
         // Add state path if specified
@@ -752,7 +759,7 @@ fn main() {
                             .and_then(|v| v.as_str())
                             .unwrap_or("");
 
-                        eprintln!("[agent-browser] Action requires confirmation:");
+                        eprintln!("[silicon-browser] Action requires confirmation:");
                         eprintln!("  {}: {}", category, desc);
                         eprint!("  Allow? [y/N]: ");
 

@@ -1,4 +1,4 @@
-# agent-browser
+# silicon-browser
 
 ## 0.20.1
 
@@ -37,9 +37,9 @@
 
 - 56bb92b: ### New Features
 
-  - **Browserless.io provider** -- Added browserless.io as a browser provider, supported in both Node.js and native daemon paths. Connect to remote Browserless instances with `--provider browserless` or `AGENT_BROWSER_PROVIDER=browserless`. Configurable via `BROWSERLESS_API_KEY`, `BROWSERLESS_API_URL`, and `BROWSERLESS_BROWSER_TYPE` environment variables. (#502, #746)
+  - **Browserless.io provider** -- Added browserless.io as a browser provider, supported in both Node.js and native daemon paths. Connect to remote Browserless instances with `--provider browserless` or `SILICON_BROWSER_PROVIDER=browserless`. Configurable via `BROWSERLESS_API_KEY`, `BROWSERLESS_API_URL`, and `BROWSERLESS_BROWSER_TYPE` environment variables. (#502, #746)
   - **`clipboard` command** -- Read from and write to the browser clipboard. Supports `read`, `write <text>`, `copy` (simulates Ctrl+C), and `paste` (simulates Ctrl+V) operations. (#749)
-  - **Screenshot output configuration** -- New global flags `--screenshot-dir`, `--screenshot-quality`, `--screenshot-format` and corresponding `AGENT_BROWSER_SCREENSHOT_DIR`, `AGENT_BROWSER_SCREENSHOT_QUALITY`, `AGENT_BROWSER_SCREENSHOT_FORMAT` environment variables for persistent screenshot settings. (#749)
+  - **Screenshot output configuration** -- New global flags `--screenshot-dir`, `--screenshot-quality`, `--screenshot-format` and corresponding `SILICON_BROWSER_SCREENSHOT_DIR`, `SILICON_BROWSER_SCREENSHOT_QUALITY`, `SILICON_BROWSER_SCREENSHOT_FORMAT` environment variables for persistent screenshot settings. (#749)
 
   ### Bug Fixes
 
@@ -84,7 +84,7 @@
 
 - 94521e7: ### New Features
 
-  - **Lightpanda browser engine support** - Added `--engine <name>` flag to select the browser engine (`chrome` by default, or `lightpanda`), implying `--native` mode. Configurable via `AGENT_BROWSER_ENGINE` environment variable (#646)
+  - **Lightpanda browser engine support** - Added `--engine <name>` flag to select the browser engine (`chrome` by default, or `lightpanda`), implying `--native` mode. Configurable via `SILICON_BROWSER_ENGINE` environment variable (#646)
   - **Dialog dismiss command** - Added support for `dismiss` subcommand in dialog command parsing (#605)
 
   ### Improvements
@@ -118,7 +118,7 @@
 
 ### Patch Changes
 
-- 01ac557: Added AGENT_BROWSER_HEADED environment variable support for running the browser in headed mode, and improved temporary profile cleanup when launching Chrome directly. Also includes documentation clarification that browser extensions work in both headed and headless modes.
+- 01ac557: Added SILICON_BROWSER_HEADED environment variable support for running the browser in headed mode, and improved temporary profile cleanup when launching Chrome directly. Also includes documentation clarification that browser extensions work in both headed and headless modes.
 
 ## 0.16.1
 
@@ -130,7 +130,7 @@
 
 ### Minor Changes
 
-- 05018b3: Added experimental native Rust daemon (`--native` flag, `AGENT_BROWSER_NATIVE=1` env, or `"native": true` in config). The native daemon communicates with Chrome directly via CDP, eliminating Node.js and Playwright dependencies. Supports 150+ commands with full parity to the default Node.js daemon. Includes WebDriver backend for Safari/iOS, CDP protocol codegen, request tracking, frame context management, and comprehensive e2e and parity tests.
+- 05018b3: Added experimental native Rust daemon (`--native` flag, `SILICON_BROWSER_NATIVE=1` env, or `"native": true` in config). The native daemon communicates with Chrome directly via CDP, eliminating Node.js and Playwright dependencies. Supports 150+ commands with full parity to the default Node.js daemon. Includes WebDriver backend for Safari/iOS, CDP protocol codegen, request tracking, frame context management, and comprehensive e2e and parity tests.
 
 ## 0.15.3
 
@@ -155,7 +155,7 @@
 ### Minor Changes
 
 - 2e38882: - Added security hardening: authentication vault, content boundary markers, domain allowlist, action policy, action confirmation, and output length limits.
-  - Added `--download-path` flag (and `AGENT_BROWSER_DOWNLOAD_PATH` env / `downloadPath` config key) to set a default download directory.
+  - Added `--download-path` flag (and `SILICON_BROWSER_DOWNLOAD_PATH` env / `downloadPath` config key) to set a default download directory.
   - Added `--selector` flag to `scroll` command for scrolling within specific container elements.
 
 ## 0.14.0
@@ -163,8 +163,8 @@
 ### Minor Changes
 
 - b7665e5: - Added `keyboard` command for raw keyboard input -- type with real keystrokes, insert text, and press shortcuts at the currently focused element without needing a selector.
-  - Added `--color-scheme` flag and `AGENT_BROWSER_COLOR_SCHEME` env var for persistent dark/light mode preference across browser sessions.
-  - Fixed IPC EAGAIN errors (os error 35/11) by adding backpressure-aware socket writes, command serialization, and lowering the default Playwright timeout to 25s (configurable via `AGENT_BROWSER_DEFAULT_TIMEOUT`).
+  - Added `--color-scheme` flag and `SILICON_BROWSER_COLOR_SCHEME` env var for persistent dark/light mode preference across browser sessions.
+  - Fixed IPC EAGAIN errors (os error 35/11) by adding backpressure-aware socket writes, command serialization, and lowering the default Playwright timeout to 25s (configurable via `SILICON_BROWSER_DEFAULT_TIMEOUT`).
   - Fixed remote debugging (CDP) reconnection.
   - Fixed state load failing when no browser is running.
   - Fixed `--annotate` flag warning appearing when not explicitly passed via CLI.
@@ -179,13 +179,13 @@
 
 ### Minor Changes
 
-- 69ffad0: Add annotated screenshots with the new --annotate flag, which overlays numbered labels on interactive elements and prints a legend mapping each label to its element ref. This enables multimodal AI models to reason about visual layout while using the same @eN refs for subsequent interactions. The flag can also be set via the AGENT_BROWSER_ANNOTATE environment variable.
+- 69ffad0: Add annotated screenshots with the new --annotate flag, which overlays numbered labels on interactive elements and prints a legend mapping each label to its element ref. This enables multimodal AI models to reason about visual layout while using the same @eN refs for subsequent interactions. The flag can also be set via the SILICON_BROWSER_ANNOTATE environment variable.
 
 ## 0.11.1
 
 ### Patch Changes
 
-- c6fc7df: Added documentation for command chaining with && across README, CLI help output, docs, and skill files, explaining how to efficiently chain multiple agent-browser commands in a single shell invocation since the browser persists via a background daemon.
+- c6fc7df: Added documentation for command chaining with && across README, CLI help output, docs, and skill files, explaining how to efficiently chain multiple silicon-browser commands in a single shell invocation since the browser persists via a background daemon.
 
 ## 0.11.0
 
@@ -227,7 +227,7 @@
 
 ### Minor Changes
 
-- 9d021bd: Add iOS Simulator and real device support for mobile Safari testing via Appium. New CLI commands include `device list` to show available simulators, `tap` and `swipe` for touch interactions, and the `--device` flag to specify which iOS device to use. Configure with `-p ios` provider flag or `AGENT_BROWSER_PROVIDER=ios` environment variable.
+- 9d021bd: Add iOS Simulator and real device support for mobile Safari testing via Appium. New CLI commands include `device list` to show available simulators, `tap` and `swipe` for touch interactions, and the `--device` flag to specify which iOS device to use. Configure with `-p ios` provider flag or `SILICON_BROWSER_PROVIDER=ios` environment variable.
 
 ## 0.8.10
 
@@ -294,7 +294,7 @@
 
 ### New Features
 
-- **Kernel cloud browser provider** - Connect to Kernel (https://kernel.sh) for remote browser infrastructure via `-p kernel` flag or `AGENT_BROWSER_PROVIDER=kernel`. Supports stealth mode, persistent profiles, and automatic profile find-or-create.
+- **Kernel cloud browser provider** - Connect to Kernel (https://kernel.sh) for remote browser infrastructure via `-p kernel` flag or `SILICON_BROWSER_PROVIDER=kernel`. Supports stealth mode, persistent profiles, and automatic profile find-or-create.
 - **Ignore HTTPS certificate errors** - New `--ignore-https-errors` flag for working with self-signed certificates and development environments
 - **Enhanced cookie management** - Extended `cookies set` command with `--url`, `--domain`, `--path`, `--httpOnly`, `--secure`, `--sameSite`, and `--expires` flags for setting cookies before page load
 
@@ -354,7 +354,7 @@
 
 - 316e649: ## New Features
 
-  - **Cloud browser providers** - Connect to Browserbase or Browser Use for remote browser infrastructure via `-p` flag or `AGENT_BROWSER_PROVIDER` env var
+  - **Cloud browser providers** - Connect to Browserbase or Browser Use for remote browser infrastructure via `-p` flag or `SILICON_BROWSER_PROVIDER` env var
   - **Persistent browser profiles** - Store cookies, localStorage, and login sessions across browser restarts with `--profile`
   - **Remote CDP WebSocket URLs** - Connect to remote browser services via WebSocket URL (e.g., `--cdp "wss://..."`)
   - **Download commands** - New `download` command and `wait --download` for file downloads with ref support
@@ -365,7 +365,7 @@
 
   - Screenshot command now supports refs and has improved error messages
   - WebSocket URLs work in `connect` command
-  - Fixed socket file location (uses `~/.agent-browser` instead of TMPDIR)
+  - Fixed socket file location (uses `~/.silicon-browser` instead of TMPDIR)
   - Windows binary path fix (.exe extension)
   - State load and path-based actions now show correct output messages
 

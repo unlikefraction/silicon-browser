@@ -1,11 +1,11 @@
 ---
 name: vercel-sandbox
-description: Run agent-browser + Chrome inside Vercel Sandbox microVMs for browser automation from any Vercel-deployed app. Use when the user needs browser automation in a Vercel app (Next.js, SvelteKit, Nuxt, Remix, Astro, etc.), wants to run headless Chrome without binary size limits, needs persistent browser sessions across commands, or wants ephemeral isolated browser environments. Triggers include "Vercel Sandbox browser", "microVM Chrome", "agent-browser in sandbox", "browser automation on Vercel", or any task requiring Chrome in a Vercel Sandbox.
+description: Run silicon-browser + Chrome inside Vercel Sandbox microVMs for browser automation from any Vercel-deployed app. Use when the user needs browser automation in a Vercel app (Next.js, SvelteKit, Nuxt, Remix, Astro, etc.), wants to run headless Chrome without binary size limits, needs persistent browser sessions across commands, or wants ephemeral isolated browser environments. Triggers include "Vercel Sandbox browser", "microVM Chrome", "silicon-browser in sandbox", "browser automation on Vercel", or any task requiring Chrome in a Vercel Sandbox.
 ---
 
 # Browser Automation with Vercel Sandbox
 
-Run agent-browser + headless Chrome inside ephemeral Vercel Sandbox microVMs. A Linux VM spins up on demand, executes browser commands, and shuts down. Works with any Vercel-deployed framework (Next.js, SvelteKit, Nuxt, Remix, Astro, etc.).
+Run silicon-browser + headless Chrome inside ephemeral Vercel Sandbox microVMs. A Linux VM spins up on demand, executes browser commands, and shuts down. Works with any Vercel-deployed framework (Next.js, SvelteKit, Nuxt, Remix, Astro, etc.).
 
 ## Dependencies
 
@@ -13,7 +13,7 @@ Run agent-browser + headless Chrome inside ephemeral Vercel Sandbox microVMs. A 
 pnpm add @vercel/sandbox
 ```
 
-The sandbox VM needs system dependencies for Chromium plus agent-browser itself. Use sandbox snapshots (below) to pre-install everything for sub-second startup.
+The sandbox VM needs system dependencies for Chromium plus silicon-browser itself. Use sandbox snapshots (below) to pre-install everything for sub-second startup.
 
 ## Core Pattern
 
@@ -47,7 +47,7 @@ function getSandboxCredentials() {
 async function withBrowser<T>(
   fn: (sandbox: InstanceType<typeof Sandbox>) => Promise<T>,
 ): Promise<T> {
-  const snapshotId = process.env.AGENT_BROWSER_SNAPSHOT_ID;
+  const snapshotId = process.env.SILICON_BROWSER_SNAPSHOT_ID;
   const credentials = getSandboxCredentials();
 
   const sandbox = snapshotId
@@ -63,8 +63,8 @@ async function withBrowser<T>(
       "-c",
       `sudo dnf clean all 2>&1 && sudo dnf install -y --skip-broken ${CHROMIUM_SYSTEM_DEPS.join(" ")} 2>&1 && sudo ldconfig 2>&1`,
     ]);
-    await sandbox.runCommand("npm", ["install", "-g", "agent-browser"]);
-    await sandbox.runCommand("npx", ["agent-browser", "install"]);
+    await sandbox.runCommand("npm", ["install", "-g", "silicon-browser"]);
+    await sandbox.runCommand("npx", ["silicon-browser", "install"]);
   }
 
   try {
@@ -82,21 +82,21 @@ The `screenshot --json` command saves to a file and returns the path. Read the f
 ```ts
 export async function screenshotUrl(url: string) {
   return withBrowser(async (sandbox) => {
-    await sandbox.runCommand("agent-browser", ["open", url]);
+    await sandbox.runCommand("silicon-browser", ["open", url]);
 
-    const titleResult = await sandbox.runCommand("agent-browser", [
+    const titleResult = await sandbox.runCommand("silicon-browser", [
       "get", "title", "--json",
     ]);
     const title = JSON.parse(await titleResult.stdout())?.data?.title || url;
 
-    const ssResult = await sandbox.runCommand("agent-browser", [
+    const ssResult = await sandbox.runCommand("silicon-browser", [
       "screenshot", "--json",
     ]);
     const ssPath = JSON.parse(await ssResult.stdout())?.data?.path;
     const b64Result = await sandbox.runCommand("base64", ["-w", "0", ssPath]);
     const screenshot = (await b64Result.stdout()).trim();
 
-    await sandbox.runCommand("agent-browser", ["close"]);
+    await sandbox.runCommand("silicon-browser", ["close"]);
 
     return { title, screenshot };
   });
@@ -108,19 +108,19 @@ export async function screenshotUrl(url: string) {
 ```ts
 export async function snapshotUrl(url: string) {
   return withBrowser(async (sandbox) => {
-    await sandbox.runCommand("agent-browser", ["open", url]);
+    await sandbox.runCommand("silicon-browser", ["open", url]);
 
-    const titleResult = await sandbox.runCommand("agent-browser", [
+    const titleResult = await sandbox.runCommand("silicon-browser", [
       "get", "title", "--json",
     ]);
     const title = JSON.parse(await titleResult.stdout())?.data?.title || url;
 
-    const snapResult = await sandbox.runCommand("agent-browser", [
+    const snapResult = await sandbox.runCommand("silicon-browser", [
       "snapshot", "-i", "-c",
     ]);
     const snapshot = await snapResult.stdout();
 
-    await sandbox.runCommand("agent-browser", ["close"]);
+    await sandbox.runCommand("silicon-browser", ["close"]);
 
     return { title, snapshot };
   });
@@ -134,29 +134,29 @@ The sandbox persists between commands, so you can run full automation sequences:
 ```ts
 export async function fillAndSubmitForm(url: string, data: Record<string, string>) {
   return withBrowser(async (sandbox) => {
-    await sandbox.runCommand("agent-browser", ["open", url]);
+    await sandbox.runCommand("silicon-browser", ["open", url]);
 
-    const snapResult = await sandbox.runCommand("agent-browser", [
+    const snapResult = await sandbox.runCommand("silicon-browser", [
       "snapshot", "-i",
     ]);
     const snapshot = await snapResult.stdout();
     // Parse snapshot to find element refs...
 
     for (const [ref, value] of Object.entries(data)) {
-      await sandbox.runCommand("agent-browser", ["fill", ref, value]);
+      await sandbox.runCommand("silicon-browser", ["fill", ref, value]);
     }
 
-    await sandbox.runCommand("agent-browser", ["click", "@e5"]);
-    await sandbox.runCommand("agent-browser", ["wait", "--load", "networkidle"]);
+    await sandbox.runCommand("silicon-browser", ["click", "@e5"]);
+    await sandbox.runCommand("silicon-browser", ["wait", "--load", "networkidle"]);
 
-    const ssResult = await sandbox.runCommand("agent-browser", [
+    const ssResult = await sandbox.runCommand("silicon-browser", [
       "screenshot", "--json",
     ]);
     const ssPath = JSON.parse(await ssResult.stdout())?.data?.path;
     const b64Result = await sandbox.runCommand("base64", ["-w", "0", ssPath]);
     const screenshot = (await b64Result.stdout()).trim();
 
-    await sandbox.runCommand("agent-browser", ["close"]);
+    await sandbox.runCommand("silicon-browser", ["close"]);
 
     return { screenshot };
   });
@@ -165,15 +165,15 @@ export async function fillAndSubmitForm(url: string, data: Record<string, string
 
 ## Sandbox Snapshots (Fast Startup)
 
-A **sandbox snapshot** is a saved VM image of a Vercel Sandbox with system dependencies + agent-browser + Chromium already installed. Think of it like a Docker image -- instead of installing dependencies from scratch every time, the sandbox boots from the pre-built image.
+A **sandbox snapshot** is a saved VM image of a Vercel Sandbox with system dependencies + silicon-browser + Chromium already installed. Think of it like a Docker image -- instead of installing dependencies from scratch every time, the sandbox boots from the pre-built image.
 
-This is unrelated to agent-browser's *accessibility snapshot* feature (`agent-browser snapshot`), which dumps a page's accessibility tree. A sandbox snapshot is a Vercel infrastructure concept for fast VM startup.
+This is unrelated to silicon-browser's *accessibility snapshot* feature (`silicon-browser snapshot`), which dumps a page's accessibility tree. A sandbox snapshot is a Vercel infrastructure concept for fast VM startup.
 
-Without a sandbox snapshot, each run installs system deps + agent-browser + Chromium (~30s). With one, startup is sub-second.
+Without a sandbox snapshot, each run installs system deps + silicon-browser + Chromium (~30s). With one, startup is sub-second.
 
 ### Creating a sandbox snapshot
 
-The snapshot must include system dependencies (via `dnf`), agent-browser, and Chromium:
+The snapshot must include system dependencies (via `dnf`), silicon-browser, and Chromium:
 
 ```ts
 import { Sandbox } from "@vercel/sandbox";
@@ -196,8 +196,8 @@ async function createSnapshot(): Promise<string> {
     "-c",
     `sudo dnf clean all 2>&1 && sudo dnf install -y --skip-broken ${CHROMIUM_SYSTEM_DEPS.join(" ")} 2>&1 && sudo ldconfig 2>&1`,
   ]);
-  await sandbox.runCommand("npm", ["install", "-g", "agent-browser"]);
-  await sandbox.runCommand("npx", ["agent-browser", "install"]);
+  await sandbox.runCommand("npm", ["install", "-g", "silicon-browser"]);
+  await sandbox.runCommand("npx", ["silicon-browser", "install"]);
 
   const snapshot = await sandbox.snapshot();
   return snapshot.snapshotId;
@@ -207,7 +207,7 @@ async function createSnapshot(): Promise<string> {
 Run this once, then set the environment variable:
 
 ```bash
-AGENT_BROWSER_SNAPSHOT_ID=snap_xxxxxxxxxxxx
+SILICON_BROWSER_SNAPSHOT_ID=snap_xxxxxxxxxxxx
 ```
 
 A helper script is available in the demo app:
@@ -238,9 +238,9 @@ Combine with Vercel Cron Jobs for recurring browser tasks:
 // app/api/cron/route.ts  (or equivalent in your framework)
 export async function GET() {
   const result = await withBrowser(async (sandbox) => {
-    await sandbox.runCommand("agent-browser", ["open", "https://example.com/pricing"]);
-    const snap = await sandbox.runCommand("agent-browser", ["snapshot", "-i", "-c"]);
-    await sandbox.runCommand("agent-browser", ["close"]);
+    await sandbox.runCommand("silicon-browser", ["open", "https://example.com/pricing"]);
+    const snap = await sandbox.runCommand("silicon-browser", ["snapshot", "-i", "-c"]);
+    await sandbox.runCommand("silicon-browser", ["close"]);
     return await snap.stdout();
   });
 
@@ -258,7 +258,7 @@ export async function GET() {
 
 | Variable | Required | Description |
 |---|---|---|
-| `AGENT_BROWSER_SNAPSHOT_ID` | No (but recommended) | Pre-built sandbox snapshot ID for sub-second startup (see above) |
+| `SILICON_BROWSER_SNAPSHOT_ID` | No (but recommended) | Pre-built sandbox snapshot ID for sub-second startup (see above) |
 | `VERCEL_TOKEN` | No | Vercel personal access token (for local dev; OIDC is automatic on Vercel) |
 | `VERCEL_TEAM_ID` | No | Vercel team ID (for local dev) |
 | `VERCEL_PROJECT_ID` | No | Vercel project ID (for local dev) |
@@ -277,4 +277,4 @@ The pattern works identically across frameworks. The only difference is where yo
 
 ## Example
 
-See `examples/environments/` in the agent-browser repo for a working app with the Vercel Sandbox pattern, including a sandbox snapshot creation script, streaming progress UI, and rate limiting.
+See `examples/environments/` in the silicon-browser repo for a working app with the Vercel Sandbox pattern, including a sandbox snapshot creation script, streaming progress UI, and rate limiting.

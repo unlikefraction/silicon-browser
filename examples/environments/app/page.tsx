@@ -336,14 +336,14 @@ export default function Home() {
             Sandbox snapshot not configured
           </AlertTitle>
           <AlertDescription className="text-[11px]">
-            Without a sandbox snapshot, the VM installs agent-browser +
+            Without a sandbox snapshot, the VM installs silicon-browser +
             Chromium on every request (~30s). Create one with{" "}
             <code className="text-[10px] bg-muted px-1 py-0.5 rounded">
               npx tsx scripts/create-snapshot.ts
             </code>{" "}
             and set{" "}
             <code className="text-[10px] bg-muted px-1 py-0.5 rounded">
-              AGENT_BROWSER_SNAPSHOT_ID
+              SILICON_BROWSER_SNAPSHOT_ID
             </code>{" "}
             for sub-second startup.
           </AlertDescription>
@@ -462,7 +462,7 @@ export default function Home() {
         <div className="px-4 md:px-6 h-12 flex items-center justify-between">
           <div className="flex items-center gap-3">
             <span className="text-sm font-semibold tracking-tight">
-              agent-browser
+              silicon-browser
             </span>
           </div>
           <div className="flex items-center gap-2">
@@ -479,7 +479,7 @@ export default function Home() {
               )}
             </button>
             <a
-              href="https://vercel.com/new/clone?repository-url=https%3A%2F%2Fgithub.com%2Fvercel-labs%2Fagent-browser%2Ftree%2Fmain%2Fexamples%2Fenvironments&project-name=agent-browser-environments&repository-name=agent-browser-environments"
+              href="https://vercel.com/new/clone?repository-url=https%3A%2F%2Fgithub.com%2Funlikefraction%2Fsilicon-browser%2Ftree%2Fmain%2Fexamples%2Fenvironments&project-name=silicon-browser-environments&repository-name=silicon-browser-environments"
               target="_blank"
               rel="noopener noreferrer"
             >

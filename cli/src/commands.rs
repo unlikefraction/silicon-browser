@@ -48,12 +48,12 @@ impl ParseError {
             }
             ParseError::MissingArguments { context, usage } => {
                 format!(
-                    "Missing arguments for: {}\nUsage: agent-browser {}",
+                    "Missing arguments for: {}\nUsage: silicon-browser {}",
                     context, usage
                 )
             }
             ParseError::InvalidValue { message, usage } => {
-                format!("{}\nUsage: agent-browser {}", message, usage)
+                format!("{}\nUsage: silicon-browser {}", message, usage)
             }
             ParseError::InvalidSessionName { name } => session_name_error(name),
         }
@@ -599,7 +599,7 @@ pub fn parse_command(args: &[String], flags: &Flags) -> Result<Value, ParseError
                 Some("save") => {
                     let name = rest.get(1).ok_or_else(|| ParseError::MissingArguments {
                         context: "auth save".to_string(),
-                        usage: "agent-browser auth save <name> --url <url> --username <user> --password <pass>",
+                        usage: "silicon-browser auth save <name> --url <url> --username <user> --password <pass>",
                     })?;
 
                     let mut url = None;
@@ -644,7 +644,7 @@ pub fn parse_command(args: &[String], flags: &Flags) -> Result<Value, ParseError
                                 if other.starts_with("--") {
                                     return Err(ParseError::InvalidValue {
                                         message: format!("unknown flag '{}' for auth save", other),
-                                        usage: "agent-browser auth save <name> --url <url> --username <user> --password <pass>",
+                                        usage: "silicon-browser auth save <name> --url <url> --username <user> --password <pass>",
                                     });
                                 }
                             }
@@ -654,17 +654,17 @@ pub fn parse_command(args: &[String], flags: &Flags) -> Result<Value, ParseError
 
                     let url_val = url.ok_or_else(|| ParseError::MissingArguments {
                         context: "auth save".to_string(),
-                        usage: "agent-browser auth save <name> --url <url> --username <user> --password <pass> [--password-stdin]",
+                        usage: "silicon-browser auth save <name> --url <url> --username <user> --password <pass> [--password-stdin]",
                     })?;
                     let user_val = username.ok_or_else(|| ParseError::MissingArguments {
                         context: "auth save".to_string(),
-                        usage: "agent-browser auth save <name> --url <url> --username <user> --password <pass> [--password-stdin]",
+                        usage: "silicon-browser auth save <name> --url <url> --username <user> --password <pass> [--password-stdin]",
                     })?;
 
                     if !password_stdin && password.is_none() {
                         return Err(ParseError::MissingArguments {
                             context: "auth save".to_string(),
-                            usage: "agent-browser auth save <name> --url <url> --username <user> --password <pass> [--password-stdin]",
+                            usage: "silicon-browser auth save <name> --url <url> --username <user> --password <pass> [--password-stdin]",
                         });
                     }
 
@@ -695,7 +695,7 @@ pub fn parse_command(args: &[String], flags: &Flags) -> Result<Value, ParseError
                 Some("login") => {
                     let name = rest.get(1).ok_or_else(|| ParseError::MissingArguments {
                         context: "auth login".to_string(),
-                        usage: "agent-browser auth login <name>",
+                        usage: "silicon-browser auth login <name>",
                     })?;
                     Ok(json!({ "id": id, "action": "auth_login", "name": name }))
                 }
@@ -703,14 +703,14 @@ pub fn parse_command(args: &[String], flags: &Flags) -> Result<Value, ParseError
                 Some("delete") | Some("remove") => {
                     let name = rest.get(1).ok_or_else(|| ParseError::MissingArguments {
                         context: "auth delete".to_string(),
-                        usage: "agent-browser auth delete <name>",
+                        usage: "silicon-browser auth delete <name>",
                     })?;
                     Ok(json!({ "id": id, "action": "auth_delete", "name": name }))
                 }
                 Some("show") => {
                     let name = rest.get(1).ok_or_else(|| ParseError::MissingArguments {
                         context: "auth show".to_string(),
-                        usage: "agent-browser auth show <name>",
+                        usage: "silicon-browser auth show <name>",
                     })?;
                     Ok(json!({ "id": id, "action": "auth_show", "name": name }))
                 }
@@ -725,14 +725,14 @@ pub fn parse_command(args: &[String], flags: &Flags) -> Result<Value, ParseError
         "confirm" => {
             let cid = rest.first().ok_or_else(|| ParseError::MissingArguments {
                 context: "confirm".to_string(),
-                usage: "agent-browser confirm <confirmation-id>",
+                usage: "silicon-browser confirm <confirmation-id>",
             })?;
             Ok(json!({ "id": id, "action": "confirm", "confirmationId": cid }))
         }
         "deny" => {
             let cid = rest.first().ok_or_else(|| ParseError::MissingArguments {
                 context: "deny".to_string(),
-                usage: "agent-browser deny <confirmation-id>",
+                usage: "silicon-browser deny <confirmation-id>",
             })?;
             Ok(json!({ "id": id, "action": "deny", "confirmationId": cid }))
         }

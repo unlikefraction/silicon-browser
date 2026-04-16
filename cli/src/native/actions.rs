@@ -117,13 +117,13 @@ impl DaemonState {
             webdriver_backend: None,
             backend_type: BackendType::Cdp,
             ref_map: RefMap::new(),
-            domain_filter: env::var("AGENT_BROWSER_ALLOWED_DOMAINS")
+            domain_filter: env::var("SILICON_BROWSER_ALLOWED_DOMAINS")
                 .ok()
                 .filter(|s| !s.is_empty())
                 .map(|s| DomainFilter::new(&s)),
             event_tracker: EventTracker::new(),
-            session_name: env::var("AGENT_BROWSER_SESSION_NAME").ok(),
-            session_id: env::var("AGENT_BROWSER_SESSION").unwrap_or_else(|_| "default".to_string()),
+            session_name: env::var("SILICON_BROWSER_SESSION_NAME").ok(),
+            session_id: env::var("SILICON_BROWSER_SESSION").unwrap_or_else(|_| "default".to_string()),
             tracing_state: TracingState::new(),
             recording_state: RecordingState::new(),
             event_rx: None,
@@ -508,7 +508,7 @@ pub async fn execute_command(cmd: &Value, state: &mut DaemonState) -> Value {
         }
     }
 
-    // Check AGENT_BROWSER_CONFIRM_ACTIONS (category-based, independent of policy file)
+    // Check SILICON_BROWSER_CONFIRM_ACTIONS (category-based, independent of policy file)
     if action != "confirm" && action != "deny" {
         if let Some(ref ca) = state.confirm_actions {
             if ca.requires_confirmation(action) {
@@ -756,9 +756,9 @@ pub async fn execute_command(cmd: &Value, state: &mut DaemonState) -> Value {
 
 async fn auto_launch(state: &mut DaemonState) -> Result<(), String> {
     let options = launch_options_from_env();
-    let engine = env::var("AGENT_BROWSER_ENGINE").ok();
+    let engine = env::var("SILICON_BROWSER_ENGINE").ok();
 
-    if let Ok(cdp) = env::var("AGENT_BROWSER_CDP") {
+    if let Ok(cdp) = env::var("SILICON_BROWSER_CDP") {
         let mgr = BrowserManager::connect_cdp(&cdp).await?;
         state.browser = Some(mgr);
         state.subscribe_to_browser_events();
@@ -767,7 +767,7 @@ async fn auto_launch(state: &mut DaemonState) -> Result<(), String> {
         return Ok(());
     }
 
-    if env::var("AGENT_BROWSER_AUTO_CONNECT").is_ok() {
+    if env::var("SILICON_BROWSER_AUTO_CONNECT").is_ok() {
         let mgr = BrowserManager::connect_auto().await?;
         state.browser = Some(mgr);
         state.subscribe_to_browser_events();
@@ -785,11 +785,11 @@ async fn auto_launch(state: &mut DaemonState) -> Result<(), String> {
 }
 
 fn launch_options_from_env() -> LaunchOptions {
-    let headed = env::var("AGENT_BROWSER_HEADED")
+    let headed = env::var("SILICON_BROWSER_HEADED")
         .map(|v| v == "1" || v == "true")
         .unwrap_or(false);
 
-    let extensions: Option<Vec<String>> = env::var("AGENT_BROWSER_EXTENSIONS").ok().map(|v| {
+    let extensions: Option<Vec<String>> = env::var("SILICON_BROWSER_EXTENSIONS").ok().map(|v| {
         v.split([',', '\n'])
             .map(|s| s.trim().to_string())
             .filter(|s| !s.is_empty())
@@ -798,14 +798,17 @@ fn launch_options_from_env() -> LaunchOptions {
 
     LaunchOptions {
         headless: !headed,
-        executable_path: env::var("AGENT_BROWSER_EXECUTABLE_PATH").ok(),
-        proxy: env::var("AGENT_BROWSER_PROXY").ok(),
-        proxy_bypass: env::var("AGENT_BROWSER_PROXY_BYPASS").ok(),
-        profile: env::var("AGENT_BROWSER_PROFILE").ok(),
-        allow_file_access: env::var("AGENT_BROWSER_ALLOW_FILE_ACCESS")
+        executable_path: env::var("SILICON_BROWSER_EXECUTABLE_PATH").ok(),
+        proxy: env::var("SILICON_BROWSER_PROXY").ok(),
+        proxy_bypass: env::var("SILICON_BROWSER_PROXY_BYPASS").ok(),
+        profile: env::var("SILICON_BROWSER_PROFILE").ok(),
+        incognito: env::var("SILICON_BROWSER_INCOGNITO")
             .map(|v| v == "1" || v == "true")
             .unwrap_or(false),
-        args: env::var("AGENT_BROWSER_ARGS")
+        allow_file_access: env::var("SILICON_BROWSER_ALLOW_FILE_ACCESS")
+            .map(|v| v == "1" || v == "true")
+            .unwrap_or(false),
+        args: env::var("SILICON_BROWSER_ARGS")
             .map(|v| {
                 v.split([',', '\n'])
                     .map(|s| s.trim().to_string())
@@ -814,23 +817,23 @@ fn launch_options_from_env() -> LaunchOptions {
             })
             .unwrap_or_default(),
         extensions,
-        storage_state: env::var("AGENT_BROWSER_STATE").ok(),
-        user_agent: env::var("AGENT_BROWSER_USER_AGENT").ok(),
-        ignore_https_errors: env::var("AGENT_BROWSER_IGNORE_HTTPS_ERRORS")
+        storage_state: env::var("SILICON_BROWSER_STATE").ok(),
+        user_agent: env::var("SILICON_BROWSER_USER_AGENT").ok(),
+        ignore_https_errors: env::var("SILICON_BROWSER_IGNORE_HTTPS_ERRORS")
             .map(|v| v == "1" || v == "true")
             .unwrap_or(false),
-        color_scheme: env::var("AGENT_BROWSER_COLOR_SCHEME").ok(),
-        download_path: env::var("AGENT_BROWSER_DOWNLOAD_PATH").ok(),
+        color_scheme: env::var("SILICON_BROWSER_COLOR_SCHEME").ok(),
+        download_path: env::var("SILICON_BROWSER_DOWNLOAD_PATH").ok(),
     }
 }
 
 fn daemon_state_from_env(state: &mut DaemonState) {
-    if let Ok(name) = env::var("AGENT_BROWSER_SESSION_NAME") {
+    if let Ok(name) = env::var("SILICON_BROWSER_SESSION_NAME") {
         if !name.is_empty() {
             state.session_name = Some(name);
         }
     }
-    if let Ok(domains) = env::var("AGENT_BROWSER_ALLOWED_DOMAINS") {
+    if let Ok(domains) = env::var("SILICON_BROWSER_ALLOWED_DOMAINS") {
         if !domains.is_empty() {
             state.domain_filter = Some(DomainFilter::new(&domains));
         }
@@ -906,7 +909,7 @@ async fn handle_launch(cmd: &Value, state: &mut DaemonState) -> Result<Value, St
         .get("executablePath")
         .and_then(|v| v.as_str())
         .map(String::from)
-        .or_else(|| std::env::var("AGENT_BROWSER_EXECUTABLE_PATH").ok());
+        .or_else(|| std::env::var("SILICON_BROWSER_EXECUTABLE_PATH").ok());
 
     let has_cdp = cdp_url.is_some() || cdp_port.is_some();
     super::browser::validate_launch_options(
@@ -971,7 +974,7 @@ async fn handle_launch(cmd: &Value, state: &mut DaemonState) -> Result<Value, St
         .get("engine")
         .and_then(|v| v.as_str())
         .map(String::from)
-        .or_else(|| env::var("AGENT_BROWSER_ENGINE").ok());
+        .or_else(|| env::var("SILICON_BROWSER_ENGINE").ok());
 
     let options = LaunchOptions {
         headless,
@@ -979,7 +982,7 @@ async fn handle_launch(cmd: &Value, state: &mut DaemonState) -> Result<Value, St
             .get("executablePath")
             .and_then(|v| v.as_str())
             .map(|s| s.to_string())
-            .or_else(|| env::var("AGENT_BROWSER_EXECUTABLE_PATH").ok()),
+            .or_else(|| env::var("SILICON_BROWSER_EXECUTABLE_PATH").ok()),
         proxy: cmd.get("proxy").and_then(|v| {
             v.as_str().map(|s| s.to_string()).or_else(|| {
                 v.get("server")
@@ -991,6 +994,10 @@ async fn handle_launch(cmd: &Value, state: &mut DaemonState) -> Result<Value, St
             .get("profile")
             .and_then(|v| v.as_str())
             .map(|s| s.to_string()),
+        incognito: cmd
+            .get("incognito")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false),
         allow_file_access: cmd
             .get("allowFileAccess")
             .and_then(|v| v.as_bool())
@@ -2736,7 +2743,7 @@ async fn handle_pdf(cmd: &Value, state: &DaemonState) -> Result<Value, String> {
         None => {
             let dir = dirs::home_dir()
                 .unwrap_or_else(std::env::temp_dir)
-                .join(".agent-browser")
+                .join(".silicon-browser")
                 .join("tmp")
                 .join("pdfs");
             let _ = std::fs::create_dir_all(&dir);
@@ -3637,7 +3644,7 @@ async fn handle_getbyrole(cmd: &Value, state: &mut DaemonState) -> Result<Value,
             const els = document.querySelectorAll('[role="{role}"], {role}');
             for (const el of els) {{
                 if ({name_match}) {{
-                    el.setAttribute('data-agent-browser-located', 'true');
+                    el.setAttribute('data-silicon-browser-located', 'true');
                     return true;
                 }}
             }}
@@ -3671,7 +3678,7 @@ async fn handle_getbyrole(cmd: &Value, state: &mut DaemonState) -> Result<Value,
         return Err(format!("No element found: {}", desc));
     }
 
-    let selector = "[data-agent-browser-located='true']";
+    let selector = "[data-silicon-browser-located='true']";
     let result = execute_subaction(cmd, state, selector).await;
 
     // Clean up the marker attribute
@@ -3679,7 +3686,7 @@ async fn handle_getbyrole(cmd: &Value, state: &mut DaemonState) -> Result<Value,
         if let Ok(sid) = browser.active_session_id() {
             let _ = browser
                 .evaluate(
-                    "document.querySelector('[data-agent-browser-located]')?.removeAttribute('data-agent-browser-located')",
+                    "document.querySelector('[data-silicon-browser-located]')?.removeAttribute('data-silicon-browser-located')",
                     None,
                 )
                 .await;
@@ -3723,7 +3730,7 @@ async fn handle_semantic_locator(
                 if (!label) return false;
                 const forId = label.getAttribute('for');
                 const target = forId ? document.getElementById(forId) : label.querySelector('input,select,textarea');
-                if (target) {{ target.setAttribute('data-agent-browser-located', 'true'); return true; }}
+                if (target) {{ target.setAttribute('data-silicon-browser-located', 'true'); return true; }}
                 return false;
             }})()"#,
             match_fn = match_fn,
@@ -3731,7 +3738,7 @@ async fn handle_semantic_locator(
         "placeholder" => format!(
             r#"(() => {{
                 const el = document.querySelector('input[placeholder={val}], textarea[placeholder={val}]');
-                if (el) {{ el.setAttribute('data-agent-browser-located', 'true'); return true; }}
+                if (el) {{ el.setAttribute('data-silicon-browser-located', 'true'); return true; }}
                 return false;
             }})()"#,
             val = serde_json::to_string(value).unwrap_or_default(),
@@ -3739,7 +3746,7 @@ async fn handle_semantic_locator(
         "alttext" => format!(
             r#"(() => {{
                 const el = document.querySelector('img[alt={val}], [alt={val}]');
-                if (el) {{ el.setAttribute('data-agent-browser-located', 'true'); return true; }}
+                if (el) {{ el.setAttribute('data-silicon-browser-located', 'true'); return true; }}
                 return false;
             }})()"#,
             val = serde_json::to_string(value).unwrap_or_default(),
@@ -3747,7 +3754,7 @@ async fn handle_semantic_locator(
         "title" => format!(
             r#"(() => {{
                 const el = document.querySelector('[title={val}]');
-                if (el) {{ el.setAttribute('data-agent-browser-located', 'true'); return true; }}
+                if (el) {{ el.setAttribute('data-silicon-browser-located', 'true'); return true; }}
                 return false;
             }})()"#,
             val = serde_json::to_string(value).unwrap_or_default(),
@@ -3755,7 +3762,7 @@ async fn handle_semantic_locator(
         "testid" => format!(
             r#"(() => {{
                 const el = document.querySelector('[data-testid={val}]');
-                if (el) {{ el.setAttribute('data-agent-browser-located', 'true'); return true; }}
+                if (el) {{ el.setAttribute('data-silicon-browser-located', 'true'); return true; }}
                 return false;
             }})()"#,
             val = serde_json::to_string(value).unwrap_or_default(),
@@ -3767,7 +3774,7 @@ async fn handle_semantic_locator(
                     const all = document.querySelectorAll('*');
                     for (const el of all) {{
                         if (el.children.length === 0 && {match_fn}) {{
-                            el.setAttribute('data-agent-browser-located', 'true');
+                            el.setAttribute('data-silicon-browser-located', 'true');
                             return true;
                         }}
                     }}
@@ -3801,13 +3808,13 @@ async fn handle_semantic_locator(
         return Err(format!("No element found by {} '{}'", strategy, value));
     }
 
-    let selector = "[data-agent-browser-located='true']";
+    let selector = "[data-silicon-browser-located='true']";
     let action_result = execute_subaction(cmd, state, selector).await;
 
     if let Some(ref browser) = state.browser {
         let _ = browser
             .evaluate(
-                "document.querySelector('[data-agent-browser-located]')?.removeAttribute('data-agent-browser-located')",
+                "document.querySelector('[data-silicon-browser-located]')?.removeAttribute('data-silicon-browser-located')",
                 None,
             )
             .await;
@@ -3857,7 +3864,7 @@ async fn handle_nth(cmd: &Value, state: &mut DaemonState) -> Result<Value, Strin
             const els = document.querySelectorAll({sel});
             const idx = {idx} < 0 ? els.length + {idx} : {idx};
             if (idx < 0 || idx >= els.length) return false;
-            els[idx].setAttribute('data-agent-browser-located', 'true');
+            els[idx].setAttribute('data-silicon-browser-located', 'true');
             return true;
         }})()"#,
         sel = serde_json::to_string(selector).unwrap_or_default(),
@@ -3890,13 +3897,13 @@ async fn handle_nth(cmd: &Value, state: &mut DaemonState) -> Result<Value, Strin
         ));
     }
 
-    let located = "[data-agent-browser-located='true']";
+    let located = "[data-silicon-browser-located='true']";
     let action_result = execute_subaction(cmd, state, located).await;
 
     if let Some(ref browser) = state.browser {
         let _ = browser
             .evaluate(
-                "document.querySelector('[data-agent-browser-located]')?.removeAttribute('data-agent-browser-located')",
+                "document.querySelector('[data-silicon-browser-located]')?.removeAttribute('data-silicon-browser-located')",
                 None,
             )
             .await;
@@ -5338,7 +5345,7 @@ mod tests {
 
     #[test]
     fn test_launch_options_from_env_defaults() {
-        let _guard = EnvGuard::new(&["AGENT_BROWSER_HEADED"]);
+        let _guard = EnvGuard::new(&["SILICON_BROWSER_HEADED"]);
         let opts = launch_options_from_env();
         assert!(opts.headless);
         assert!(opts.args.is_empty());
@@ -5347,12 +5354,12 @@ mod tests {
 
     #[test]
     fn test_launch_options_from_env_headed_flag() {
-        let _guard = EnvGuard::new(&["AGENT_BROWSER_HEADED"]);
-        _guard.set("AGENT_BROWSER_HEADED", "1");
+        let _guard = EnvGuard::new(&["SILICON_BROWSER_HEADED"]);
+        _guard.set("SILICON_BROWSER_HEADED", "1");
         let opts = launch_options_from_env();
         assert!(
             !opts.headless,
-            "AGENT_BROWSER_HEADED=1 should set headless=false"
+            "SILICON_BROWSER_HEADED=1 should set headless=false"
         );
     }
 
@@ -5406,7 +5413,7 @@ mod tests {
     #[tokio::test]
     async fn test_credentials_roundtrip_via_actions() {
         let _lock = crate::native::auth::AUTH_TEST_MUTEX.lock().unwrap();
-        let key_var = "AGENT_BROWSER_ENCRYPTION_KEY";
+        let key_var = "SILICON_BROWSER_ENCRYPTION_KEY";
         let original = std::env::var(key_var).ok();
         // SAFETY: AUTH_TEST_MUTEX serializes all test access so no concurrent mutation.
         unsafe { std::env::set_var(key_var, "a".repeat(64)) };

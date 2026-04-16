@@ -1,8 +1,8 @@
 /**
- * Create a Vercel Sandbox snapshot with agent-browser + Chromium pre-installed.
+ * Create a Vercel Sandbox snapshot with silicon-browser + Chromium pre-installed.
  *
  * Run once:   npx tsx scripts/create-snapshot.ts
- * Then set:   AGENT_BROWSER_SNAPSHOT_ID=<output id>
+ * Then set:   SILICON_BROWSER_SNAPSHOT_ID=<output id>
  *
  * Authentication (one of):
  *   - VERCEL_TOKEN + VERCEL_TEAM_ID + VERCEL_PROJECT_ID
@@ -12,7 +12,7 @@
  */
 
 import "dotenv/config";
-import { createSnapshot, getSandboxCredentials } from "../lib/agent-browser-sandbox";
+import { createSnapshot, getSandboxCredentials } from "../lib/silicon-browser-sandbox";
 
 const hasExplicitCreds = !!(
   process.env.VERCEL_TOKEN &&
@@ -38,13 +38,13 @@ console.log(
 );
 
 async function main() {
-  console.log("Creating Vercel Sandbox with agent-browser + Chromium...");
+  console.log("Creating Vercel Sandbox with silicon-browser + Chromium...");
   console.log("This takes ~30-60 seconds on first run.\n");
 
   const snapshotId = await createSnapshot();
 
   console.log("\nSnapshot created successfully!");
-  console.log(`\n  AGENT_BROWSER_SNAPSHOT_ID=${snapshotId}\n`);
+  console.log(`\n  SILICON_BROWSER_SNAPSHOT_ID=${snapshotId}\n`);
   console.log("Add this to your .env.local or Vercel environment variables.");
 }
 
