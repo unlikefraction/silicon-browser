@@ -1,82 +1,12 @@
 "use client";
 
-import { useEffect, useRef, useState, useCallback } from "react";
-
-// ASCII art — a stylized browser/chip shape
-const ASCII_ART = `
-                                        \`A000000$$$$$$$$$$$$$$$$
-                              \`\`\`\`\`\`\`\`\`\`\`\`\`8A000000000000$000000
-                        \`\`\`\`\`\`\`\`\`\`\`\`\`\`\`\`\`\`\`\`AA000000000000000000
-                      \`\`\`\`\`\`\`\`\`\`\`\`\`\`\`\`\`\`\`\`\`\`\`AA000000000000000000
-                    \`\`\`\`\`\`\`\`\`\`\`\`\`\`\`\`\`\`\`\`\`\`\`\`\`\`AAAA000000000000000
-                \`\`\`\`\`\`\`\`\`\`\`\`\`\`\`\`\`\`\`\`\`\`\`\`\`\`\`\`\`3AAAAAAAO0000AAAAAA
-              \`\`\`\`\`\`\`\`\`\`\`\`\`\`\`\`\`\`\`\`\`\`\`\`\`\`\`\`\`\`\`\`9AAAAAAAAAAAAAAAAAAA
-            \`\`\`\`\`\`\`\`\`\`\`\`\`\`\`\`\`\`\`\`\`\`\`\`\`\`\`\`\`\`\`\`\`88AAAAAAAAAAAAAAAA
-          \`\`\`\`\`\`\`\`\`\`\`\`\`\`\`\`\`\`\`\`\`\`\`\`\`\`\`\`\`\`\`\`\`\`\`88AAAAAAAAAAAAAAA
-        \`\`\`\`\`\`\`\`\`\`\`\`\`\`\`\`\`\`\`\`\`\`\`\`\`\`\`\`\`\`\`\`\`\`\`\`888888888AA888888\`
-      \`\`\`\`\`\`\`\`\`\`\`\`\`\`\`\`\`\`\`\`\`\`\`\`\`\`\`\`\`\`\`\`\`\`\`\`\`\`\`688888888888888888
-    \`\`\`\`\`\`\`\`\`\`\`\`\`\`\`\`\`\`\`\`\`\`\`\`\`\`\`\`\`\`\`\`\`\`\`\`\`\`\`\`\`6688888888888888886
-  \`\`\`\`\`\`\`\`\`\`\`\`\`\`\`\`\`\`\`\`\`\`\`\`\`\`\`\`\`\`\`\`\`\`\`\`\`\`\`\`\`\`\`6688888888888888
-\`\`\`\`\`\`\`\`\`\`\`\`\`\`\`\`\`\`\`\`\`\`\`\`\`\`\`\`\`\`\`\`\`\`\`\`\`\`\`\`\`\`\`\`\`\`666888888888888
-                      \`\`\`\`\`\`\`\`\`\`\`\`\`\`666666666666666
-                          \`\`\`\`\`\`\`\`#666666666666666
-                            \`\`\`\`\`9666666666666666
-                  \`\`\`\`\`\`\`\`\`\`\`\`\`\`\`\`\`\`\`\`999999966666666
-                                    \`999999999999999
-\`\`\`\`\`\`\`\`\`\`\`\`\`\`\`\`\`\`\`\`\`\`\`\`\`\`\`\`\`\`\`\`\`\`\`\`\`\`\`\`\`\`\`\`999999999999
-                                  \`\`\`\`#999999999999
-                                \`\`\`\`\`###9999999999
-                                  ############
-                                  ############
-                              \`444###########
-                          \`\`\`\`44444444444444##
-                          \`\`\`\`444444444444444
-                        \`\`\`\`\`\`555444444444444444
-                      \`\`\`\`\`\`\`5555555555554444
-                    \`\`\`\`\`\`\`\`\`555555555555555555
-                  \`\`\`\`\`\`2222555555555555555
-            \`222222222222222555555
-              \`\`\`\`222222222222222222222
-            \`\`\`\`IIIIIII2222222222222222222
-            \`\`\`\`IIIIIIIIIIIII222222222
-          \`\`\`\`I333IIIIIIIIIIIIIIIII222
-        \`\`\`\`\`3333333333333IIIIIIIIIIIIII
-      \`\`\`\`\`\`\`3333333333333333333IIIIIIIIII
-    \`\`\`\`\`\`\`\`=========33333333333333IIIIII
-  \`================33333333333333333II
- /\`\`\`\`\`\`\`\`\`\`\`\`\`\`\`\`\`77777777777===+======33333333333
-///11\`\`\`\`\`\`\`\`\`\`\`\`\`\`\`\`+++++++++++++77777  777============333333
-:////////1111111111111111111++++++++++++ 777777=============333
-::::///////////////111111111111++++++   7777777777===============`.trim();
+import { useState } from "react";
+import { Intro } from "@/components/intro";
 
 export default function Home() {
-  const [phase, setPhase] = useState<"intro" | "tagline" | "site">("intro");
+  const [showIntro, setShowIntro] = useState(true);
   const [copied, setCopied] = useState(false);
   const [skillCopied, setSkillCopied] = useState(false);
-  const asciiRef = useRef<HTMLPreElement>(null);
-
-  const shatter = useCallback(() => {
-    if (!asciiRef.current || phase !== "intro") return;
-
-    const text = asciiRef.current.textContent || "";
-    let html = "";
-    for (let i = 0; i < text.length; i++) {
-      const c = text[i];
-      if (c === "\n") { html += "\n"; continue; }
-      if (c === " " || c === "\u00A0") { html += " "; continue; }
-      const delay = (Math.random() * 1200).toFixed(0);
-      const dy = (400 + Math.random() * 400).toFixed(0);
-      const dx = ((Math.random() - 0.5) * 300).toFixed(0);
-      const rot = ((Math.random() - 0.5) * 200).toFixed(0);
-      const dur = (1.0 + Math.random() * 0.8).toFixed(2);
-      const escaped = c === "<" ? "&lt;" : c === ">" ? "&gt;" : c === "&" ? "&amp;" : c;
-      html += '<span class="char-fall" style="--delay:' + delay + 'ms;--dy:' + dy + 'px;--dx:' + dx + 'px;--rot:' + rot + 'deg;--dur:' + dur + 's">' + escaped + '</span>';
-    }
-    asciiRef.current.innerHTML = html;
-
-    setTimeout(() => setPhase("tagline"), 1500);
-    setTimeout(() => setPhase("site"), 4000);
-  }, [phase]);
 
   const copyInstall = () => {
     navigator.clipboard.writeText("npm install -g silicon-browser && silicon-browser install");
@@ -97,27 +27,11 @@ export default function Home() {
 
   return (
     <>
-      {/* ── INTRO ── */}
-      {phase !== "site" && (
-        <div className={"intro-screen" + (phase === "tagline" ? " hidden" : "")} onClick={shatter}>
-          <div className="ascii-container">
-            <pre ref={asciiRef}>{ASCII_ART}</pre>
-            <div className="click-hint">click</div>
-          </div>
-        </div>
-      )}
-
-      {/* ── TAGLINE ── */}
-      {phase === "tagline" && (
-        <div className="tagline-screen visible">
-          <div className="tagline-text">
-            most reliable browser cli for your silicon
-          </div>
-        </div>
-      )}
+      {/* ── INTRO SEQUENCE ── */}
+      {showIntro && <Intro onDone={() => setShowIntro(false)} />}
 
       {/* ── MAIN SITE ── */}
-      <div className={"main-site" + (phase === "site" ? " visible" : "")}>
+      <div className={"main-site" + (!showIntro ? " visible" : "")}>
 
         {/* Hero */}
         <div className="hero">
