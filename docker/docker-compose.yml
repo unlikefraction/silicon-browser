@@ -63,12 +63,13 @@ services:
       - ../cli:/build
       - ../bin:/output
     environment:
-      - TARGET=$${TARGET:-x86_64-unknown-linux-gnu}
-      - OUTPUT_NAME=$${OUTPUT_NAME:-silicon-browser-linux-x64}
+      TARGET: x86_64-unknown-linux-gnu
+      OUTPUT_NAME: silicon-browser-linux-x64
     command: |
       -c '
-        cargo zigbuild --release --target $$TARGET
-        cp /build/target/$$TARGET/release/silicon-browser* /output/$$OUTPUT_NAME
-        chmod +x /output/$$OUTPUT_NAME 2>/dev/null || true
+        set -e
+        cargo zigbuild --release --target "$$TARGET"
+        cp "/build/target/$$TARGET/release/silicon-browser" "/output/$$OUTPUT_NAME"
+        chmod +x "/output/$$OUTPUT_NAME" 2>/dev/null || true
         echo "✓ Built $$OUTPUT_NAME"
       '
