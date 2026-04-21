@@ -1,10 +1,11 @@
 {
   "name": "silicon-browser",
-  "version": "0.25.5",
+  "version": "0.25.6",
   "description": "The most reliable browser for your AI agent — stealth-first, terminal-native",
   "type": "module",
   "files": [
     "bin",
+    "!bin/.install-method",
     "scripts",
     "skill-data",
     "skills"

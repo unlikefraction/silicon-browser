@@ -1958,7 +1958,7 @@ dependencies = [
 
 [[package]]
 name = "silicon-browser"
-version = "0.25.5"
+version = "0.25.6"
 dependencies = [
  "aes-gcm",
  "async-trait",
