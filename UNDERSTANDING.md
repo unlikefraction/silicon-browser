@@ -21,6 +21,9 @@ login -> (scoped access) -> list profiles available or use incognito (no profile
 			-> start a new session with name + description + ttl
 			-> list previous runs & get the recording + sb commands run in that session.
 
+login:
+carbons & silicons can login using `silicon-iam`. both the UI and CLI support auth.
+
 recordings:
 we should have a visual recording (stored in private briefcase of the silicon / carbon that initiated that session)
 if a silicon started it, then also a replayable log of sb commands run in that session.
@@ -74,7 +77,7 @@ use browser. name and description exist so the recording is findable later.
 
 `sb session ls --filter "..."` prints ids.
 `sb session show {sessionid}` profile, location, name, description, status, started, ttl left, cost so far.
-`sb session live {sessionid}` a link to watch or take over a session already running.
+`sb session live {sessionid}` a link to watch or take over a session already running. this link is on silicon browser itself. `browser.teamofsilicons.com/...`
 `sb session logs {sessionid} --date DD-MM-YYYY` every sb command that ran in it, in order. kept as `{sessionid}-{DD-MM-YYYY}`. defaults to today.
 `sb session end {sessionid} --note "..."` stops and stores it. one that hits its ttl ends itself with
 the note `ttl reached`.
@@ -115,9 +118,30 @@ and both cost $0
 
 tiny fish has their own cli as well. but we'll not use that. we'll route all the traffic via silicon browser backend. this will help us log & manage rate limits.
 
-`sb search ...` & `sb fetch ...`
+`sb search "{query}" --purpose "..." [--flags]`
+finds the urls worth reading. returns ranked results, not pages.
+  --purpose "..."                 what you are actually after, up to 2000 chars. results rank on it.
+  --type web/news/research        defaults to web.
+  --include-domains [...]         / --exclude-domains [...]
+  --location {country} --language {code}
+  --recency {minutes}             or --after DD-MM-YYYY / --before DD-MM-YYYY
+  --pub-year-min / --pub-year-max research only
+  --page 0-10
 
-expose all options available via the api over in the documentation.
+`sb fetch [url,url,...] --purpose "..." [--flags]`
+reads them. 10 urls a call upstream, so we batch and queue anything larger rather than erroring.
+  --purpose "..."                 what to keep from the page
+  --format markdown/html/json     defaults to markdown
+  --links / --image-links         include hrefs / img srcs. off by default.
+  --ttl {seconds}                 cache freshness. 0 forces a live fetch.
+  --timeout {ms}                  per url, up to 110000
+  --include-selectors [...]       / --exclude-selectors [...] css, up to 20
+a url that errors is not billed and does not count against the limit.
+
+the limit is per api key, not per caller, and the api returns 429 past it. one key shared across the
+org means one silicon running a sweep starves everybody else. so the backend holds a pool of keys and
+queues per silicon: a burst waits its turn instead of failing. this is the main reason we route
+through the backend at all, alongside logging.
 
 
 [sb cli]
@@ -139,4 +163,55 @@ then `sb run --help` to see how to use the session.
 ^ this will make it such that the silicon will get information as needed. we'll bunch up sb run commands into categories as well so its easy to find information & doesn't fill the context.
 
 
-give a similar overview for search & fetch as well.
+for search-and-fetch:
+"""
+`sb search "{query}" --purpose "..."` <- find the urls worth reading. returns results, not pages.
+`sb fetch [url,url,...] --purpose "..."` <- read them as text, in one call.
+then `sb search --help` / `sb fetch --help` for filters, formats, dates and selectors.
+"""
+no profile, no session, no setup. this is the default branch for anything read-only. remote-browser
+is for interaction.
+
+note on grammar: `sb run`, `sb search` and `sb fetch` are top level verbs with no service in front of
+them, because they are the three things a silicon actually does all day. everything else stays
+`{service} {verb}`.
+
+
+
+# codebase
+structure it in modules. each part here becomes a module. nesting module is possible into submodules. define modules based on how i've seperated ideas here.
+create a shared dir for shared code.
+keep the code to a minimum. if it can be done in less, lets do it in less.
+we are following a event/callback driven code style.
+publish the libs.
+follow a sync approach when its for simple tasks, event/callback driven > async for complex. async otherwise.
+write test cases, mention what you're testing a test-group, and then at the end, give results.
+all tools you need are installed natively and feel free to install any package.
+aws cli for hosting.
+the backend will be on `backend.browser.teamofsilicons.com` and frontend on `browser.teamofsilicons.com`
+namecheap cli for handing DNS (https://namecheap-cli.vercel.app/)
+
+# The Rust package & cli using that rust package are first hand client with an always running deamon if needed in the background. the UI will be a subset of the cli. make sure everything works via the CLI first, and then we'll make the UI. Everyone should be able to use the CLI/Rust Package (carbons, silicons, org, access keys, api keys, read, write, patch, delete, everything).
+
+For how this CLI is built, rust as the programming language, but can use anything under the hood that is needed. Maybe rust, or node, or shell, as and when the work comes. That is decided by the implementor based on the work. If something requirs a UI (like graph, live, video, images etc). for that the UI has an endpoint that can be viewed/used/downloaded and the cli gives the link to that.
+
+The primary Interface is the Rust Package. CLI is built using the Rust Package only and doesn't have any feature that the Rust package does not.
+
+if you need a local store for auth or something else, use ~/.{appname}/ dir
+
+Rust package itself is stateless. i.e, same code on any machine will give the same expected output.
+it requires an auth object to be created and uses the auth object for all further queries. Say it doesn't authenticate everytime if locally an auth token is available. but that is a stateless optimization.
+
+CLI will be stateful. i.e it remembers the last command run. auth is managed by the cli as a single logged in user. CLI is built on top of the stateless Rust package.
+
+
+# codebase thinking
+- writing code is not just about implementation, maintainability & elegance matter as much.
+- test and try things before you implement. try a simpler version to see how it works, what works what doesn't work. think in extremes.
+- smaller code is reliable code. write less.
+- writing once is not enough. its v0.0, iterate. make it smaller, faster, reliable, resilient, elegant, & largely maintainable.
+- use pre installed libraries before you need to reach out for external onces. feel free to use them when you want.
+- codebase is a form of art.
+- use workflows well... not just for writing code, but thinking, evaluating, testing, researching, organizing, and critiquing yourself.
+- run agents to get critiques on what you have done. what you have thought.
+- don't implement more than this UNDERSTANDING.md asks you until its truely needed.
