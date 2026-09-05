@@ -1,5 +1,11 @@
 Silicon Browser:
-We're building a managed auth & access layer on top of browser-use; a cli alias of agent-browser to run with `sb ...`. and a setup command that sets up everything.
+We're building a managed auth & access layer on top of browser-use; a cli that runs agent-browser underneath to run browser. it wraps it with other commands like `sb ...`. and a setup command that sets up everything.
+
+Architecture clarification (2026-09-06): `sb` is a local usability wrapper. The Rust client obtains auth, profile/session metadata, the CDP capability and live links from our backend. The CLI runs the native controller locally and connects directly to the remote browser over CDP. Browser actions and their outputs never run on, or pass through, our backend. The frontend also connects its live iframe directly to the returned viewer. Completed command metadata is reported separately to our backend; stdout/stderr remain local. Reports are cooperative and cannot prove all direct browser activity.
+
+The dedicated AWS daemon owns the auth/access and lifecycle control plane, usage metadata, command-log storage, and completed-recording delivery to Briefcase. Existing search/fetch requests still use its shared provider-key pool and fair queue as described below. It needs no local browser or controller runtime. The frontend is a minimal SolidJS/TypeScript app in IAM's visual style, hosted on Vercel. User-facing commands and screens use Silicon Browser branding; provider integrations remain internal.
+
+Target scale: 500 simultaneous users, with browser action and live-view bandwidth going directly to the remote provider. Local credentials and remembered state are partitioned by normalized backend URL so simultaneous users and environments cannot borrow one another's auth. A direct CDP/live capability remains valid until its remote session ends; changing API authorization cannot retract an already-issued provider URL.
 
 we'll use silicon iam to authenticate carbons & silicons. primary users of sb will be silicons and occasionally carbons to authenticate or pass captchas.
 
@@ -42,7 +48,7 @@ profiles have a unique fingerprint, a set proxy location and always uses proxy.
 sb command:
 it is a superset of agent-browser cli command. any agent-browser cli command is a valid sb command.
 sb provides a reveal as needed documentation.
-it reads an env variable (SB_AUTHTOKEN) and passes that everytime to sb backend.
+it reads an env variable (SB_AUTHTOKEN) for authenticated backend metadata requests. Browser commands use the authorized direct CDP connection locally; they do not send the IAM token to the browser provider.
 
 commands:
 same grammar as si - `sb {service} {verb} [{target}] [{content}] [--flags]`, verb always second.
@@ -51,7 +57,7 @@ same `--filter "stage -> stage"`, each service listing its own is: and has: belo
 `sb` on its own prints who you are, the org you are in, and the services you can reach.
 `sb {service}` prints that service's verbs. `--help` on anything prints the long form.
 
-`sb setup` the only command with no service. installs the browser, reads or prompts for SB_AUTHTOKEN, picks the org, and prints whatever is still missing. safe to run twice.
+`sb setup` the only command with no service. installs the native local controller (no local Chromium), reads or prompts for SB_AUTHTOKEN, picks the org, and prints whatever is still missing. safe to run twice.
 
 
 [profile]
@@ -92,11 +98,11 @@ for documentation, replace "agent-browser" with "sb run {sessionid}"
 
 [recording]
 
-a visual recording per session, written to the private briefcase of whoever started it (`private/{siliconid}/sb/{sessionid}`). if a silicon started it, the sb command log sits beside it.
+a visual recording per session, written to the private briefcase of whoever started it. the file stored directory is automatically handled by briefcase and not changeable. if a silicon started it, the sb command log sits beside it. this is done by connecting with briefcase over an OBO.
 
 `sb recording ls --filter "..."` prints session names & ids. contains: matches name and description.
 `sb recording show {sessionid}` briefcase link, duration, size.
-`sb recording rm {sessionid}` to the briefcase trash. 45 days, then gone.
+`sb recording rm {sessionid}` hides the Browser recording and cancels pending delivery. Briefcase owns its directory and retention; OBO cannot delete files, so this does not delete the remote recording or promise a 45-day purge.
 is: mine, shared
 
 
@@ -189,6 +195,7 @@ write test cases, mention what you're testing a test-group, and then at the end,
 all tools you need are installed natively and feel free to install any package.
 aws cli for hosting.
 the backend will be on `backend.browser.teamofsilicons.com` and frontend on `browser.teamofsilicons.com`
+the backend runs as a native binary daemon on its own AWS host. the frontend is hosted separately on Vercel, not served by that backend. containerization is not required.
 namecheap cli for handing DNS (https://namecheap-cli.vercel.app/)
 
 # The Rust package & cli using that rust package are first hand client with an always running deamon if needed in the background. the UI will be a subset of the cli. make sure everything works via the CLI first, and then we'll make the UI. Everyone should be able to use the CLI/Rust Package (carbons, silicons, org, access keys, api keys, read, write, patch, delete, everything).
@@ -203,6 +210,9 @@ Rust package itself is stateless. i.e, same code on any machine will give the sa
 it requires an auth object to be created and uses the auth object for all further queries. Say it doesn't authenticate everytime if locally an auth token is available. but that is a stateless optimization.
 
 CLI will be stateful. i.e it remembers the last command run. auth is managed by the cli as a single logged in user. CLI is built on top of the stateless Rust package.
+
+IAM Documentation (https://github.com/teamofsilicons/silicon-iam/tree/main/docs)
+Never ask for credentials, always ask for short lived token.
 
 
 # codebase thinking

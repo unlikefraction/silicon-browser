@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 355 355" fill="#181818" role="img" aria-label="Team of Silicons">
+  <!-- Four edge-centre squares (N/E/S/W) at the extremes of the 355 field. -->
+  <rect y="131.865" width="91.286" height="91.287"/>
+  <rect x="131.86" width="91.286" height="91.287"/>
+  <rect x="263.718" y="131.865" width="91.286" height="91.287"/>
+  <rect x="131.86" y="263.717" width="91.286" height="91.287"/>
+  <!-- Four corner squares, inset by one 40.569 gutter. -->
+  <rect x="40.569" y="40.568" width="91.286" height="91.287"/>
+  <rect x="223.139" y="40.568" width="91.286" height="91.287"/>
+  <rect x="40.569" y="223.141" width="91.286" height="91.287"/>
+  <rect x="223.139" y="223.141" width="91.286" height="91.287"/>
+  <!-- The single 45-degree event: a 139.285 square rotated about the centre. -->
+  <rect width="139.285" height="139.285" transform="matrix(0.7071 -0.7071 0.7071 0.7071 78.569 177.502)"/>
+</svg>

@@ -1,0 +1,52 @@
+name: ci
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  RUSTFLAGS: -Dwarnings
+
+jobs:
+  frontend:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Frontend dependencies
+        run: npm ci --prefix frontend
+      - name: Frontend build
+        run: npm run build --prefix frontend
+      - name: Frontend contracts
+        run: npm test --prefix frontend
+
+  rust:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.98
+        with:
+          components: clippy,rustfmt
+      - uses: Swatinem/rust-cache@v2
+      - name: Formatting
+        run: cargo fmt --all -- --check
+      - name: Tests
+        run: cargo test --workspace --all-targets
+      - name: Lints
+        run: cargo clippy --workspace --all-targets -- -D warnings
+      - name: Documentation
+        env:
+          RUSTDOCFLAGS: -Dwarnings
+        run: cargo doc --workspace --no-deps
+      - name: Publishable shared crate
+        run: cargo package -p silicon-browser-shared --no-verify
+      - name: Publishable client crate
+        # The client depends on the shared crate at the same release version.
+        # Full packaging becomes available after publishing shared first.
+        run: cargo package -p silicon-browser --list

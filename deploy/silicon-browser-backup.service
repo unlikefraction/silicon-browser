@@ -1,0 +1,14 @@
+[Unit]
+Description=Back up Silicon Browser metadata
+After=silicon-browser.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/python3 /opt/silicon-browser/current/backup.py
+UMask=0077
+Nice=10
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/silicon-browser
