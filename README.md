@@ -7,12 +7,16 @@ Browser commands execute on the caller's machine and connect directly to the rem
 ## Try the CLI
 
 ```sh
-cargo install --path crates/cli
+cargo install silicon-browser-cli --version 0.1.0 --locked
 sb --help
 sb --help remote-browser
 sb --help search-and-fetch
 sb setup --org YOUR_ORG_ID
 ```
+
+The Cargo installation requires Rust 1.98 or later. [Download prebuilt macOS and Linux binaries](https://github.com/unlikefraction/silicon-browser/releases/tag/managed-v0.1.0) to install without a Rust toolchain. Extract the archive, verify its SHA-256 against `SHA256SUMS`, and put `sb` on your `PATH`. For a source checkout, use `cargo install --path crates/cli`.
+
+The dashboard is live at [browser.teamofsilicons.com](https://browser.teamofsilicons.com). The CLI uses its production API by default. The published [Rust client](https://crates.io/crates/silicon-browser) is available with `cargo add silicon-browser@0.1.0`.
 
 Setup accepts a fresh org-bound IAM `oac_` token interactively or through `SB_AUTHTOKEN`. It exchanges the one-shot token and never persists it. An `oat_` in that variable is an explicit invocation-only bearer override. Setup installs the pinned native controller with integrity checks; it does not install local Chromium, Node or npm. Running setup again is safe.
 
@@ -50,6 +54,8 @@ sb recording ls --filter "is:incognito -> contains:checkout"
 ```
 
 `is:shared` means visible but owned by someone else, including visibility inherited from a profile ACL. `sb usage show --org` returns the organization aggregate and accepts a `between:` window; individual usage remains scoped to visible sessions.
+
+`sb usage limits` shows the provider account's current concurrent-browser entitlement. The dashboard's Usage page displays the same value; successful results are cached for at most one minute, so a plan change requires no Browser redeployment.
 
 ## Run the backend and frontend
 

@@ -33,7 +33,7 @@ Earlier real Carbon/Silicon sessions proved automatic native recordings, recipie
 
 The real [300 MiB upload](BRIEFCASE_300_MIB_CLI_RETEST.md) exercised upload, full download, range boundaries and private-owner access with about 18 MiB peak client memory inside the 2 GiB sandbox. The [slow-transfer test](BRIEFCASE_SLOW_UPLOAD_RETEST.md) independently exposed the proof deadline.
 
-The earlier 306-Rust/19-frontend totals belong to the September 5 architecture and are preserved in its dated report. They are not presented as validation of the rewritten frontend. Final workspace builds, realistic local-CDP use, SolidJS sign-in/live use and deployed domain/webhook checks should be recorded with their own actual results.
+The earlier 306-Rust/19-frontend totals belong to the September 5 architecture and are preserved in its dated report. Final implementation checks passed 318 Rust tests and 18 frontend tests, along with formatting, warning-denied Clippy and documentation builds. Real production local-CDP commands, verified file-byte transfers, SolidJS sign-in/live use, native recording delivery, domain TLS and actual IAM webhook deliveries are recorded in [the deployment verification](PRODUCTION_DEPLOYMENT_2026_09_06.md).
 
 ## Security and operational boundaries
 
