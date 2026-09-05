@@ -2,7 +2,7 @@
 
 ## Deployed services
 
-- Dashboard: <https://browser.teamofsilicons.com>, SolidJS/TypeScript/Vite on Vercel. Deployment `dpl_7jTc4fGE8rdhkgugb8Qg7f14ZcAd`, with the shared IAM mark and requested Space Station wordmark.
+- Dashboard: <https://browser.teamofsilicons.com>, SolidJS/TypeScript/Vite on Vercel. Deployment `dpl_3AooHYKJb6a1QmPcGwsUQ7fXHinM`, with the shared Team of Silicons logo and Browser wordmark.
 - API: <https://backend.browser.teamofsilicons.com>, native ARM64 daemon on a private EC2 `t4g.medium` in `us-east-1`, behind the existing HTTPS ALB. CloudFormation stack `silicon-browser-production`.
 - Current native release: `20260905-ab77a4c54d708b50`. Persistent SQLite WAL storage, encrypted retained disk, private runtime configuration from Secrets Manager, automatic service restart and fifteen-minute online backups.
 - Both domains pass TLS validation. The ALB target is healthy. Public dashboard HTML uses no-store caching, hashed assets are immutable, and the live iframe connects directly to the remote viewer.

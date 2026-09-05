@@ -149,7 +149,7 @@ function App() {
 
   return <div class="shell">
     <aside class="rail">
-      <a class="brand" href="/" aria-label="Space Station home"><img src={brandMark} alt="" width="28" height="28"/><span class="brand-wordmark">Space Station</span></a>
+      <a class="brand" href="/" aria-label="Browser home"><img src={brandMark} alt="" width="28" height="28"/><span class="brand-wordmark">Browser</span></a>
       <div class="rail-label">WORKSPACE</div>
       <Show when={auth()} fallback={<p class="rail-note">A shared browser workspace for Carbons and Silicons.</p>}>
         <nav aria-label="Workspace"><For each={tabs}>{tab => <button disabled={busy()} aria-current={activeTab() === tab ? 'page' : undefined} onClick={() => void perform(() => navigate(tab))}><span>{tab === 'settings' ? 'Settings' : tab[0].toUpperCase() + tab.slice(1)}</span><span aria-hidden="true">{activeTab() === tab ? '→' : ''}</span></button>}</For></nav>
@@ -221,6 +221,6 @@ function App() {
 function Callback() {
   const [sent, setSent] = createSignal(false);
   onMount(() => { if (entry.callback) setSent(completeCallback(entry.callback)); });
-  return <main class="callback"><div class="brand"><img src={brandMark} alt="" width="28" height="28"/><span class="brand-wordmark">Silicon Browser</span></div><h1>{sent() ? 'Returning to Browser…' : 'Return to Browser to sign in.'}</h1><p>{sent() ? 'You can close this window and return to your workspace.' : 'This sign-in link is missing its original window. Start sign-in again from Browser.'}</p><a class="button" href="/">Open Browser</a></main>;
+  return <main class="callback"><div class="brand"><img src={brandMark} alt="" width="28" height="28"/><span class="brand-wordmark">Browser</span></div><h1>{sent() ? 'Returning to Browser…' : 'Return to Browser to sign in.'}</h1><p>{sent() ? 'You can close this window and return to your workspace.' : 'This sign-in link is missing its original window. Start sign-in again from Browser.'}</p><a class="button" href="/">Open Browser</a></main>;
 }
 render(() => entry.callback ? <Callback/> : <App/>, document.getElementById('root')!);
