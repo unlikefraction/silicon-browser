@@ -124,6 +124,40 @@ impl DeliveryAuth {
         Ok(Self::public(row.as_ref(), actor))
     }
 
+    /// Check the owned IAM family before presenting recording access as usable.
+    /// A persisted active row alone cannot establish current upstream authority.
+    pub async fn live_status_for_principal(
+        &self,
+        org: &str,
+        expected: &PrincipalIdentity,
+    ) -> Result<DeliveryAuthorization> {
+        let status = self.status_for_principal(org, expected).await?;
+        if status.enabled && matches!(status.state, State::Active | State::Refreshing) {
+            let actor = expected.public_id.as_deref().ok_or(IdentityError::Forbidden)?;
+            match self
+                .validate_authorized_binding_for_principal(
+                    org,
+                    actor,
+                    &expected.principal_id.to_string(),
+                    &expected.membership_id.to_string(),
+                )
+                .await
+            {
+                Ok(_) => {}
+                Err(DeliveryAuthError::NeedsAuthorization)
+                | Err(DeliveryAuthError::Identity(IdentityError::Unauthenticated | IdentityError::Forbidden)) => {
+                    return Ok(DeliveryAuthorization { state: State::NeedsAuth, ..status });
+                }
+                Err(DeliveryAuthError::Busy) => {
+                    return Ok(DeliveryAuthorization { state: State::Refreshing, ..status });
+                }
+                Err(error) => return Err(error),
+            }
+            return self.status_for_principal(org, expected).await;
+        }
+        Ok(status)
+    }
+
     pub async fn disable_for_principal(
         &self,
         org: &str,
@@ -246,6 +280,26 @@ impl DeliveryAuth {
         row.ok_or(DeliveryAuthError::NeedsAuthorization)
     }
 
+    /// Renew and validate the backend's own credential before starting a paid
+    /// session. This does not mint an upload proof or borrow caller credentials.
+    pub async fn validate_authorized_binding_for_principal(
+        &self,
+        org: &str,
+        actor: &str,
+        principal: &str,
+        membership: &str,
+    ) -> Result<(String, String)> {
+        self.with_valid_authorization(org, actor, Some((principal, membership)), None).await.map_err(|error| {
+            match error {
+                DeliveryAuthError::Identity(IdentityError::Unauthenticated | IdentityError::Forbidden) => {
+                    DeliveryAuthError::NeedsAuthorization
+                }
+                other => other,
+            }
+        })?;
+        Ok((principal.into(), membership.into()))
+    }
+
     pub async fn issue_recording_proof_for_principal(
         &self,
         principal_id: &str,
@@ -266,8 +320,20 @@ impl DeliveryAuth {
         request: RecordingProofRequest,
         expected: Option<(&str, &str)>,
     ) -> Result<RecordingProof> {
+        let org = request.expected_org_id.clone();
+        let actor = request.expected_actor_id.clone();
+        self.with_valid_authorization(&org, &actor, expected, Some(request)).await?.ok_or(DeliveryAuthError::Storage)
+    }
+
+    async fn with_valid_authorization(
+        &self,
+        org: &str,
+        actor: &str,
+        expected: Option<(&str, &str)>,
+        request: Option<RecordingProofRequest>,
+    ) -> Result<Option<RecordingProof>> {
         let rows:Vec<Grant>=sqlx::query_as("SELECT * FROM delivery_credentials WHERE org_id=? AND actor_id=? AND enabled=1 AND (? IS NULL OR principal_id=?) AND (? IS NULL OR membership_id=?) LIMIT 2")
-            .bind(&request.expected_org_id).bind(&request.expected_actor_id)
+            .bind(org).bind(actor)
             .bind(expected.map(|v|v.0)).bind(expected.map(|v|v.0)).bind(expected.map(|v|v.1)).bind(expected.map(|v|v.1))
             .fetch_all(self.store.pool()).await.map_err(|_|DeliveryAuthError::Storage)?;
         if rows.len() != 1 {
@@ -308,7 +374,10 @@ impl DeliveryAuth {
                 if !Self::matches(&row, &current) {
                     return Err(IdentityError::Forbidden);
                 }
-                self.identity.issue_recording_proof(token, request.clone()).await
+                match &request {
+                    Some(request) => self.identity.issue_recording_proof(token, request.clone()).await.map(Some),
+                    None => Ok(None),
+                }
             }
             .await;
             match result {
@@ -614,6 +683,16 @@ mod tests {
             .await
             .unwrap();
     }
+    #[tokio::test]
+    async fn live_status_does_not_report_a_revoked_owned_family_as_active() {
+        let (service, mock) = fixture().await;
+        service.enroll("org", &mock.expected, &slt()).await.unwrap();
+        mock.revoked.store(true, Ordering::SeqCst);
+        assert_eq!(service.status_for_principal("org", &mock.expected).await.unwrap().state, State::Active);
+        assert_eq!(service.live_status_for_principal("org", &mock.expected).await.unwrap().state, State::NeedsAuth);
+        assert_eq!(mock.calls.lock().unwrap().iter().filter(|call| call.0 == "refresh").count(), 1);
+    }
+
     #[tokio::test]
     async fn enrollment_is_encrypted_bound_and_same_slt_replay_reuses_family() {
         let (service, mock) = fixture().await;

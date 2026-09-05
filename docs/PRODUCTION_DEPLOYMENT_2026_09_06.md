@@ -2,9 +2,9 @@
 
 ## Deployed services
 
-- Dashboard: <https://browser.teamofsilicons.com>, SolidJS/TypeScript/Vite on Vercel. Deployment `dpl_3AooHYKJb6a1QmPcGwsUQ7fXHinM`, with the shared Team of Silicons logo and Browser wordmark.
+- Dashboard: <https://browser.teamofsilicons.com>, SolidJS/TypeScript/Vite on Vercel. Deployment `dpl_DxW24yu5AuA9uMJamTpNSQFUgqRo`, with the shared Team of Silicons logo and Browser wordmark.
 - API: <https://backend.browser.teamofsilicons.com>, native ARM64 daemon on a private EC2 `t4g.medium` in `us-east-1`, behind the existing HTTPS ALB. CloudFormation stack `silicon-browser-production`.
-- Current native release: `20260905-ab77a4c54d708b50`. Persistent SQLite WAL storage, encrypted retained disk, private runtime configuration from Secrets Manager, automatic service restart and fifteen-minute online backups.
+- Current native release: `20260905-80862483113182d6`. Persistent SQLite WAL storage, encrypted retained disk, private runtime configuration from Secrets Manager, automatic service restart and fifteen-minute online backups.
 - Both domains pass TLS validation. The ALB target is healthy. Public dashboard HTML uses no-store caching, hashed assets are immutable, and the live iframe connects directly to the remote viewer.
 
 The AWS host does not execute browser commands or relay CDP/live traffic. Completed MP4 delivery and search/fetch remain separate backend integrations.
@@ -50,3 +50,24 @@ Version **0.1.0** of [silicon-browser-shared](https://crates.io/crates/silicon-b
 The user's `sb` command now points to the native 0.1.0 executable. Production setup completed using the default state directory and the controller's normal checked download, without a controller override. It reported controller version 0.36.0, organization `tos`, and active recording delivery. The installed command successfully read production capacity and listed both verification sessions as ended. The previous executable target was retained locally.
 
 [Integration configuration findings](DEPLOYMENT_EXTERNAL_FINDINGS.md) record the IAM/Vercel/DNS workarounds without credentials.
+
+## Recording authorization recovery follow-up
+
+A later production delivery exposed an invalidated IAM recording grant whose
+persisted Browser row still said active. Browser now validates and, when needed,
+renews its own IAM family before creating a paid session or reporting recording
+access as usable. A terminal rejection prompts renewed recording access. It does
+not borrow another client's credential or bypass an IAM rejection.
+
+The recording card now explains authorization failures, offers the owner a
+reconnect action even while delivery remains pending, and refreshes pending
+recordings automatically. Shared viewers cannot invoke the owner's recovery.
+Unknown size is shown as pending delivery instead of a misleading zero-byte file.
+
+The updated backend passed 206 tests and warning-denied Clippy. The frontend
+passed 22 tests and its production build. A local browser fixture verified
+nonce-bound popup recovery, one enrollment, automatic transition to available,
+shared-viewer behavior, empty browser storage and a 390-pixel layout without
+overflow. The deployed JavaScript matched the tested build, and the native
+release's deployment health check passed. These checks establish Browser's
+handling; they do not claim an upstream IAM consent fix has been deployed.

@@ -79,7 +79,7 @@ impl AppState {
         }
         let binding = delivery
             .auth
-            .authorized_binding_for_principal(
+            .validate_authorized_binding_for_principal(
                 &scope.org_id,
                 &scope.identity.id,
                 &scope.principal.principal_id.to_string(),
@@ -256,7 +256,7 @@ pub(super) async fn authorization_status(
     scope: Scope,
 ) -> Result<impl IntoResponse, ApiFailure> {
     let status = match &state.recording_delivery {
-        Some(delivery) => delivery.auth.status_for_principal(&scope.org_id, &scope.principal).await?,
+        Some(delivery) => delivery.auth.live_status_for_principal(&scope.org_id, &scope.principal).await?,
         None => DeliveryAuthorization {
             configured: false,
             enabled: false,
@@ -345,9 +345,10 @@ impl From<DeliveryAuthError> for ApiFailure {
     fn from(value: DeliveryAuthError) -> Self {
         match value {
             DeliveryAuthError::Identity(error) => Self::from(error),
-            DeliveryAuthError::NeedsAuthorization => {
-                Self::conflict("recording_authorization_required", "recording delivery needs a fresh SLT")
-            }
+            DeliveryAuthError::NeedsAuthorization => Self::conflict(
+                "recording_authorization_required",
+                "Reconnect recording access to save your sessions in Briefcase.",
+            ),
             DeliveryAuthError::Busy => Self::conflict(
                 "recording_authorization_busy",
                 "recording authorization is being updated; retry shortly",

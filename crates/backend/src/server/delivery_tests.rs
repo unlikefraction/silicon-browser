@@ -19,6 +19,7 @@ fn delivery_slt(letter: char) -> String {
     format!("oac_{}", letter.to_string().repeat(43))
 }
 fn allow_delivery_exchange(fixture: &Fixture, slt: &str, identity: PrincipalIdentity) {
+    fixture.identity.allow_identity("oat_backend_delivery_secret", identity.clone());
     fixture.identity.allow_exchange(
         slt,
         "org-1",
@@ -29,6 +30,53 @@ fn allow_delivery_exchange(fixture: &Fixture, slt: &str, identity: PrincipalIden
             scope: "obo.issue memberships.read roles.read".into(),
         },
     );
+}
+
+#[tokio::test]
+async fn stale_active_recording_grant_is_checked_before_any_paid_browser_is_created() {
+    let fixture = configured_delivery_fixture().await;
+    let expected = fixture.identity.identify("oat_owner", "org-1").await.unwrap();
+    let slt = delivery_slt('S');
+    allow_delivery_exchange(&fixture, &slt, expected);
+    assert_eq!(enroll_delivery(&fixture, "oat_owner", &slt).await.0, StatusCode::OK);
+    // A later IAM login can invalidate an existing family while our stored
+    // row still says active. The owned refresh is also rejected in this case.
+    fixture.identity.deny_identity("oat_backend_delivery_secret", "org-1");
+    fixture.identity.fail_refresh("ort_backend_delivery_secret", "org-1", IdentityError::Unauthenticated);
+    let (status, _, body) = request(
+        &fixture.app, "POST", "/api/v1/sessions", Some(("oat_owner", "org-1")),
+        Some(delivery_session_request()),
+    ).await;
+    assert_eq!(status, StatusCode::CONFLICT, "{}", String::from_utf8_lossy(&body));
+    assert_eq!(serde_json::from_slice::<Value>(&body).unwrap()["error"]["code"], "recording_authorization_required");
+    assert!(fixture.browser.state.lock().unwrap().browsers.is_empty());
+    let (status, _, body) = request(&fixture.app, "GET", "/api/v1/auth/delivery", Some(("oat_owner", "org-1")), None).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(data(&body)["state"], "needs_auth");
+}
+
+#[tokio::test]
+async fn expired_recording_access_refreshes_its_owned_family_before_session_creation() {
+    let fixture = configured_delivery_fixture().await;
+    let expected = fixture.identity.identify("oat_owner", "org-1").await.unwrap();
+    let slt = delivery_slt('T');
+    allow_delivery_exchange(&fixture, &slt, expected.clone());
+    assert_eq!(enroll_delivery(&fixture, "oat_owner", &slt).await.0, StatusCode::OK);
+    sqlx::query("UPDATE delivery_credentials SET access_expires_at=0")
+        .execute(fixture.store.pool()).await.unwrap();
+    fixture.identity.allow_identity("oat_renewed_delivery", expected.clone());
+    fixture.identity.allow_refresh("ort_backend_delivery_secret", "org-1", ExchangedAuth {
+        access_token: "oat_renewed_delivery".into(), refresh_token: "ort_renewed_delivery".into(),
+        identity: expected, scope: "obo.issue memberships.read roles.read".into(),
+    });
+    let (status, _, body) = request(
+        &fixture.app, "POST", "/api/v1/sessions", Some(("oat_owner", "org-1")),
+        Some(delivery_session_request()),
+    ).await;
+    assert_eq!(status, StatusCode::OK, "{}", String::from_utf8_lossy(&body));
+    assert_eq!(fixture.browser.state.lock().unwrap().browsers.len(), 1);
+    let state: String = sqlx::query_scalar("SELECT state FROM delivery_credentials").fetch_one(fixture.store.pool()).await.unwrap();
+    assert_eq!(state, "active");
 }
 async fn enroll_delivery(fixture: &Fixture, bearer: &str, slt: &str) -> (StatusCode, Value) {
     let (status, _, body) = request(

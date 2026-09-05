@@ -1,5 +1,5 @@
 import { render } from 'solid-js/web';
-import { createSignal, For, Show, onMount, type JSX } from 'solid-js';
+import { createSignal, For, Show, onMount, onCleanup, type JSX } from 'solid-js';
 import '@fontsource/ibm-plex-sans/latin-400.css';
 import '@fontsource/ibm-plex-sans/latin-500.css';
 import '@fontsource/ibm-plex-sans/latin-600.css';
@@ -8,6 +8,7 @@ import './styles.css';
 import brandMark from './assets/mark.svg';
 import { BrowserApi, acceptAuth, publicError, safeHttps, segment, shellQuote, dateForApi } from './api';
 import { readEntry, completeCallback, signInPopup } from './auth';
+import { recordingRecovery } from './recordings';
 import type { AuthSession, Profile, Session, Recording, Usage, UsageLimits, Location, Delivery, SessionLog } from './types';
 
 const entry = readEntry(new URL(location.href));
@@ -54,6 +55,7 @@ function App() {
   let revision = 0;
   let viewerFrame: HTMLIFrameElement | undefined;
   let pendingLive = entry.pending;
+  let recordingRefreshes = 0;
   const activeTab = () => ['detail', 'live', 'logs', 'new-session'].includes(view()) ? 'sessions' : ['new-profile', 'edit-profile'].includes(view()) ? 'profiles' : view();
   const ready = () => delivery()?.enabled && ['active', 'refreshing'].includes(delivery()?.state || '');
   async function perform(task: () => Promise<unknown>) {
@@ -72,8 +74,7 @@ function App() {
         const [items, places] = await Promise.all([api.call<Profile[]>('/profiles'), api.call<Location[]>('/proxy-locations')]);
         if (ticket === revision) { setProfiles(items); setLocations(places); }
       } else if (next === 'recordings') {
-        const result = await api.call<Recording[]>('/recordings');
-        if (ticket === revision) setRecordings(result.sort((a, b) => Date.parse(b.created_at) - Date.parse(a.created_at)));
+        await refreshRecordings(ticket);
       } else if (next === 'usage') {
         const [items, sum, capacity] = await Promise.all([api.call<Usage[]>('/usage'), api.call<Usage>('/usage/org'), api.call<UsageLimits>('/usage/limits').catch(() => undefined)]);
         if (ticket === revision) { setUsage(items); setTotal(sum); setLimits(capacity); }
@@ -108,6 +109,27 @@ function App() {
     setDelivery(result);
     setNotice('Recording access is ready. Your recordings will be saved after each session.');
   }
+  async function refreshRecordings(ticket = revision, background = false) {
+    if (background && recordingRefreshes) return;
+    recordingRefreshes++;
+    try {
+      const result = await api.call<Recording[]>('/recordings');
+      if (ticket === revision && view() === 'recordings') setRecordings(result.sort((a, b) => Date.parse(b.created_at) - Date.parse(a.created_at)));
+    } finally { recordingRefreshes--; }
+  }
+  async function reconnectRecording() {
+    await authorize();
+    await refreshRecordings();
+    setNotice('Recording access is ready. Pending recordings will resume delivery automatically.');
+  }
+  onMount(() => {
+    const timer = window.setInterval(() => {
+      if (auth() && view() === 'recordings' && !busy() && !loading() && recordings().some(item => ['recording', 'pending'].includes(item.status))) {
+        void refreshRecordings(revision, true).catch(() => {});
+      }
+    }, 10000);
+    onCleanup(() => window.clearInterval(timer));
+  });
   async function newSession(selected?: Profile) {
     setProfile(selected); setView('new-session'); ++revision;
     setDelivery(await api.call<Delivery>('/auth/delivery'));
@@ -208,7 +230,22 @@ function App() {
           <Show when={view() === 'logs'}><div class="page-heading"><div><h1>Command logs</h1><p class="muted">Commands reported by the CLI. Dates use UTC.</p></div>{button('Session details', () => detail(session()!.id))}</div><form class="toolbar" onSubmit={event => submit(event, loadLogs)}><label>Date<input type="date" required value={logDate()} onInput={event => setLogDate(event.currentTarget.value)}/></label><button disabled={busy()}>Load logs</button></form><pre>{logs().map(item => `sb run ${shellQuote(session()!.id)} ${shellQuote(item.command)}`).join('\n') || 'No commands for this date.'}</pre></Show>
           <Show when={view() === 'recordings'}>
             <div class="page-heading"><div><span class="eyebrow">YOUR ARCHIVE</span><h1>Recordings</h1><p class="muted">Revisit your sessions. Saved privately in Briefcase.</p></div>{button('Refresh', () => navigate('recordings'))}</div>
-            <Show when={recordings().length} fallback={<Empty><h2>Nothing recorded yet</h2><p>Your recordings appear here after a session ends.</p></Empty>}><div class="cards"><For each={recordings()}>{item => <article class="card"><Badge state={item.status}/><h2>{item.session_name}</h2><p class="muted">{item.session_description}</p><p class="fine">{date(item.created_at)} · {Math.round(item.duration_seconds / 60)} min · {bytes(item.size_bytes)}</p><Show when={item.delivery_error}><p class="hint">{publicError(new Error(item.delivery_error))}</p></Show><div class="actions"><ExternalLink href={item.briefcase_link}>Open recording</ExternalLink><ExternalLink href={item.command_log_link}>Command log</ExternalLink><Show when={item.status === 'failed'}>{button('Retry delivery', async () => { await api.call(`/recordings/${segment(item.session_id)}/retry`, 'POST'); await navigate('recordings'); })}</Show>{button('Hide', async () => { await api.call(`/recordings/${segment(item.session_id)}/trash`, 'POST'); await navigate('recordings'); })}</div><p class="fine">Hiding removes this listing. Your Briefcase files remain available.</p></article>}</For></div></Show>
+            <Show when={recordings().length} fallback={<Empty><h2>Nothing recorded yet</h2><p>Your recordings appear here after a session ends.</p></Empty>}><div class="cards"><For each={recordings()}>{item => {
+              const recovery = () => recordingRecovery(item, auth()?.identity.id);
+              return <article class="card">
+                <Badge state={recovery().needsAuthorization ? 'access_needed' : item.status}/>
+                <h2>{item.session_name}</h2><p class="muted">{item.session_description}</p>
+                <p class="fine">{date(item.created_at)} · {Math.round(item.duration_seconds / 60)} min · {item.size_bytes ? bytes(item.size_bytes) : 'Size available after delivery'}</p>
+                <Show when={recovery().message}><p class="hint" role="status">{recovery().message}</p></Show>
+                <div class="actions">
+                  <ExternalLink href={item.briefcase_link}>Open recording</ExternalLink><ExternalLink href={item.command_log_link}>Command log</ExternalLink>
+                  <Show when={recovery().canReconnect}>{button('Reconnect recording access', reconnectRecording, true)}</Show>
+                  <Show when={recovery().canRetry}>{button('Retry delivery', async () => { await api.call(`/recordings/${segment(item.session_id)}/retry`, 'POST'); await refreshRecordings(); })}</Show>
+                  {button('Hide', async () => { await api.call(`/recordings/${segment(item.session_id)}/trash`, 'POST'); await refreshRecordings(); })}
+                </div>
+                <p class="fine">Hiding removes this listing. Any files already saved in Briefcase remain available.</p>
+              </article>;
+            }}</For></div></Show>
           </Show>
           <Show when={view() === 'usage'}><div class="page-heading"><div><span class="eyebrow">WORKSPACE ACTIVITY</span><h1>Usage</h1><p class="muted">Browser time and network usage across your organization.</p></div>{button('Refresh', () => navigate('usage'))}</div><Show when={total()}>{sum => <div class="stats"><div><span>Browser time</span><strong>{(sum().browser_seconds / 60).toFixed(1)} <small>min</small></strong></div><div><span>Proxy traffic</span><strong>{bytes(sum().proxy_bytes_in + sum().proxy_bytes_out + (sum().proxy_bytes_unclassified || 0))}</strong></div><div><span>Organization total</span><strong>{cost(sum())}</strong></div></div>}</Show><Show when={limits()} fallback={<p class="muted">Service capacity is temporarily unavailable.</p>}>{capacity => <p class="muted"><strong>{capacity().concurrent_browser_limit} concurrent browsers</strong> · Shared service limit · Checked {date(capacity().checked_at)}</p>}</Show><div class="table-wrap"><table><thead><tr><th>Session</th><th>Browser time</th><th>Usage</th></tr></thead><tbody><For each={usage()}>{item => <tr><td class="mono">{item.session_id}</td><td>{(item.browser_seconds / 60).toFixed(1)} min</td><td>{cost(item)}</td></tr>}</For></tbody></table><Show when={!usage().length}><Empty>No session usage yet.</Empty></Show></div></Show>
           <Show when={view() === 'settings'}><div class="page-heading"><div><h1>Settings</h1><p class="muted">Your identity and recording access.</p></div></div><section class="panel form-panel"><h2>Signed in</h2><dl><dt>Identity</dt><dd>{auth()?.identity.name}</dd><dt>Organization</dt><dd>{auth()?.org.id}</dd></dl><p class="fine">Sign-in is kept in this tab’s memory. Reloading requires signing in again.</p></section><section class="panel form-panel"><div class="card-top"><h2>Recording access</h2><Show when={delivery()}><Badge state={delivery()!.state}/></Show></div><p>Browser saves recordings to your private Briefcase after sessions end, even when this tab is closed.</p><div class="actions"><Show when={ready()} fallback={button('Enable recording access', authorize, true)}>{button('Disable recording access', async () => { await api.call('/auth/delivery/end', 'POST'); await navigate('settings'); })}</Show>{button('Refresh status', () => navigate('settings'))}</div></section></Show>
