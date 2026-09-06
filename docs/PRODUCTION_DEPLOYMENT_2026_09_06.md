@@ -2,7 +2,7 @@
 
 ## Deployed services
 
-- Dashboard: <https://browser.teamofsilicons.com>, SolidJS/TypeScript/Vite on Vercel. Deployment `dpl_DxW24yu5AuA9uMJamTpNSQFUgqRo`, with the shared Team of Silicons logo and Browser wordmark.
+- Dashboard: <https://browser.teamofsilicons.com>, SolidJS/TypeScript/Vite on Vercel. Deployment `dpl_J8zab827Ke3DuH8aWcR2ysEiWek9`, with the shared Team of Silicons logo and Browser wordmark.
 - API: <https://backend.browser.teamofsilicons.com>, native ARM64 daemon on a private EC2 `t4g.medium` in `us-east-1`, behind the existing HTTPS ALB. CloudFormation stack `silicon-browser-production`.
 - Current native release: `20260905-80862483113182d6`. Persistent SQLite WAL storage, encrypted retained disk, private runtime configuration from Secrets Manager, automatic service restart and fifteen-minute online backups.
 - Both domains pass TLS validation. The ALB target is healthy. Public dashboard HTML uses no-store caching, hashed assets are immutable, and the live iframe connects directly to the remote viewer.
@@ -71,3 +71,24 @@ shared-viewer behavior, empty browser storage and a 390-pixel layout without
 overflow. The deployed JavaScript matched the tested build, and the native
 release's deployment health check passed. These checks establish Browser's
 handling; they do not claim an upstream IAM consent fix has been deployed.
+
+
+## Frontend reload persistence follow-up
+
+The dashboard previously held its interactive credentials only in page memory,
+so a full page reload discarded the login regardless of IAM token validity.
+The frontend now saves its own access/refresh pair in sessionStorage, scoped to
+its origin, tab and configured API origin. Startup restores the session and
+loads the workspace; expired access tokens use the existing renewal flow.
+Successful rotation saves the replacement pair before authenticated work
+continues. Sign-out and terminal renewal rejection remove the saved session;
+transient connection failures preserve it. One-use codes and live grants remain
+memory-only, and callback windows do not restore the interactive session.
+This covers reloads in the same tab, not synchronized login across tabs or
+persistent login across browser restarts.
+
+All 27 frontend tests and the production build passed. A real local browser
+with a controlled API fixture verified nonce-bound popup login, full reload
+remaining signed in, expired-token renewal replacing the saved credentials,
+and sign-out remaining signed out after another reload. The fixture used only
+synthetic credentials and created no paid sessions. Browser errors were empty.

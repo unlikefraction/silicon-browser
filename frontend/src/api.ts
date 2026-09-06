@@ -1,7 +1,7 @@
 import type { AuthSession } from './types';
 
 export class ApiError extends Error {
-  constructor(message: string, public authRejected = false) { super(message); }
+  constructor(message: string, public authRejected = false, public status?: number) { super(message); }
 }
 export function publicError(value: unknown): string {
   const message = value instanceof Error ? value.message : 'Something went wrong. Please try again.';
@@ -17,8 +17,12 @@ export class BrowserApi {
   private session: AuthSession | null = null;
   private generation = 0;
   private refreshing: Promise<void> | null = null;
-  constructor(readonly origin: string, private fetcher: typeof fetch = fetch.bind(globalThis)) {}
-  setSession(session: AuthSession | null) { this.session = session; this.generation++; }
+  constructor(readonly origin: string, private fetcher: typeof fetch = fetch.bind(globalThis), private persist?: (session: AuthSession | null) => void) {}
+  setSession(session: AuthSession | null) {
+    this.persist?.(session);
+    this.session = session; this.generation++;
+    this.refreshing = null;
+  }
   currentSession() { return this.session; }
   async request<T>(path: string, method = 'GET', body?: unknown, session = this.session): Promise<T> {
     const headers: Record<string, string> = { Accept: 'application/json' };
@@ -32,7 +36,7 @@ export class BrowserApi {
     if (!response.ok) {
       const error = envelope.error || {};
       const fields = Array.isArray(error.fields) ? error.fields.map((field: {field: string; message: string}) => `${field.field}: ${field.message}`).join(' · ') : '';
-      throw new ApiError(publicError(new Error(`${error.message || 'Request failed'}${fields ? ` — ${fields}` : ''}${error.request_id ? ` (Request ${error.request_id})` : ''}`)), response.status === 401 && response.headers.get('x-sb-auth-rejected') === '1');
+      throw new ApiError(publicError(new Error(`${error.message || 'Request failed'}${fields ? ` — ${fields}` : ''}${error.request_id ? ` (Request ${error.request_id})` : ''}`)), response.status === 401 && response.headers.get('x-sb-auth-rejected') === '1', response.status);
     }
     return envelope.data as T;
   }
@@ -43,7 +47,15 @@ export class BrowserApi {
       const operation = this.request<AuthSession>('/auth/refresh', 'POST', { refresh_token: session.refresh_token, org_id: session.org.id }, null)
         .then(result => {
           if (this.session !== session || generation !== this.generation) throw new ApiError('Sign-in changed during renewal.');
-          this.session = acceptAuth(result, session.org.id, session.identity.id);
+          const renewed = acceptAuth(result, session.org.id, session.identity.id);
+          this.persist?.(renewed);
+          this.session = renewed;
+        }).catch(error => {
+          if (this.session === session && generation === this.generation && error instanceof ApiError && [401, 403].includes(error.status || 0)) {
+            this.setSession(null);
+            throw new ApiError('Your sign-in has ended. Please sign in again.');
+          }
+          throw error;
         });
       this.refreshing = operation;
       void operation.finally(() => { if (this.refreshing === operation) this.refreshing = null; }).catch(() => {});

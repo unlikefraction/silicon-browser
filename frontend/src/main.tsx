@@ -9,12 +9,17 @@ import brandMark from './assets/mark.svg';
 import { BrowserApi, acceptAuth, publicError, safeHttps, segment, shellQuote, dateForApi } from './api';
 import { readEntry, completeCallback, signInPopup } from './auth';
 import { recordingRecovery } from './recordings';
+import { TabSession } from './session';
 import type { AuthSession, Profile, Session, Recording, Usage, UsageLimits, Location, Delivery, SessionLog } from './types';
 
 const entry = readEntry(new URL(location.href));
 // Remove one-use credentials and live grants before rendering, login, or API requests.
 if (location.hash || location.search) history.replaceState(null, '', entry.cleanPath);
-const api = new BrowserApi(import.meta.env.SB_BACKEND_ORIGIN);
+const savedSession = new TabSession(import.meta.env.SB_BACKEND_ORIGIN);
+const api = new BrowserApi(import.meta.env.SB_BACKEND_ORIGIN, undefined, value => savedSession.save(value));
+// The popup only hands off its one-use code; it must not restore the opener's session.
+const restored = entry.callback ? null : savedSession.load();
+if (restored) api.setSession(restored);
 const date = (value: string) => new Date(value).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' });
 const cost = (value?: Usage) => value?.cost?.total ? `${(value.cost.total.micros / 1e6).toFixed(4)} ${value.cost.total.currency}` : 'Pending';
 const bytes = (value: number) => value >= 1e9 ? `${(value / 1e9).toFixed(2)} GB` : `${(value / 1e6).toFixed(1)} MB`;
@@ -30,8 +35,8 @@ function ExternalLink(props: { href?: string; children: JSX.Element }) {
 function Badge(props: { state: string }) { return <span class={`badge ${props.state === 'active' || props.state === 'complete' ? 'positive' : ''}`}>{props.state.replaceAll('_', ' ')}</span>; }
 function Empty(props: { children: JSX.Element }) { return <div class="empty">{props.children}</div>; }
 function App() {
-  const [auth, setAuth] = createSignal<AuthSession | null>(null);
-  const [org, setOrg] = createSignal('tos');
+  const [auth, setAuth] = createSignal<AuthSession | null>(restored);
+  const [org, setOrg] = createSignal(restored?.org.id || 'tos');
   const [busy, setBusy] = createSignal(false);
   const [loading, setLoading] = createSignal(false);
   const [notice, setNotice] = createSignal('');
@@ -61,7 +66,10 @@ function App() {
   async function perform(task: () => Promise<unknown>) {
     if (busy()) return;
     setBusy(true); setNotice('');
-    try { await task(); } catch (error) { setNotice(publicError(error)); } finally { setBusy(false); }
+    try { await task(); } catch (error) {
+      if (auth() && !api.currentSession()) logout();
+      setNotice(publicError(error));
+    } finally { setAuth(api.currentSession()); setBusy(false); }
   }
   async function navigate(next: Tab) {
     const ticket = ++revision;
@@ -94,6 +102,9 @@ function App() {
     const token = await tokenFor(chosenOrg);
     const result = acceptAuth(await api.request<AuthSession>('/auth/exchange', 'POST', { short_lived_token: token, org_id: chosenOrg }, null), chosenOrg);
     api.setSession(result); setAuth(result);
+    await enterWorkspace();
+  }
+  async function enterWorkspace() {
     if (pendingLive) { const link = pendingLive; pendingLive = null; await openLive(link.id, link.grant); }
     else await navigate('sessions');
   }
@@ -123,6 +134,7 @@ function App() {
     setNotice('Recording access is ready. Pending recordings will resume delivery automatically.');
   }
   onMount(() => {
+    if (restored) void perform(enterWorkspace);
     const timer = window.setInterval(() => {
       if (auth() && view() === 'recordings' && !busy() && !loading() && recordings().some(item => ['recording', 'pending'].includes(item.status))) {
         void refreshRecordings(revision, true).catch(() => {});
@@ -185,7 +197,7 @@ function App() {
         <Show when={signingIn()}><div class="notice auth-wait" role="status"><span>Complete sign-in in the IAM window.</span><button onClick={() => signInAbort?.abort()}>Cancel sign-in</button></div></Show>
         <Show when={auth()} fallback={<section class="welcome">
           <span class="eyebrow">YOUR BROWSER WORKSPACE</span><h1>A browser, ready<br/>when you are.</h1><p>Start a session. Keep your profiles. Work together across the web.</p>
-          <form class="login-panel" onSubmit={event => submit(event, login)}><h2>Sign in to Browser</h2><p class="muted">Use your Silicon IAM identity to continue.</p><label>Organization ID<input name="org" autocomplete="organization" required value={org()} onInput={event => setOrg(event.currentTarget.value)} placeholder="your-organization"/></label><button class="primary wide" disabled={busy()}>{busy() ? 'Waiting for sign-in…' : 'Continue with IAM'} <span aria-hidden="true">↗</span></button><p class="fine">Sign-in opens in a separate window. Your session stays in this tab.</p></form>
+          <form class="login-panel" onSubmit={event => submit(event, login)}><h2>Sign in to Browser</h2><p class="muted">Use your Silicon IAM identity to continue.</p><label>Organization ID<input name="org" autocomplete="organization" required value={org()} onInput={event => setOrg(event.currentTarget.value)} placeholder="your-organization"/></label><button class="primary wide" disabled={busy()}>{busy() ? 'Waiting for sign-in…' : 'Continue with IAM'} <span aria-hidden="true">↗</span></button><p class="fine">Sign-in opens in a separate window. You’ll stay signed in when you refresh this tab.</p></form>
           <Show when={pendingLive}><p class="hint">You have a live browser invitation. Sign in to its organization to continue.</p></Show>
           <div class="welcome-features"><div><span class="mono">01 / PROFILES</span><p>Keep a consistent identity across sessions.</p></div><div><span class="mono">02 / TOGETHER</span><p>Bring people and agents into the same browser.</p></div><div><span class="mono">03 / RECORDED</span><p>Return to your work when a session ends.</p></div></div>
         </section>}>
@@ -248,7 +260,7 @@ function App() {
             }}</For></div></Show>
           </Show>
           <Show when={view() === 'usage'}><div class="page-heading"><div><span class="eyebrow">WORKSPACE ACTIVITY</span><h1>Usage</h1><p class="muted">Browser time and network usage across your organization.</p></div>{button('Refresh', () => navigate('usage'))}</div><Show when={total()}>{sum => <div class="stats"><div><span>Browser time</span><strong>{(sum().browser_seconds / 60).toFixed(1)} <small>min</small></strong></div><div><span>Proxy traffic</span><strong>{bytes(sum().proxy_bytes_in + sum().proxy_bytes_out + (sum().proxy_bytes_unclassified || 0))}</strong></div><div><span>Organization total</span><strong>{cost(sum())}</strong></div></div>}</Show><Show when={limits()} fallback={<p class="muted">Service capacity is temporarily unavailable.</p>}>{capacity => <p class="muted"><strong>{capacity().concurrent_browser_limit} concurrent browsers</strong> · Shared service limit · Checked {date(capacity().checked_at)}</p>}</Show><div class="table-wrap"><table><thead><tr><th>Session</th><th>Browser time</th><th>Usage</th></tr></thead><tbody><For each={usage()}>{item => <tr><td class="mono">{item.session_id}</td><td>{(item.browser_seconds / 60).toFixed(1)} min</td><td>{cost(item)}</td></tr>}</For></tbody></table><Show when={!usage().length}><Empty>No session usage yet.</Empty></Show></div></Show>
-          <Show when={view() === 'settings'}><div class="page-heading"><div><h1>Settings</h1><p class="muted">Your identity and recording access.</p></div></div><section class="panel form-panel"><h2>Signed in</h2><dl><dt>Identity</dt><dd>{auth()?.identity.name}</dd><dt>Organization</dt><dd>{auth()?.org.id}</dd></dl><p class="fine">Sign-in is kept in this tab’s memory. Reloading requires signing in again.</p></section><section class="panel form-panel"><div class="card-top"><h2>Recording access</h2><Show when={delivery()}><Badge state={delivery()!.state}/></Show></div><p>Browser saves recordings to your private Briefcase after sessions end, even when this tab is closed.</p><div class="actions"><Show when={ready()} fallback={button('Enable recording access', authorize, true)}>{button('Disable recording access', async () => { await api.call('/auth/delivery/end', 'POST'); await navigate('settings'); })}</Show>{button('Refresh status', () => navigate('settings'))}</div></section></Show>
+          <Show when={view() === 'settings'}><div class="page-heading"><div><h1>Settings</h1><p class="muted">Your identity and recording access.</p></div></div><section class="panel form-panel"><h2>Signed in</h2><dl><dt>Identity</dt><dd>{auth()?.identity.name}</dd><dt>Organization</dt><dd>{auth()?.org.id}</dd></dl><p class="fine">You stay signed in when you refresh this tab. Sign out to clear this tab’s saved sign-in.</p></section><section class="panel form-panel"><div class="card-top"><h2>Recording access</h2><Show when={delivery()}><Badge state={delivery()!.state}/></Show></div><p>Browser saves recordings to your private Briefcase after sessions end, even when this tab is closed.</p><div class="actions"><Show when={ready()} fallback={button('Enable recording access', authorize, true)}>{button('Disable recording access', async () => { await api.call('/auth/delivery/end', 'POST'); await navigate('settings'); })}</Show>{button('Refresh status', () => navigate('settings'))}</div></section></Show>
           </Show>
         </Show>
       </main><footer><span>Silicon Browser</span><span class="mono">BUILT FOR CARBONS & SILICONS</span></footer>
