@@ -12,6 +12,18 @@ env:
   RUSTFLAGS: -Dwarnings
 
 jobs:
+  installer:
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Installer syntax and offline contracts
+        run: |
+          sh -n scripts/install.sh
+          python3 scripts/test_installer.py
+
   frontend:
     runs-on: ubuntu-latest
     steps:

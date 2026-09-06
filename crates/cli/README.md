@@ -3,6 +3,13 @@
 `sb` is the stateful command-line shell over the stateless `silicon-browser` Rust package.
 Run `sb --help` to choose between a managed remote browser and fast search/fetch.
 
+Install and set up from a macOS or Linux terminal:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/unlikefraction/silicon-browser/v2/scripts/install.sh | sh && export PATH="$HOME/.local/bin:$PATH"
+```
+
+This selects and verifies the native release, installs `sb` into `~/.local/bin`, adds it to your shell's PATH, and runs setup with prompts for your organization and IAM authorization. Supports Intel/x86-64 and ARM64; Linux needs glibc 2.34 or later, so Alpine/musl is currently unsupported. Requires `curl`, `tar`, and `sha256sum` or `shasum`. No Rust toolchain or sudo is needed. Use `sh -s -- --no-setup` instead of `sh` to install without authentication, then run `~/.local/bin/sb setup` later.
 
 `sb setup --org <id>` authenticates, checks recording delivery, and installs the native local controller when needed. It uses a private installation under `$SB_HOME/bin`, verifies the pinned release SHA-256, and reuses an already correctly pinned PATH installation. No Node/npm or local Chromium installation is required.
 

@@ -6,15 +6,23 @@ Browser commands execute on the caller's machine and connect directly to the rem
 
 ## Try the CLI
 
+Run this in a macOS or Linux terminal:
+
 ```sh
-cargo install silicon-browser-cli --version 0.1.0 --locked
+curl -fsSL https://raw.githubusercontent.com/unlikefraction/silicon-browser/v2/scripts/install.sh | sh && export PATH="$HOME/.local/bin:$PATH"
+```
+
+The installer detects Intel/x86-64 or ARM64, verifies the release SHA-256, installs `sb` into `~/.local/bin`, updates your shell's PATH, and runs interactive setup. Follow the prompts for your organization and fresh IAM authorization tokens; setup checks recording delivery and installs the native browser controller. No Rust, Node/npm, local Chromium, or sudo is needed. Requires `curl`, `tar`, and `sha256sum` or `shasum`; Linux requires glibc 2.34 or later (Alpine/musl and 32-bit machines are not supported by this release). Running the command again reinstalls the pinned release and reruns setup.
+
+Then explore the commands:
+
+```sh
 sb --help
 sb --help remote-browser
 sb --help search-and-fetch
-sb setup --org YOUR_ORG_ID
 ```
 
-The Cargo installation requires Rust 1.98 or later. [Download prebuilt macOS and Linux binaries](https://github.com/unlikefraction/silicon-browser/releases/tag/managed-v0.1.0) to install without a Rust toolchain. Extract the archive, verify its SHA-256 against `SHA256SUMS`, and put `sb` on your `PATH`. For a source checkout, use `cargo install --path crates/cli`.
+For installation without interactive setup, use `curl -fsSL https://raw.githubusercontent.com/unlikefraction/silicon-browser/v2/scripts/install.sh | sh -s -- --no-setup`, then run `~/.local/bin/sb setup` when ready. You can also [download prebuilt binaries](https://github.com/unlikefraction/silicon-browser/releases/tag/managed-v0.1.0) or use `cargo install silicon-browser-cli --version 0.1.0 --locked` with Rust 1.98 or later. For a source checkout, use `cargo install --path crates/cli`.
 
 The dashboard is live at [browser.teamofsilicons.com](https://browser.teamofsilicons.com). The CLI uses its production API by default. The published [Rust client](https://crates.io/crates/silicon-browser) is available with `cargo add silicon-browser@0.1.0`.
 
