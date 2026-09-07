@@ -156,6 +156,7 @@ enum SessionCommand {
         name: String,
         #[arg(long)]
         description: String,
+        /// Session duration: 15m, 30m, 45m, 60m, 120m, or 240m. Defaults to 15m for incognito; required for profiles.
         #[arg(long)]
         ttl: Option<SessionTtl>,
     },

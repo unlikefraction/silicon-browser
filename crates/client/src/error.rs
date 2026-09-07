@@ -53,7 +53,7 @@ impl fmt::Display for Error {
         match self {
             Self::Local(message) => formatter.write_str(message),
             Self::Transport(message) => write!(formatter, "Silicon Browser could not be reached: {message}"),
-            Self::Api { code, message, details, .. } => {
+            Self::Api { code, message, details, request_id, .. } => {
                 write!(formatter, "{code}: {message}")?;
                 if !details.is_empty() {
                     formatter.write_str(" (")?;
@@ -64,6 +64,9 @@ impl fmt::Display for Error {
                         write!(formatter, "{key}: {value}")?;
                     }
                     formatter.write_str(")")?;
+                }
+                if let Some(request_id) = request_id {
+                    write!(formatter, " [request_id: {request_id}]")?;
                 }
                 Ok(())
             }
@@ -117,5 +120,6 @@ mod tests {
         assert!(rendered.contains("silicon-7"));
         assert!(rendered.contains("2026-09-04T12:00:00Z"));
         assert!(rendered.contains("session-1"));
+        assert!(rendered.contains("[request_id: request-1]"));
     }
 }

@@ -22,9 +22,9 @@ sb --help remote-browser
 sb --help search-and-fetch
 ```
 
-For installation without interactive setup, use `curl -fsSL https://raw.githubusercontent.com/unlikefraction/silicon-browser/v2/scripts/install.sh | sh -s -- --no-setup`, then run `~/.local/bin/sb setup` when ready. You can also [download prebuilt binaries](https://github.com/unlikefraction/silicon-browser/releases/tag/managed-v0.1.0) or use `cargo install silicon-browser-cli --version 0.1.0 --locked` with Rust 1.98 or later. For a source checkout, use `cargo install --path crates/cli`.
+For installation without interactive setup, use `curl -fsSL https://raw.githubusercontent.com/unlikefraction/silicon-browser/v2/scripts/install.sh | sh -s -- --no-setup`, then run `~/.local/bin/sb setup` when ready. You can also [download prebuilt binaries](https://github.com/unlikefraction/silicon-browser/releases/tag/managed-v0.1.1) or use `cargo install silicon-browser-cli --version 0.1.1 --locked` with Rust 1.98 or later. For a source checkout, use `cargo install --path crates/cli`.
 
-The dashboard is live at [browser.teamofsilicons.com](https://browser.teamofsilicons.com). The CLI uses its production API by default. The published [Rust client](https://crates.io/crates/silicon-browser) is available with `cargo add silicon-browser@0.1.0`.
+The dashboard is live at [browser.teamofsilicons.com](https://browser.teamofsilicons.com). The CLI uses its production API by default. The published [Rust client](https://crates.io/crates/silicon-browser) is available with `cargo add silicon-browser@0.1.1`.
 
 Setup accepts a fresh org-bound IAM `oac_` token interactively or through `SB_AUTHTOKEN`. It exchanges the one-shot token and never persists it. An `oat_` in that variable is an explicit invocation-only bearer override. Setup installs the pinned native controller with integrity checks; it does not install local Chromium, Node or npm. Running setup again is safe.
 

@@ -8,7 +8,8 @@ export function publicError(value: unknown): string {
   return message.replace(/browser[ -]?use|tiny[ -]?fish/gi, 'browser service');
 }
 export function acceptAuth(value: AuthSession, org: string, identity?: string): AuthSession {
-  if (!value?.access_token?.startsWith('oat_') || !value?.refresh_token?.startsWith('ort_') ||
+  if (!/^oat_[^\s\x00-\x1f\x7f]{1,16380}$/.test(value?.access_token || '') ||
+      !/^ort_[^\s\x00-\x1f\x7f]{1,16380}$/.test(value?.refresh_token || '') ||
       value.org?.id !== org || !value.identity?.id || (identity && value.identity.id !== identity) ||
       !Number.isFinite(Date.parse(value.expires_at))) throw new Error('Sign-in did not match your organization or identity. Please sign in again.');
   return value;
@@ -78,9 +79,9 @@ export class BrowserApi {
     }
   }
 }
-export function safeHttps(value?: string): string | null {
+export function safeHttps(value?: string, disallowedOrigin?: string): string | null {
   if (!value) return null;
-  try { const url = new URL(value); return url.protocol === 'https:' && !url.username && !url.password ? url.href : null; } catch { return null; }
+  try { const url = new URL(value); return url.protocol === 'https:' && !url.username && !url.password && url.origin !== disallowedOrigin ? url.href : null; } catch { return null; }
 }
 export const segment = encodeURIComponent;
 export const shellQuote = (value: string) => `'${value.replaceAll("'", "'\"'\"'")}'`;

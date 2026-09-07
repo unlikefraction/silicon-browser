@@ -281,17 +281,23 @@ impl Store {
             legacy_ids.push(previous);
         }
         for legacy_id in legacy_ids {
-            let rows = sqlx::query("SELECT id, access_json FROM profiles WHERE org_id = ?")
+            let rows = sqlx::query("SELECT id, owner_id, access_json FROM profiles WHERE org_id = ?")
                 .bind(org_id)
                 .fetch_all(&mut *transaction)
                 .await?;
             for row in rows {
                 let profile_id: String = row.try_get("id")?;
+                let owner_id: String = row.try_get("owner_id")?;
                 let access: AccessList = serde_json::from_str(row.try_get("access_json")?).map_err(corrupt_json)?;
                 let rewritten = AccessList::new(access.iter().map(|entry| {
                     if same_principal(entry, &legacy_id) { format!("@{public_id}") } else { entry.to_owned() }
                 }))
                 .map_err(invalid)?;
+                // Avoid rewriting every profile row when this principal was never
+                // referenced. Identity projection runs on each authenticated request.
+                if owner_id != legacy_id && rewritten == access {
+                    continue;
+                }
                 sqlx::query(
                     "UPDATE profiles SET owner_id = CASE WHEN owner_id = ? THEN ? ELSE owner_id END, \
                      access_json = ? WHERE org_id = ? AND id = ?",

@@ -530,6 +530,7 @@ fn run_help_falls_back_offline_and_still_succeeds() {
     let mut command = cargo_bin_cmd!("sb");
     command
         .env_clear()
+        .env("SB_HOME", state_root.path())
         .env("PATH", empty_path)
         .args(["run", "--help"])
         .assert()

@@ -275,6 +275,9 @@ fn upload_arguments(args: &[String]) -> Result<(String, Vec<String>, Vec<String>
             index += 1;
         }
     }
+    if files.is_empty() {
+        return Err(Error::Local("upload requires an input selector and local file paths".into()));
+    }
     Ok((selector, files, options))
 }
 
@@ -319,5 +322,11 @@ mod tests {
         assert_eq!(selector, "@e2");
         assert_eq!(files, ["./my file.txt", "./second.csv"]);
         assert_eq!(options, ["--user-agent", "upload", "--json", "--pin-tab", "--download-path", "./downloads"]);
+    }
+
+    #[test]
+    fn upload_requires_at_least_one_file() {
+        let args = vec!["upload", "@input"].into_iter().map(String::from).collect::<Vec<_>>();
+        assert!(upload_arguments(&args).is_err());
     }
 }

@@ -162,7 +162,7 @@ function App() {
       }
       if (!grant) throw new Error('The live browser link is unavailable. Refresh the session and try again.');
       const result = await api.call<{url: string}>(`/sessions/${segment(id)}/live/redeem`, 'POST', { grant });
-      const url = safeHttps(result.url); if (!url) throw new Error('The live browser link is invalid.');
+      const url = safeHttps(result.url, location.origin); if (!url) throw new Error('The live browser link is invalid.');
       const current = await api.call<Session>(`/sessions/${segment(id)}`);
       if (ticket === revision) { setSession(current); setLiveUrl(url); }
     } finally { if (ticket === revision) setLoading(false); }

@@ -82,6 +82,41 @@
         ]
       }
     },
+    "ArtifactsTransportPolicy": {
+      "Type": "AWS::S3::BucketPolicy",
+      "Properties": {
+        "Bucket": {
+          "Ref": "Artifacts"
+        },
+        "PolicyDocument": {
+          "Version": "2012-10-17",
+          "Statement": [
+            {
+              "Sid": "RequireTls",
+              "Effect": "Deny",
+              "Principal": "*",
+              "Action": "s3:*",
+              "Resource": [
+                {
+                  "Fn::GetAtt": [
+                    "Artifacts",
+                    "Arn"
+                  ]
+                },
+                {
+                  "Fn::Sub": "${Artifacts.Arn}/*"
+                }
+              ],
+              "Condition": {
+                "Bool": {
+                  "aws:SecureTransport": "false"
+                }
+              }
+            }
+          ]
+        }
+      }
+    },
     "Runtime": {
       "Type": "AWS::SecretsManager::Secret",
       "DeletionPolicy": "Retain",
@@ -127,12 +162,16 @@
               "Statement": [
                 {
                   "Effect": "Allow",
-                  "Action": [
-                    "s3:GetObject",
-                    "s3:PutObject"
-                  ],
+                  "Action": "s3:GetObject",
                   "Resource": {
-                    "Fn::Sub": "${Artifacts.Arn}/*"
+                    "Fn::Sub": "${Artifacts.Arn}/releases/*"
+                  }
+                },
+                {
+                  "Effect": "Allow",
+                  "Action": "s3:PutObject",
+                  "Resource": {
+                    "Fn::Sub": "${Artifacts.Arn}/backups/*"
                   }
                 },
                 {
@@ -143,6 +182,14 @@
                       "Artifacts",
                       "Arn"
                     ]
+                  },
+                  "Condition": {
+                    "StringLike": {
+                      "s3:prefix": [
+                        "releases/*",
+                        "backups/*"
+                      ]
+                    }
                   }
                 },
                 {
@@ -281,7 +328,7 @@
         ],
         "UserData": {
           "Fn::Base64": {
-            "Fn::Sub": "#!/bin/bash\nset -euo pipefail\numask 077\ndnf install -y jq python3\nid silicon-browser >/dev/null 2>&1 || useradd --system --home-dir /var/lib/silicon-browser --shell /sbin/nologin silicon-browser\ninstall -d -o silicon-browser -g silicon-browser -m 0700 /var/lib/silicon-browser\ninstall -d -m 0700 /etc/silicon-browser\ninstall -d -m 0755 /opt/silicon-browser/releases /opt/silicon-browser/bin\nsystemctl enable --now amazon-ssm-agent\n"
+            "Fn::Sub": "#!/bin/bash\nset -euo pipefail\numask 077\ndnf install -y python3\nid silicon-browser >/dev/null 2>&1 || useradd --system --home-dir /var/lib/silicon-browser --shell /sbin/nologin silicon-browser\ninstall -d -o silicon-browser -g silicon-browser -m 0700 /var/lib/silicon-browser\ninstall -d -o root -g silicon-browser -m 0750 /etc/silicon-browser\ninstall -d -m 0755 /opt/silicon-browser/releases /opt/silicon-browser/bin\nsystemctl enable --now amazon-ssm-agent\n"
           }
         }
       }

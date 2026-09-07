@@ -30,10 +30,12 @@ test('sign-out during refresh cannot restore tokens or retry the pending mutatio
 test('refresh response must preserve organization and identity', () => {
   assert.throws(()=>acceptAuth(session(), 'other')); assert.throws(()=>acceptAuth(session(), 'tos', '@someone-else'));
   assert.throws(()=>acceptAuth({...session(), access_token:'secret'}, 'tos')); assert.throws(()=>acceptAuth({...session(), expires_at:'invalid'}, 'tos'));
+  assert.throws(()=>acceptAuth({...session(), access_token:'oat_'}, 'tos')); assert.throws(()=>acceptAuth({...session(), refresh_token:'ort_bad\nheader'}, 'tos'));
 });
 test('viewer links reject script, plaintext and embedded credentials', () => {
   for (const value of ['javascript:alert(1)', 'http://example.com', 'https://user:secret@example.com', 'not a url']) assert.equal(safeHttps(value), null);
   assert.equal(safeHttps('https://viewer.example/session?a=b'), 'https://viewer.example/session?a=b');
+  assert.equal(safeHttps('https://browser.teamofsilicons.com/session', 'https://browser.teamofsilicons.com'), null);
 });
 test('command export quotes shell literals and validates real calendar dates', () => {
   assert.equal(shellQuote("a'b $HOME"), "'a'\"'\"'b $HOME'"); assert.equal(dateForApi('2026-09-06'), '2026-09-06');

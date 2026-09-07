@@ -53,14 +53,14 @@ if [ "${TEST_CORRUPT:-0}" = 1 ]; then printf bad >> "$destination"; fi
         payload = b'''#!/bin/sh
 if [ "$1" = --version ]; then
   [ "${TEST_EXEC_FAIL:-0}" = 0 ] || exit 1
-  echo 'sb 0.1.0'
+  echo 'sb 0.1.1'
 elif [ "$1" = setup ]; then
   [ -t 0 ] || exit 42
   printf '%s\\n' "$@" > "$HOME/setup-arguments"
 fi
 '''
         with tarfile.open(archive, 'w:gz') as output:
-            entry = tarfile.TarInfo(f'sb-v0.1.0-{target}/sb')
+            entry = tarfile.TarInfo(f'sb-v0.1.1-{target}/sb')
             entry.size = len(payload)
             entry.mode = 0o755
             output.addfile(entry, io.BytesIO(payload))

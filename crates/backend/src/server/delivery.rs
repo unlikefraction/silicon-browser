@@ -37,10 +37,7 @@ impl AppState {
             })
         };
         if !valid(&issuer) || !valid(&audience) {
-            return Err(
-                "recording issuer and Briefcase audience must be canonical applications"
-                    .into(),
-            );
+            return Err("recording issuer and Briefcase audience must be canonical applications".into());
         }
         self.recording_delivery = Some(Arc::new(RecordingDeliveryServices {
             auth: DeliveryAuth::new(self.store.clone(), self.secrets.clone(), self.identity.clone()),

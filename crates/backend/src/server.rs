@@ -727,7 +727,9 @@ async fn exchange_auth(
         .await
         .map_err(ApiFailure::from)?;
     let session = auth_session(&state, exchanged).await?;
-    Ok(success(session))
+    let mut response = success(session).into_response();
+    response.headers_mut().insert("cache-control", HeaderValue::from_static("no-store"));
+    Ok(response)
 }
 
 async fn refresh_auth(
@@ -746,7 +748,9 @@ async fn refresh_auth(
         .await
         .map_err(ApiFailure::from)?;
     let session = auth_session(&state, exchanged).await?;
-    Ok(success(session))
+    let mut response = success(session).into_response();
+    response.headers_mut().insert("cache-control", HeaderValue::from_static("no-store"));
+    Ok(response)
 }
 
 async fn auth_session(state: &AppState, exchanged: ExchangedAuth) -> Result<AuthSession, ApiFailure> {
@@ -2904,7 +2908,7 @@ mod tests {
                 scope: "app".into(),
             },
         );
-        let (status, _, body) = request(
+        let (status, headers, body) = request(
             &fixture.app,
             "POST",
             "/api/v1/auth/exchange",
@@ -2913,6 +2917,7 @@ mod tests {
         )
         .await;
         assert_eq!(status, StatusCode::OK);
+        assert_eq!(headers["cache-control"], "no-store");
         assert_eq!(data(&body)["identity"]["id"], "public-owner");
         assert_eq!(
             data(&body)["services"],

@@ -41,12 +41,12 @@ with tempfile.TemporaryDirectory(prefix='silicon-browser-release-') as directory
     checksum = hashlib.sha256(archive.read_bytes()).hexdigest()
     aws('s3', 'cp', str(archive), object_url, '--sse', 'AES256', '--only-show-errors')
     quote = shlex.quote
-    commands = ['set -eu', 'umask 077',
+    commands = ['set -euo pipefail', 'umask 077',
                 f'install -d -m 0755 {quote(remote)}',
                 f'aws s3 cp {quote(object_url)} {quote(remote + ".tar.gz")} --region {quote(args.region)} --only-show-errors',
                 f'echo {quote(checksum + "  " + remote + ".tar.gz")} | sha256sum -c -',
                 f'tar -xzf {quote(remote + ".tar.gz")} -C {quote(remote)}',
-                f'bash {quote(remote + "/install-native.sh")} {quote(remote)} {quote(outputs["ArtifactBucket"])} {quote(outputs["RuntimeSecretArn"])}']
+                f'bash {quote(remote + "/install-native.sh")} {quote(remote)} {quote(outputs["ArtifactBucket"])} {quote(outputs["RuntimeSecretArn"])} {quote(args.region)}']
     request = {'DocumentName': 'AWS-RunShellScript', 'InstanceIds': [outputs['InstanceId']],
                'Parameters': {'commands': commands}, 'TimeoutSeconds': 180,
                'Comment': 'Install native Silicon Browser release ' + release}
