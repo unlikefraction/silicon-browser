@@ -36,12 +36,9 @@ impl AppState {
                 !org.is_empty() && !app.is_empty() && !app.contains('>') && !id.chars().any(char::is_whitespace)
             })
         };
-        if !valid(&issuer)
-            || !valid(&audience)
-            || issuer.split_once('>').map(|p| p.0) != audience.split_once('>').map(|p| p.0)
-        {
+        if !valid(&issuer) || !valid(&audience) {
             return Err(
-                "recording issuer and Briefcase audience must be canonical applications in the same organization"
+                "recording issuer and Briefcase audience must be canonical applications"
                     .into(),
             );
         }
@@ -70,13 +67,6 @@ impl AppState {
                 Ok(None)
             };
         };
-        if delivery.issuer.split_once('>').map(|p| p.0) != Some(scope.org_id.as_str()) {
-            return Err(ApiFailure::new(
-                StatusCode::SERVICE_UNAVAILABLE,
-                "recording_delivery_unavailable",
-                "recording storage is not configured for this organization",
-            ));
-        }
         let binding = delivery
             .auth
             .validate_authorized_binding_for_principal(
