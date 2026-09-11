@@ -22,13 +22,13 @@ sb --help remote-browser
 sb --help search-and-fetch
 ```
 
-For installation without interactive setup, use `curl -fsSL https://raw.githubusercontent.com/unlikefraction/silicon-browser/v2/scripts/install.sh | sh -s -- --no-setup`, then run `~/.local/bin/sb setup` when ready. You can also [download prebuilt binaries](https://github.com/unlikefraction/silicon-browser/releases/tag/managed-v0.1.1) or use `cargo install silicon-browser-cli --version 0.1.1 --locked` with Rust 1.98 or later. For a source checkout, use `cargo install --path crates/cli`.
+For installation without interactive setup, use `curl -fsSL https://raw.githubusercontent.com/unlikefraction/silicon-browser/v2/scripts/install.sh | sh -s -- --no-setup`, then run `~/.local/bin/sb setup` when ready. You can also [download prebuilt binaries](https://github.com/unlikefraction/silicon-browser/releases/tag/managed-v0.1.2) or use `cargo install silicon-browser-cli --version 0.1.2 --locked` with Rust 1.98 or later. For a source checkout, use `cargo install --path crates/cli`.
 
 The dashboard is live at [browser.teamofsilicons.com](https://browser.teamofsilicons.com). The CLI uses its production API by default. The published [Rust client](https://crates.io/crates/silicon-browser) is available with `cargo add silicon-browser@0.1.1`.
 
 Setup accepts a fresh org-bound IAM `oac_` token interactively or through `SB_AUTHTOKEN`. It exchanges the one-shot token and never persists it. An `oat_` in that variable is an explicit invocation-only bearer override. Setup installs the pinned native controller with integrity checks; it does not install local Chromium, Node or npm. Running setup again is safe.
 
-Private CLI state lives in `~/.silicon-browser`, partitioned by normalized backend URL. `SB_HOME` isolates a separate root for tests. Local controller namespaces also distinguish organization, immutable principal and session. This lets different backends and logged-in identities use the CLI without sharing authentication or controller state.
+Private CLI state lives in `$SILICON_HOME/.silicon-browser` (or `~/.silicon-browser` when `SILICON_HOME` is unset), partitioned by normalized backend URL. `SB_HOME` remains an explicit override for tests and isolated runs. Local controller namespaces also distinguish organization, immutable principal and session. This lets different backends and logged-in identities use the CLI without sharing authentication or controller state.
 
 ```sh
 sb profile ls

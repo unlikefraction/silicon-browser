@@ -142,6 +142,24 @@ fn isolated_sb(home: &Path, backend: &str) -> assert_cmd::Command {
     command
 }
 
+#[test]
+fn silicon_home_contains_state_unless_sb_home_overrides_it() {
+    for override_home in [false, true] {
+        let directory = tempfile::tempdir().unwrap();
+        let silicon_home = directory.path().join("silicon home");
+        fs::create_dir(&silicon_home).unwrap();
+        let sb_home = directory.path().join("override");
+        let mut command = isolated_sb(&sb_home, "http://127.0.0.1:9");
+        command.env("SILICON_HOME", &silicon_home).env("SB_AUTHTOKEN", "invalid");
+        if !override_home {
+            command.env_remove("SB_HOME");
+        }
+        command.arg("setup").assert().failure().stderr(predicate::str::contains("SB_AUTHTOKEN must use IAM"));
+        assert_eq!(silicon_home.join(".silicon-browser/backends").is_dir(), !override_home);
+        assert_eq!(sb_home.join("backends").is_dir(), override_home);
+    }
+}
+
 #[cfg(unix)]
 fn install_fake_runner(directory: &Path) {
     use std::os::unix::fs::PermissionsExt as _;

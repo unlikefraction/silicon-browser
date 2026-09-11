@@ -199,6 +199,7 @@ impl std::fmt::Debug for State {
 pub fn default_home() -> PathBuf {
     std::env::var_os("SB_HOME")
         .map(PathBuf::from)
+        .or_else(|| std::env::var_os("SILICON_HOME").map(|home| PathBuf::from(home).join(".silicon-browser")))
         .or_else(|| dirs::home_dir().map(|home| home.join(".silicon-browser")))
         .unwrap_or_else(|| PathBuf::from(".silicon-browser"))
 }
