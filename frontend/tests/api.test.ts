@@ -27,7 +27,8 @@ test('sign-out during refresh cannot restore tokens or retry the pending mutatio
   const api = client(async url => { calls++; if (url.endsWith('/auth/refresh')) { started(); return new Promise(resolve=>{finish=resolve;}); } return response({}, 401, {'x-sb-auth-rejected':'1'}); });
   const pending = api.call('/sessions', 'POST', {}); await begun; api.setSession(null); finish(response(session('oat_new'))); await assert.rejects(pending, /Sign-in changed/); assert.equal(api.currentSession(), null); assert.equal(calls, 2);
 });
-test('refresh response must preserve organization and identity', () => {
+test('refresh response must preserve organization and identity when scoped', () => {
+  assert.doesNotThrow(() => acceptAuth(session()));
   assert.throws(()=>acceptAuth(session(), 'other')); assert.throws(()=>acceptAuth(session(), 'tos', '@someone-else'));
   assert.throws(()=>acceptAuth({...session(), access_token:'secret'}, 'tos')); assert.throws(()=>acceptAuth({...session(), expires_at:'invalid'}, 'tos'));
   assert.throws(()=>acceptAuth({...session(), access_token:'oat_'}, 'tos')); assert.throws(()=>acceptAuth({...session(), refresh_token:'ort_bad\nheader'}, 'tos'));

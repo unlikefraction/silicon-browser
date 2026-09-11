@@ -7,10 +7,10 @@ export function publicError(value: unknown): string {
   const message = value instanceof Error ? value.message : 'Something went wrong. Please try again.';
   return message.replace(/browser[ -]?use|tiny[ -]?fish/gi, 'browser service');
 }
-export function acceptAuth(value: AuthSession, org: string, identity?: string): AuthSession {
+export function acceptAuth(value: AuthSession, org?: string, identity?: string): AuthSession {
   if (!/^oat_[^\s\x00-\x1f\x7f]{1,16380}$/.test(value?.access_token || '') ||
       !/^ort_[^\s\x00-\x1f\x7f]{1,16380}$/.test(value?.refresh_token || '') ||
-      value.org?.id !== org || !value.identity?.id || (identity && value.identity.id !== identity) ||
+      !value.org?.id || (org !== undefined && value.org.id !== org) || !value.identity?.id || (identity && value.identity.id !== identity) ||
       !Number.isFinite(Date.parse(value.expires_at))) throw new Error('Sign-in did not match your organization or identity. Please sign in again.');
   return value;
 }
