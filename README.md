@@ -12,7 +12,7 @@ Run this in a macOS or Linux terminal:
 curl -fsSL https://raw.githubusercontent.com/unlikefraction/silicon-browser/v2/scripts/install.sh | sh && export PATH="$HOME/.local/bin:$PATH"
 ```
 
-The installer detects Intel/x86-64 or ARM64, verifies the release SHA-256, installs `sb` into `~/.local/bin`, updates your shell's PATH, and runs interactive setup. Follow the prompts for your organization and fresh IAM authorization tokens; setup checks recording delivery and installs the native browser controller. No Rust, Node/npm, local Chromium, or sudo is needed. Requires `curl`, `tar`, and `sha256sum` or `shasum`; Linux requires glibc 2.34 or later (Alpine/musl and 32-bit machines are not supported by this release). Running the command again reinstalls the pinned release and reruns setup.
+The installer detects Intel/x86-64 or ARM64, verifies the release SHA-256, installs `sb` into `~/.local/bin`, updates your shell's PATH, and runs interactive setup. Follow the prompts for a fresh IAM authorization token; choose an organization only when that token authorizes more than one. Setup checks recording delivery and installs the native browser controller. No Rust, Node/npm, local Chromium, or sudo is needed. Requires `curl`, `tar`, and `sha256sum` or `shasum`; Linux requires glibc 2.34 or later (Alpine/musl and 32-bit machines are not supported by this release). Running the command again reinstalls the pinned release and reruns setup.
 
 Then explore the commands:
 
@@ -22,11 +22,13 @@ sb --help remote-browser
 sb --help search-and-fetch
 ```
 
-For installation without interactive setup, use `curl -fsSL https://raw.githubusercontent.com/unlikefraction/silicon-browser/v2/scripts/install.sh | sh -s -- --no-setup`, then run `~/.local/bin/sb setup` when ready. You can also [download prebuilt binaries](https://github.com/unlikefraction/silicon-browser/releases/tag/managed-v0.1.2) or use `cargo install silicon-browser-cli --version 0.1.2 --locked` with Rust 1.98 or later. For a source checkout, use `cargo install --path crates/cli`.
+For installation without interactive setup, use `curl -fsSL https://raw.githubusercontent.com/unlikefraction/silicon-browser/v2/scripts/install.sh | sh -s -- --no-setup`, then run `~/.local/bin/sb setup` when ready. You can also [download prebuilt binaries](https://github.com/unlikefraction/silicon-browser/releases/tag/managed-v0.2.0) or use `cargo install silicon-browser-cli --version 0.2.0 --locked` with Rust 1.98 or later. For a source checkout, use `cargo install --path crates/cli`.
 
-The dashboard is live at [browser.teamofsilicons.com](https://browser.teamofsilicons.com). The CLI uses its production API by default. The published [Rust client](https://crates.io/crates/silicon-browser) is available with `cargo add silicon-browser@0.1.1`.
+`sb login <SLT>` exchanges a short-lived IAM token without an organization argument; IAM handles organization consent and Browser selects the active workspace. `sb login status --json` reports the current session, and `sb iam --json` prints the canonical application ID.
 
-Setup accepts a fresh org-bound IAM `oac_` token interactively or through `SB_AUTHTOKEN`. It exchanges the one-shot token and never persists it. An `oat_` in that variable is an explicit invocation-only bearer override. Setup installs the pinned native controller with integrity checks; it does not install local Chromium, Node or npm. Running setup again is safe.
+The dashboard is live at [browser.teamofsilicons.com](https://browser.teamofsilicons.com). The CLI uses its production API by default. The published [Rust client](https://crates.io/crates/silicon-browser) is available with `cargo add silicon-browser@0.2.0`.
+
+Setup accepts a fresh IAM `oac_` token interactively or through `SB_AUTHTOKEN`. IAM supplies the token's organization authorization; `--org` selects one when several are available. Setup exchanges the one-shot token and never persists it. An `oat_` in that variable is an explicit invocation-only bearer override. Setup installs the pinned native controller with integrity checks; it does not install local Chromium, Node or npm. Running setup again is safe.
 
 Private CLI state lives in `$SILICON_HOME/.silicon-browser` (or `~/.silicon-browser` when `SILICON_HOME` is unset), partitioned by normalized backend URL. `SB_HOME` remains an explicit override for tests and isolated runs. Local controller namespaces also distinguish organization, immutable principal and session. This lets different backends and logged-in identities use the CLI without sharing authentication or controller state.
 
@@ -52,7 +54,7 @@ sb search "browser automation" --purpose "Find primary sources"
 sb fetch https://example.com,https://example.org --purpose "Extract the relevant claims"
 ```
 
-These requests use the backend's shared search-provider key pool, batching and fair scheduling. With an org-bound OAT override, a clean CLI resolves a sole available organization; zero or multiple organizations require explicit setup or `--org-id`.
+These requests use the backend's shared search-provider key pool, batching and fair scheduling. With an OAT override, a clean CLI resolves a sole available organization; zero or multiple organizations require setup or `--org-id` to select the workspace.
 
 Recording discovery covers profiles, session actors, incognito runs and name/description metadata:
 
@@ -117,7 +119,7 @@ npm run build --prefix frontend
 
 Automated tests use fakes and do not read `.env` or create paid browsers. A synthetic file-backed WAL test exercises 500 simultaneous clients fetching connections and reporting commands; it does not establish a deployed SLA or provider quota. [Readiness evidence](docs/PRODUCTION_READINESS.md) distinguishes current code checks from earlier real Carbon/Silicon recording and live-view tests.
 
-IAM integration tests use a test application and `IAM_TEST_ENVIRONMENT_KEY`, the environment's secret root key rather than its public UUID. Leave that variable unset in production. Briefcase tests need its separate key paired with the IAM environment. The backend uses `silicon-iam-client 1.2.1`; recorded CLI checks used IAM 1.2.2 and Briefcase 0.1.3.
+IAM integration tests use a test application and `IAM_TEST_ENVIRONMENT_KEY`, the environment's secret root key rather than its public UUID. Leave that variable unset in production. Briefcase tests need its separate key paired with the IAM environment. The backend uses `silicon-iam-client 1.4.0`; recorded CLI checks used IAM 1.2.2 and Briefcase 0.1.3.
 
 `scripts/test_live_auth.py` checks exchange/refresh, identity and organization scoping, rejection behavior and optional CLI use without creating provider sessions. Supply `SB_TEST_BACKEND`, `SB_TEST_ORG`, a fresh `SB_TEST_SLT`, and optionally an absolute `SB_TEST_CLI`. It consumes and rotates the resulting test authorization without printing credentials.
 

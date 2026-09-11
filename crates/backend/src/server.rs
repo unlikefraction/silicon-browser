@@ -23,7 +23,7 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
 use silicon_browser_shared::{
     ApiError, ApiErrorEnvelope, AuthExchangeRequest, AuthRefreshRequest, AuthSession, CommandReport, Envelope,
-    FetchRequest, FetchResponse, FieldError, Identity, LiveRedeemRequest, Org, ProfileCreate, ProfileEnd,
+    FetchRequest, FetchResponse, FieldError, IamInfo, Identity, LiveRedeemRequest, Org, ProfileCreate, ProfileEnd,
     ProfileUpdate, ProxyLocation, RecordingFilter, SearchRequest, SearchResponse, Session, SessionConnection,
     SessionCreate, SessionEnd, SessionFilter, SessionStatus, UsageFilter, UsagePredicate, Validate,
 };
@@ -576,6 +576,7 @@ pub fn production_router(state: AppState) -> Router {
 pub fn router(state: AppState) -> Router {
     Router::new()
         .route("/healthz", get(health))
+        .route("/api/v1/iam", get(iam))
         .route("/api/v1/auth/exchange", post(exchange_auth))
         .route("/api/v1/auth/refresh", post(refresh_auth))
         .route("/api/v1/auth/delivery", get(delivery::authorization_status).post(delivery::authorize))
@@ -710,19 +711,27 @@ async fn health() -> impl IntoResponse {
     success(Health { status: "ok" })
 }
 
+async fn iam(State(state): State<AppState>) -> impl IntoResponse {
+    success(IamInfo { app_id: state.identity.app_id().to_owned() })
+}
+
 async fn exchange_auth(
     State(state): State<AppState>,
     payload: Result<Json<AuthExchangeRequest>, JsonRejection>,
 ) -> Result<impl IntoResponse, ApiFailure> {
     let request = json_payload(payload)?;
     request.validate().map_err(ApiFailure::validation)?;
-    let org_id = request.org_id;
+    let requested_org = request.org_id;
     let exchanged = state
         .identity
         .exchange_short_lived_token(ExchangeRequest {
-            idempotency_key: stable_idempotency("exchange", &request.short_lived_token, &org_id),
+            idempotency_key: stable_idempotency(
+                "exchange",
+                &request.short_lived_token,
+                requested_org.as_deref().unwrap_or("unscoped"),
+            ),
             short_lived_token: request.short_lived_token,
-            required_org_id: org_id,
+            required_org_id: requested_org,
         })
         .await
         .map_err(ApiFailure::from)?;
@@ -756,7 +765,7 @@ async fn refresh_auth(
 async fn auth_session(state: &AppState, exchanged: ExchangedAuth) -> Result<AuthSession, ApiFailure> {
     let identity = resolve_identity(state, &exchanged.identity).await?;
     let org = Org { id: exchanged.identity.org_id.clone(), name: exchanged.identity.org_id.clone() };
-    // IAM 1.1's exchange `scope` is the webhook event catalogue, not a list of
+    // IAM's exchange `scope` is the webhook event catalogue, not a list of
     // operations the resulting OAT may perform. Organization-bound OAT
     // introspection and membership are therefore the authorization authority.
     let _iam_webhook_scope = exchanged.scope;
@@ -1375,7 +1384,7 @@ async fn org_usage(
 ) -> Result<impl IntoResponse, ApiFailure> {
     let query = query_payload(query)?;
     let filter = parse_usage_filter(query.filter.as_deref())?;
-    // IAM 1.1's application-token introspection proves current membership in
+    // IAM's application-token introspection proves current membership in
     // this exact organization, but exposes no billing/admin capability. Until
     // IAM supplies one, membership authorizes only this non-dimensionalized
     // aggregate: it contains no session or principal identifiers. In
@@ -2880,9 +2889,9 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn auth_exchange_requires_org_in_the_wire_schema() {
+    async fn auth_exchange_without_org_is_forwarded_to_iam() {
         let fixture = fixture().await;
-        let (status, _, body) = request(
+        let (status, _, _body) = request(
             &fixture.app,
             "POST",
             "/api/v1/auth/exchange",
@@ -2890,8 +2899,7 @@ mod tests {
             Some(json!({"short_lived_token":"oac_single_use"})),
         )
         .await;
-        assert_eq!(status, StatusCode::BAD_REQUEST);
-        assert_eq!(serde_json::from_slice::<Value>(&body).unwrap()["error"]["code"], "invalid_json");
+        assert_eq!(status, StatusCode::UNAUTHORIZED);
     }
 
     #[tokio::test]

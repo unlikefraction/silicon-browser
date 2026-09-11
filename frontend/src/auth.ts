@@ -9,10 +9,10 @@ export function readEntry(url: URL) {
   const callback = url.pathname === '/auth/callback' ? { nonce: url.searchParams.get('nonce'), token: url.searchParams.get('slt') } : null;
   return { pending, callback, cleanPath: url.pathname };
 }
-export function loginUrl(origin: string, org: string, nonce: string) {
+export function loginUrl(origin: string, nonce: string) {
   const callback = new URL('/auth/callback', origin); callback.searchParams.set('nonce', nonce);
   const login = new URL('/login', IAM_AUTH_ORIGIN);
-  login.searchParams.set('app_id', IAM_APP_ID); login.searchParams.set('org_id', org); login.searchParams.set('redirect_uri', callback.href);
+  login.searchParams.set('app_id', IAM_APP_ID); login.searchParams.set('redirect_uri', callback.href);
   return login.href;
 }
 export function matchingCallback(event: Pick<MessageEvent, 'origin' | 'source' | 'data'>, origin: string, popup: Window, nonce: string): string | null {
@@ -39,7 +39,7 @@ export function completeCallback(callback: {nonce: string | null; token: string 
   setTimeout(() => { channel.close(); window.close(); }, 100);
   return true;
 }
-export function signInPopup(org: string, signal?: AbortSignal): Promise<string> {
+export function signInPopup(signal?: AbortSignal): Promise<string> {
   const nonce = crypto.randomUUID();
   const channel = new BroadcastChannel(`silicon-browser:auth:${nonce}`);
   const popup = window.open('about:blank', `browser-sign-in-${nonce}`, 'popup,width=520,height=720');
@@ -54,7 +54,7 @@ export function signInPopup(org: string, signal?: AbortSignal): Promise<string> 
     window.addEventListener('message', receive);
     signal?.addEventListener('abort', cancel, { once: true });
     if (signal?.aborted) { cancel(); return; }
-    popup.location.href = loginUrl(location.origin, org, nonce);
+    popup.location.href = loginUrl(location.origin, nonce);
     popup.focus();
   });
 }

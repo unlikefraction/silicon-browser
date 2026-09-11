@@ -19,16 +19,16 @@ main() {
     case "$(uname -s):$(uname -m)" in
         Darwin:arm64|Darwin:aarch64)
             target=aarch64-apple-darwin
-            digest=6292602fcaaf5fa0b4df4c2597afa3a55c6db8d53a2b1e3cb6eea00b47a47ac1 ;;
+            digest=aaa7bee5f38fcf8baadf915974db6fcdc5fb59166394eb950fba322eabdbb7d6 ;;
         Darwin:x86_64)
             target=x86_64-apple-darwin
-            digest=2144f7d11a8f082979b1dd1dc9958804b6a4d8154401e665085aa3a47502792c ;;
+            digest=9463bea93726a49268993239dd8db96be7eeb09912d2c2e0a2c46c787bce3838 ;;
         Linux:aarch64|Linux:arm64)
             target=aarch64-unknown-linux-gnu
-            digest=b393dc3cb74b1dd45671c021b125a4ab3a7df17a490daf6b36298aafbc970d5b ;;
+            digest=f4d38e5f5a8aa4a540916f49ac9f2b4d25ee77a2dc85e848469caac9093524cb ;;
         Linux:x86_64)
             target=x86_64-unknown-linux-gnu
-            digest=c4e5d07cecb45fc9da11362143bb595ba50104c513c4c9eb3d17095363dd29d0 ;;
+            digest=c9098373413311012be9b70b2e138c10378a48398412fa2b1059b8455624af90 ;;
         *) fail 'Supported platforms: macOS and Linux on x86-64 or ARM64.' ;;
     esac
     case "$target" in
@@ -62,11 +62,11 @@ main() {
     trap 'rm -rf "$work"' EXIT
     trap 'exit 130' INT
     trap 'exit 143' TERM
-    asset="sb-v0.1.2-$target"
-    printf 'Installing sb 0.1.2 for %s…\n' "$target"
+    asset="sb-v0.2.0-$target"
+    printf 'Installing sb 0.2.0 for %s…\n' "$target"
     curl --fail --show-error --silent --location --proto '=https' --tlsv1.2 \
         --retry 3 --connect-timeout 20 --max-time 300 \
-        "https://github.com/unlikefraction/silicon-browser/releases/download/managed-v0.1.2/$asset.tar.gz" \
+        "https://github.com/unlikefraction/silicon-browser/releases/download/managed-v0.2.0/$asset.tar.gz" \
         --output "$work/archive.tar.gz"
     if [ "$checksum" = sha256sum ]; then
         actual=$(sha256sum "$work/archive.tar.gz")

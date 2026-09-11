@@ -523,7 +523,7 @@ fn setup_rejects_an_unknown_environment_token_family_before_network_access() {
 }
 
 #[test]
-fn setup_requires_the_iam_org_before_exchanging_an_environment_slt() {
+fn setup_exchanges_an_environment_slt_without_an_org() {
     let state_root = tempfile::tempdir().unwrap();
     isolated_sb(&state_root.path().join("state"), "http://127.0.0.1:9")
         .env("SB_AUTHTOKEN", "oac_single_use")
@@ -532,10 +532,7 @@ fn setup_requires_the_iam_org_before_exchanging_an_environment_slt() {
         .assert()
         .failure()
         .stdout("")
-        .stderr(
-            predicate::str::contains("IAM requires its organization before exchange, so pass `--org <id>`")
-                .and(predicate::str::contains("could not be reached").not()),
-        );
+        .stderr(predicate::str::contains("could not be reached"));
 }
 
 #[cfg(unix)]

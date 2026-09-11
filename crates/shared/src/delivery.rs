@@ -33,7 +33,6 @@ impl std::fmt::Debug for DeliveryAuthorizationRequest {
 }
 impl crate::Validate for DeliveryAuthorizationRequest {
     fn validate(&self) -> Result<(), crate::ValidationError> {
-        crate::AuthExchangeRequest { short_lived_token: self.short_lived_token.clone(), org_id: "delivery".into() }
-            .validate()
+        crate::AuthExchangeRequest { short_lived_token: self.short_lived_token.clone(), org_id: None }.validate()
     }
 }

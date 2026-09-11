@@ -2260,7 +2260,7 @@ dependencies = [
 
 [[package]]
 name = "silicon-browser"
-version = "0.1.1"
+version = "0.2.0"
 dependencies = [
  "base64 0.22.1",
  "chrono",
@@ -2279,7 +2279,7 @@ dependencies = [
 
 [[package]]
 name = "silicon-browser-backend"
-version = "0.1.1"
+version = "0.2.0"
 dependencies = [
  "aes-gcm",
  "async-trait",
@@ -2312,7 +2312,7 @@ dependencies = [
 
 [[package]]
 name = "silicon-browser-cli"
-version = "0.1.2"
+version = "0.2.0"
 dependencies = [
  "assert_cmd",
  "chrono",
@@ -2333,7 +2333,7 @@ dependencies = [
 
 [[package]]
 name = "silicon-browser-shared"
-version = "0.1.1"
+version = "0.2.0"
 dependencies = [
  "chrono",
  "serde",
@@ -2345,9 +2345,9 @@ dependencies = [
 
 [[package]]
 name = "silicon-iam-client"
-version = "1.2.1"
+version = "1.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e9fc3322f0b085ee7ade1b5bd8756b728327c8efb0540ce333167a97839386f8"
+checksum = "47343a94ab566732e59ec03781455c6ffce446a3a7b4abdd727ee62bbc9448c8"
 dependencies = [
  "hmac 0.12.1",
  "http",

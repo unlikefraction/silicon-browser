@@ -37,7 +37,7 @@ const RECORDING_ENDPOINT_PATH: &str = "/api/v1/obo/files";
 
 /// Identity facts an application token can prove through IAM introspection.
 ///
-/// IAM 1.2 supplies public identity and optional membership tags in the current
+/// IAM supplies public identity and optional membership tags in the current
 /// authorization snapshot. Undisclosed tags remain absent and grant no access.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct PrincipalIdentity {
@@ -89,13 +89,12 @@ pub struct DeliveryTokenExchange {
     pub access_active: bool,
 }
 
-/// The setup flow must select an org before exchanging the SLT. IAM binds the
-/// org when it mints the SLT; exchange verifies that binding rather than trying
-/// to change it.
+/// IAM owns organization consent. This optional workspace preference may only
+/// select an organization already authorized by the SLT.
 #[derive(Clone, PartialEq, Eq)]
 pub struct ExchangeRequest {
     pub short_lived_token: String,
-    pub required_org_id: String,
+    pub required_org_id: Option<String>,
     /// Reuse this value when retrying the same logical exchange.
     pub idempotency_key: String,
 }
@@ -171,8 +170,8 @@ pub struct RecordingProof {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum IdentityCapability {
-    /// An unbound OAT has no organization list in IAM 1.2. Callers need an
-    /// org-bound SLT or a separately authenticated direct-IAM session.
+    /// Reserved for an identity provider that cannot enumerate an unscoped
+    /// token's authorized organizations.
     OrganizationsForUnboundApplicationToken,
     RecordingProof,
     RevokeApplicationToken,
@@ -212,11 +211,15 @@ pub enum IdentityError {
 
 #[async_trait]
 pub trait IdentityProvider: Send + Sync {
+    /// Public application identifier used to obtain an SLT from IAM.
+    fn app_id(&self) -> &str {
+        "tos>browser"
+    }
+
     /// Resolve an OAT inside an explicit organization context.
     async fn identify(&self, bearer: &str, org: &str) -> Result<PrincipalIdentity, IdentityError>;
 
-    /// Return the one org bound into an OAT. IAM 1.2 cannot enumerate orgs for
-    /// an unbound OAT, which is reported as a typed capability error.
+    /// Return only the organizations currently authorized by an OAT.
     async fn orgs(&self, bearer: &str) -> Result<Vec<OrganizationAccess>, IdentityError>;
 
     /// Exchange the single-use short-lived token IAM gave the caller.
@@ -248,11 +251,10 @@ pub trait IdentityProvider: Send + Sync {
     }
 }
 
-/// Silicon IAM 1.2 adapter.
+/// Silicon IAM adapter.
 ///
-/// The adapter uses IAM 1.2's published models and wire contract. Every request
-/// travels through redirect-refusing clients, so a bearer or application
-/// credential can never be replayed to a redirect target.
+/// Every request travels through redirect-refusing clients, so a bearer or
+/// application credential can never be replayed to a redirect target.
 #[derive(Clone)]
 pub struct SiliconIamIdentityProvider {
     http: reqwest::Client,
@@ -587,7 +589,7 @@ impl SiliconIamIdentityProvider {
         org: &str,
         operation: &'static str,
     ) -> Result<DeliveryTokenExchange, IdentityError> {
-        match self.validate_exchanged(response.clone(), org, operation).await {
+        match self.validate_exchanged(response.clone(), Some(org), operation).await {
             Ok(auth) => return Ok(DeliveryTokenExchange { auth, access_active: true }),
             Err(IdentityError::Unauthenticated) => {}
             Err(error) => return Err(error),
@@ -637,14 +639,10 @@ impl SiliconIamIdentityProvider {
     async fn validate_exchanged(
         &self,
         response: OAuthTokenResponse,
-        required_org_id: &str,
+        required_org_id: Option<&str>,
         operation: &'static str,
     ) -> Result<ExchangedAuth, IdentityError> {
-        let org_id = response
-            .org_id
-            .as_deref()
-            .ok_or(IdentityError::Contract { operation, reason: "IAM returned an unbound application token" })?;
-        if org_id != required_org_id {
+        if response.org_id.as_deref().is_some_and(|value| required_org_id.is_some_and(|expected| value != expected)) {
             return Err(IdentityError::Forbidden);
         }
         if response.token_type.as_str() != Some("Bearer") {
@@ -662,12 +660,24 @@ impl SiliconIamIdentityProvider {
         }
 
         // Do not trust exchange metadata alone. Verify that IAM considers the
-        // new OAT active in precisely the requested org.
-        let claims = self.introspect(&response.access_token, Some(required_org_id)).await?;
+        // new OAT active in an organization already authorized by the SLT.
+        let claims = self.introspect(&response.access_token, required_org_id).await?;
+        let org_id = required_org_id
+            .map(str::to_owned)
+            .or_else(|| response.org_id.clone())
+            .or_else(|| {
+                organizations_from_claims(&claims, &self.app_id, Utc::now()).ok()?.into_iter().map(|org| org.id).min()
+            })
+            .ok_or(IdentityError::Contract { operation, reason: "IAM returned no organization authorization" })?;
+        let selected_claims = if claims.org_id.as_deref() == Some(org_id.as_str()) {
+            claims
+        } else {
+            self.introspect(&response.access_token, Some(&org_id)).await?
+        };
         let identity = identity_from_claims(
-            &claims,
+            &selected_claims,
             &self.app_id,
-            required_org_id,
+            &org_id,
             Some(response.actor.public_id.clone()),
             Utc::now(),
         )?;
@@ -688,6 +698,10 @@ impl SiliconIamIdentityProvider {
 
 #[async_trait]
 impl IdentityProvider for SiliconIamIdentityProvider {
+    fn app_id(&self) -> &str {
+        &self.app_id
+    }
+
     async fn identify(&self, bearer: &str, org: &str) -> Result<PrincipalIdentity, IdentityError> {
         validate_org_id(org)?;
         if let Some(cache) = &self.authorization_cache {
@@ -704,17 +718,25 @@ impl IdentityProvider for SiliconIamIdentityProvider {
 
     async fn exchange_short_lived_token(&self, request: ExchangeRequest) -> Result<ExchangedAuth, IdentityError> {
         let response = self.exchange_slt(&request).await?;
-        self.validate_exchanged(response, &request.required_org_id, "short-lived-token exchange").await
+        self.validate_exchanged(response, request.required_org_id.as_deref(), "short-lived-token exchange").await
     }
 
     async fn refresh(&self, request: RefreshRequest) -> Result<ExchangedAuth, IdentityError> {
         let response = self.exchange_refresh(&request).await?;
-        self.validate_exchanged(response, &request.required_org_id, "refresh-token exchange").await
+        self.validate_exchanged(response, Some(&request.required_org_id), "refresh-token exchange").await
     }
 
     async fn exchange_delivery_token(&self, request: ExchangeRequest) -> Result<DeliveryTokenExchange, IdentityError> {
         let response = self.exchange_slt(&request).await?;
-        self.validate_delivery_exchange(response, &request.required_org_id, "delivery SLT exchange").await
+        self.validate_delivery_exchange(
+            response,
+            request.required_org_id.as_deref().ok_or(IdentityError::InvalidInput {
+                field: "org_id",
+                reason: "delivery exchange requires an organization",
+            })?,
+            "delivery SLT exchange",
+        )
+        .await
     }
 
     async fn refresh_delivery_token(&self, request: RefreshRequest) -> Result<DeliveryTokenExchange, IdentityError> {
@@ -805,14 +827,30 @@ fn organizations_from_claims(
     app_id: &str,
     now: DateTime<Utc>,
 ) -> Result<Vec<OrganizationAccess>, IdentityError> {
-    let Some(id) = claims.org_id.clone() else {
-        validate_common_claims(claims, app_id, now)?;
-        return Err(IdentityError::CapabilityUnavailable(IdentityCapability::OrganizationsForUnboundApplicationToken));
-    };
-    // Org discovery must enforce the same complete identity contract as a
-    // scoped request; an incomplete active response is not authorization.
-    identity_from_claims(claims, app_id, &id, None, now)?;
-    Ok(vec![OrganizationAccess { id, name: None }])
+    if let Some(id) = claims.org_id.clone() {
+        identity_from_claims(claims, app_id, &id, None, now)?;
+        return Ok(vec![OrganizationAccess { id, name: None }]);
+    }
+    validate_common_claims(claims, app_id, now)?;
+    let authorizations = claims.authorizations.as_ref().ok_or(IdentityError::Contract {
+        operation: "token introspection",
+        reason: "an unscoped token had no organization authorizations",
+    })?;
+    let mut result = Vec::with_capacity(authorizations.len());
+    for authorization in authorizations {
+        let id = authorization.org_id.clone();
+        let mut selected = claims.clone();
+        selected.org_id = Some(id.clone());
+        selected.membership_id = Some(authorization.membership_id);
+        selected.authorization_epoch = Some(authorization.authorization_epoch);
+        selected.authorization = Some(authorization.clone());
+        selected.authorizations = None;
+        identity_from_claims(&selected, app_id, &id, None, now)?;
+        result.push(OrganizationAccess { id, name: None });
+    }
+    result.sort_by(|left, right| left.id.cmp(&right.id));
+    result.dedup_by(|left, right| left.id == right.id);
+    Ok(result)
 }
 
 fn validate_common_claims(claims: &TokenIntrospection, app_id: &str, now: DateTime<Utc>) -> Result<(), IdentityError> {
@@ -981,7 +1019,9 @@ fn validate_exchange_request(request: &ExchangeRequest) -> Result<(), IdentityEr
         field: "short_lived_token",
         reason: "expected IAM's oac_ short-lived-token form",
     })?;
-    validate_org_id(&request.required_org_id)?;
+    if let Some(org) = &request.required_org_id {
+        validate_org_id(org)?;
+    }
     validate_idempotency_key(&request.idempotency_key)
 }
 
@@ -1345,7 +1385,7 @@ impl IdentityProvider for FakeIdentityProvider {
             .read()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
             .exchanges
-            .get(&(token_digest(&request.short_lived_token), request.required_org_id))
+            .get(&(token_digest(&request.short_lived_token), request.required_org_id.unwrap_or_default()))
             .cloned()
             .unwrap_or(Err(IdentityError::Unauthenticated))
     }
@@ -1417,6 +1457,7 @@ mod tests {
                     name: "growth".into(),
                 }]),
             }),
+            authorizations: None,
         }
     }
 
@@ -1527,10 +1568,8 @@ mod tests {
         let mut unbound = claims();
         unbound.org_id = None;
         unbound.membership_id = None;
-        assert_eq!(
-            organizations_from_claims(&unbound, APP, Utc::now()),
-            Err(IdentityError::CapabilityUnavailable(IdentityCapability::OrganizationsForUnboundApplicationToken))
-        );
+        unbound.authorizations = Some(Vec::new());
+        assert_eq!(organizations_from_claims(&unbound, APP, Utc::now()).unwrap(), Vec::<OrganizationAccess>::new());
     }
 
     #[test]
@@ -1541,7 +1580,7 @@ mod tests {
         assert!(
             validate_exchange_request(&ExchangeRequest {
                 short_lived_token: oac('C'),
-                required_org_id: ORG.into(),
+                required_org_id: Some(ORG.into()),
                 idempotency_key: "0123456789abcdef".into(),
             })
             .is_ok()
@@ -1742,7 +1781,7 @@ mod tests {
                     .unwrap();
             // The ordinary browser login API still rejects the expired OAT.
             assert!(matches!(
-                provider.validate_exchanged(response.clone(), ORG, "test").await,
+                provider.validate_exchanged(response.clone(), Some(ORG), "test").await,
                 Err(IdentityError::Unauthenticated)
             ));
             let recovered = provider.validate_delivery_exchange(response, ORG, "test recovery").await;
@@ -1840,7 +1879,7 @@ mod tests {
         let result = fake
             .exchange_short_lived_token(ExchangeRequest {
                 short_lived_token: slt.clone(),
-                required_org_id: ORG.into(),
+                required_org_id: Some(ORG.into()),
                 idempotency_key: "ignored-by-fake".into(),
             })
             .await
@@ -2048,7 +2087,7 @@ mod tests {
             provider
                 .exchange_short_lived_token(ExchangeRequest {
                     short_lived_token: oac('B'),
-                    required_org_id: ORG.into(),
+                    required_org_id: Some(ORG.into()),
                     idempotency_key: "0123456789abcdef".into(),
                 })
                 .await,

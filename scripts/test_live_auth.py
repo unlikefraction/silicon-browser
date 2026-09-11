@@ -2,7 +2,8 @@
 """Opt-in live auth contract checks; no browser/provider sessions are created.
 
 Run against a backend configured with IAM_TEST_ENVIRONMENT_KEY. Supply a fresh
-org-bound IAM SLT in SB_TEST_SLT, its org in SB_TEST_ORG, and the backend URL in
+IAM SLT authorized for the test organization in SB_TEST_SLT, its org in
+SB_TEST_ORG, and the backend URL in
 SB_TEST_BACKEND. Optional SB_TEST_CLI points to an sb binary. Credentials remain
 in memory; the CLI uses a temporary home and an invocation-only bearer override.
 """

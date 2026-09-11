@@ -76,11 +76,19 @@ struct Cli {
 
 #[derive(Subcommand, Debug)]
 enum Command {
-    /// Install/check the runner and authenticate to an explicit IAM organization.
+    /// Print this application's IAM identifier.
+    Iam,
+    /// Exchange an IAM short-lived token and store the resulting session.
+    Login {
+        token: Option<String>,
+        #[command(subcommand)]
+        command: Option<LoginCommand>,
+    },
+    /// Install/check the runner and authenticate with an IAM short-lived token.
     /// Recording delivery uses a separate fresh Browser oac_ token via SB_RECORDING_SLT
     /// or a masked prompt. An active backend authorization is reused.
     Setup {
-        /// IAM organization the short-lived token is bound to; required before exchange.
+        /// Select an organization already authorized by the short-lived token.
         #[arg(long)]
         org: Option<String>,
     },
@@ -100,6 +108,12 @@ enum Command {
     Search(SearchArgs),
     /// Render URLs and return extracted text with Silicon Browser.
     Fetch(FetchArgs),
+}
+
+#[derive(Subcommand, Debug)]
+enum LoginCommand {
+    /// Report whether the stored session is authenticated.
+    Status,
 }
 
 #[derive(Args, Debug)]
@@ -338,13 +352,27 @@ fn main() -> ExitCode {
     if let Some(code) = special_help(&raw) {
         return code;
     }
-    let cli = Cli::parse();
+    let cli = Cli::parse_from(parse_arguments(&raw));
     match execute(cli, &raw[1..]) {
         Ok(()) => ExitCode::SUCCESS,
         Err(error) => {
             eprintln!("sb: {error}");
             ExitCode::from(error_exit_code(error.as_ref()))
         }
+    }
+}
+
+fn parse_arguments(raw: &[String]) -> Vec<String> {
+    if raw.get(1).is_some_and(|command| command != "run")
+        && let Some(index) = raw.iter().position(|argument| argument == "--json")
+        && index > 1
+    {
+        let mut parsed = raw.to_vec();
+        let json = parsed.remove(index);
+        parsed.insert(1, json);
+        parsed
+    } else {
+        raw.to_vec()
     }
 }
 
@@ -395,8 +423,46 @@ fn execute(cli: Cli, arguments: &[String]) -> Result<(), Box<dyn std::error::Err
     {
         return Ok(());
     }
-    let root = default_home();
     let backend = cli.backend.as_deref().unwrap_or(silicon_browser::DEFAULT_BACKEND_URL);
+    match &cli.command {
+        Some(Command::Iam) => {
+            let info = Client::iam(backend)?;
+            if cli.json {
+                print_json(&info)?;
+            } else {
+                println!("{}", info.app_id);
+            }
+            return Ok(());
+        }
+        Some(Command::Login { command: Some(LoginCommand::Status), .. }) => {
+            return login_status(backend, cli.json, cli.org_id.as_deref());
+        }
+        Some(Command::Login { token: Some(token), command: None }) => {
+            let root = default_home();
+            let home = state::home_for_backend(&root, backend)?;
+            let mut state = State::load(&home)?;
+            let auth = Client::exchange(
+                backend,
+                &AuthExchangeRequest { short_lived_token: token.clone(), org_id: cli.org_id.clone() },
+            )?;
+            apply_auth_session(&mut state, &home, auth)?;
+            if cli.json {
+                print_json(
+                    &serde_json::json!({"authenticated": true, "org": state.org_id, "identity": state.identity_id}),
+                )?;
+            } else {
+                println!(
+                    "authenticated as {} in {}",
+                    state.identity_id.as_deref().unwrap_or("authenticated"),
+                    state.org_id.as_deref().unwrap_or("unknown organization")
+                );
+            }
+            return Ok(());
+        }
+        Some(Command::Login { token: None, command: None }) => return Err("usage: sb login <short-lived-token>".into()),
+        _ => {}
+    }
+    let root = default_home();
     let home = state::home_for_backend(&root, backend)?;
     let mut state = State::load(&home)?;
     if state.stored_token().is_some() && state.credential_generation.is_none() {
@@ -475,6 +541,25 @@ fn execute(cli: Cli, arguments: &[String]) -> Result<(), Box<dyn std::error::Err
     Ok(())
 }
 
+fn login_status(backend: &str, json: bool, org_override: Option<&str>) -> Result<(), Box<dyn std::error::Error>> {
+    let root = default_home();
+    let home = state::home_for_backend(&root, backend)?;
+    let mut state = State::load(&home)?;
+    if let Some(org) = org_override {
+        state.org_id = Some(org.to_owned());
+    }
+    let authenticated = match state.token() {
+        Some(token) => client_with_token(&state, &token).and_then(|client| Ok(client.me()?)).is_ok(),
+        None => false,
+    };
+    if json {
+        print_json(&serde_json::json!({"authenticated": authenticated}))?;
+    } else {
+        println!("{}", if authenticated { "authenticated" } else { "not authenticated" });
+    }
+    Ok(())
+}
+
 fn apply_runtime_overrides(state: &mut State, backend: Option<&str>, org_id: Option<&str>) {
     if let Some(backend) = backend {
         state.backend_url = backend.to_owned();
@@ -502,12 +587,12 @@ fn validate_runtime_environment_auth(state: &State) -> Result<(), Box<dyn std::e
     }
     if token.starts_with("oac_") {
         return Err(
-            "SB_AUTHTOKEN contains an IAM oac_ short-lived token; exchange requires an organization, so run `sb setup --org <id>` first"
+            "SB_AUTHTOKEN contains an IAM oac_ short-lived token; run `sb setup` to exchange it and select an organization"
                 .into(),
         );
     }
     Err(
-        "SB_AUTHTOKEN must be an IAM oat_ access token, or an oac_ short-lived token exchanged with `sb setup --org <id>`"
+        "SB_AUTHTOKEN must be an IAM oat_ access token, or an oac_ short-lived token exchanged with `sb setup`"
             .into(),
     )
 }
@@ -536,7 +621,7 @@ fn resolve_org_if_missing(state: &mut State, home: &std::path::Path) -> Result<(
 
 fn sole_bound_org(orgs: Vec<Org>) -> Result<String, Box<dyn std::error::Error>> {
     match orgs.as_slice() {
-        [] => Err("this token has no accessible organization; run `sb setup` with an org-bound IAM token".into()),
+        [] => Err("this token has no accessible organization; run `sb setup` with an IAM token authorized for an organization".into()),
         [org] => Ok(org.id.clone()),
         _ => Err("this token can access multiple organizations; pass --org-id <id> explicitly".into()),
     }
@@ -574,12 +659,7 @@ fn setup(
     let can_replace_auth = explicit_env.is_none() && io::stdin().is_terminal();
     let mut exchanged = false;
     if environment_kind == Some(SetupEnvironmentTokenKind::ShortLived) {
-        let org_id = state
-            .org_id
-            .clone()
-            .ok_or(
-                "SB_AUTHTOKEN contains an IAM oac_ short-lived token; IAM requires its organization before exchange, so pass `--org <id>`",
-            )?;
+        let org_id = state.org_id.clone();
         exchange_setup_token_value(state, home, explicit_env.expect("classified token exists"), org_id)?;
         exchanged = true;
     }
@@ -598,7 +678,7 @@ fn setup(
                 .into());
             }
             return Err(
-                "no auth token: set SB_AUTHTOKEN to an oat_ access token, or run `sb setup --org <id>` with an IAM oac_ short-lived token"
+                "no auth token: set SB_AUTHTOKEN to an oat_ access token, or run `sb setup` with an IAM oac_ short-lived token"
                     .into(),
             );
         }
@@ -764,10 +844,7 @@ fn client_for_setup(state: &State, prefer_stored_token: bool) -> Result<Client, 
 }
 
 fn exchange_setup_token(state: &mut State, home: &std::path::Path) -> Result<(), Box<dyn std::error::Error>> {
-    let org_id = match state.org_id.clone() {
-        Some(org) => org,
-        None => prompt("IAM organization id (required before token exchange)")?,
-    };
+    let org_id = state.org_id.clone();
     let short_lived_token =
         rpassword::prompt_password("IAM oac_ short-lived token (never your password or long-lived credential): ")?;
     exchange_setup_token_value(state, home, short_lived_token, org_id)
@@ -777,7 +854,7 @@ fn exchange_setup_token_value(
     state: &mut State,
     home: &std::path::Path,
     short_lived_token: String,
-    org_id: String,
+    org_id: Option<String>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let auth = Client::exchange(state.backend_url.clone(), &AuthExchangeRequest { short_lived_token, org_id })?;
     apply_auth_session(state, home, auth)
@@ -827,6 +904,7 @@ fn dispatch(
     home: &std::path::Path,
 ) -> Result<(), Box<dyn std::error::Error>> {
     match command {
+        Command::Iam | Command::Login { .. } => unreachable!(),
         Command::Setup { .. } => unreachable!(),
         Command::Profile(service) => profile(client, service.command, json)?,
         Command::Proxy(service) => match service.command {
@@ -1357,7 +1435,7 @@ fn prompt(label: &str) -> io::Result<String> {
 
 fn select_org(orgs: Vec<Org>) -> Result<String, Box<dyn std::error::Error>> {
     match orgs.as_slice() {
-        [] => Err("this token has no accessible organization; mint an org-bound IAM short-lived token".into()),
+        [] => Err("this token has no accessible organization; mint an IAM short-lived token authorized for an organization".into()),
         [org] => Ok(org.id.clone()),
         many if io::stdin().is_terminal() => {
             for (index, org) in many.iter().enumerate() {

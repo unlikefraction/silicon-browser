@@ -48,6 +48,14 @@ impl Client {
 
     // Authentication and identity ---------------------------------------------------------
 
+    /// Discover the backend's IAM application without an existing login.
+    pub fn iam(base: impl Into<String>) -> Result<IamInfo, Error> {
+        let client = Self::new(base, Auth::new("pre-auth")?)?;
+        let info: IamInfo = client.send_without_auth(Method::Get, "/api/v1/iam", None)?;
+        validate_id(&info.app_id, "app_id")?;
+        Ok(info)
+    }
+
     /// Exchange a single-use IAM short-lived token. This is deliberately an associated
     /// function: there is no bearer with which to construct a normal Client yet.
     pub fn exchange(base: impl Into<String>, request: &AuthExchangeRequest) -> Result<AuthSession, Error> {
@@ -56,7 +64,7 @@ impl Client {
         let client = Self::new(base, placeholder)?;
         let session: AuthSession =
             client.send_without_auth(Method::Post, "/api/v1/auth/exchange", Some(json(request)?))?;
-        validate_auth_session(&session, &request.org_id)?;
+        validate_auth_session(&session, request.org_id.as_deref())?;
         Ok(session)
     }
 
@@ -66,7 +74,7 @@ impl Client {
         let client = Self::new(base, placeholder)?;
         let session: AuthSession =
             client.send_without_auth(Method::Post, "/api/v1/auth/refresh", Some(json(request)?))?;
-        validate_auth_session(&session, &request.org_id)?;
+        validate_auth_session(&session, Some(&request.org_id))?;
         Ok(session)
     }
 
@@ -364,9 +372,9 @@ fn validation(error: ValidationError) -> Error {
     Error::Local(error.to_string())
 }
 
-fn validate_auth_session(session: &AuthSession, expected_org: &str) -> Result<(), Error> {
+fn validate_auth_session(session: &AuthSession, expected_org: Option<&str>) -> Result<(), Error> {
     session.validate().map_err(protocol)?;
-    if expected_org != session.org.id {
+    if expected_org.is_some_and(|org| org != session.org.id) {
         return Err(Error::Protocol("authentication response was bound to a different organization".into()));
     }
     Ok(())
@@ -598,11 +606,11 @@ mod tests {
             "services": ["session"]
         }))
         .unwrap();
-        let error = validate_auth_session(&session, "expected-org").unwrap_err();
+        let error = validate_auth_session(&session, Some("expected-org")).unwrap_err();
         assert!(matches!(error, Error::Protocol(_)));
         session.org.id = "expected-org".into();
         session.access_token = "oat_bad\nheader".into();
-        assert!(validate_auth_session(&session, "expected-org").is_err());
+        assert!(validate_auth_session(&session, Some("expected-org")).is_err());
     }
 
     /// Test group: the documented log default is today's UTC date, sent explicitly so backend

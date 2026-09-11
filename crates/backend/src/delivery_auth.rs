@@ -459,7 +459,7 @@ impl DeliveryAuth {
                 .identity
                 .exchange_delivery_token(ExchangeRequest {
                     short_lived_token: credentials.slt.clone().ok_or(DeliveryAuthError::Storage)?,
-                    required_org_id: row.org_id.clone(),
+                    required_org_id: Some(row.org_id.clone()),
                     idempotency_key: key.into(),
                 })
                 .await

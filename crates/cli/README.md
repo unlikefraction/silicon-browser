@@ -9,11 +9,11 @@ Install and set up from a macOS or Linux terminal:
 curl -fsSL https://raw.githubusercontent.com/unlikefraction/silicon-browser/v2/scripts/install.sh | sh && export PATH="$HOME/.local/bin:$PATH"
 ```
 
-This selects and verifies the native release, installs `sb` into `~/.local/bin`, adds it to your shell's PATH, and runs setup with prompts for your organization and IAM authorization. Supports Intel/x86-64 and ARM64; Linux needs glibc 2.34 or later, so Alpine/musl is currently unsupported. Requires `curl`, `tar`, and `sha256sum` or `shasum`. No Rust toolchain or sudo is needed. Use `sh -s -- --no-setup` instead of `sh` to install without authentication, then run `~/.local/bin/sb setup` later.
+This selects and verifies the native release, installs `sb` into `~/.local/bin`, adds it to your shell's PATH, and runs setup with a fresh IAM authorization token. Setup asks for an organization only when that token authorizes more than one. Supports Intel/x86-64 and ARM64; Linux needs glibc 2.34 or later, so Alpine/musl is currently unsupported. Requires `curl`, `tar`, and `sha256sum` or `shasum`. No Rust toolchain or sudo is needed. Use `sh -s -- --no-setup` instead of `sh` to install without authentication, then run `~/.local/bin/sb setup` later.
 
 CLI state lives in `$SILICON_HOME/.silicon-browser`, falling back to `~/.silicon-browser` when `SILICON_HOME` is unset. `SB_HOME` overrides the entire state directory for tests and isolated runs.
 
-`sb setup --org <id>` authenticates, checks recording delivery, and installs the native local controller when needed. It uses a private installation under the CLI state directory’s `bin` folder, verifies the pinned release SHA-256, and reuses an already correctly pinned PATH installation. No Node/npm or local Chromium installation is required.
+`sb iam --json` prints the canonical application ID. `sb login <SLT>` authenticates with an IAM short-lived token; organization consent is handled by IAM. `sb login status --json` reports the current session. `sb setup --org <id>` authenticates, checks recording delivery, and installs the native local controller when needed. It uses a private installation under the CLI state directory’s `bin` folder, verifies the pinned release SHA-256, and reuses an already correctly pinned PATH installation. No Node/npm or local Chromium installation is required.
 
 ```sh
 sb session new --incognito --name "Research" --description "Read the product page" --ttl 15m

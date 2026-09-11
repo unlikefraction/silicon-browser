@@ -47,16 +47,21 @@ pub struct Org {
     pub name: String,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct IamInfo {
+    pub app_id: String,
+}
+
 /// Exchanges an IAM short-lived token (SLT) for browser OAuth-style tokens.
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct AuthExchangeRequest {
     #[serde(alias = "token")]
     pub short_lived_token: String,
-    /// IAM exchanges a short-lived token only in an explicitly selected
-    /// organization; there is no unscoped exchange or pre-exchange directory
-    /// lookup.
-    pub org_id: OrgId,
+    /// Optional workspace preference among organizations already authorized in IAM.
+    /// When absent, Browser selects the first authorized organization by ID.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub org_id: Option<OrgId>,
 }
 
 impl fmt::Debug for AuthExchangeRequest {
@@ -72,7 +77,9 @@ impl fmt::Debug for AuthExchangeRequest {
 impl Validate for AuthExchangeRequest {
     fn validate(&self) -> Result<(), ValidationError> {
         opaque_auth_token(&self.short_lived_token, "oac_", "short_lived_token")?;
-        identifier(&self.org_id, "org_id")?;
+        if let Some(org) = &self.org_id {
+            identifier(org, "org_id")?;
+        }
         Ok(())
     }
 }
@@ -1084,7 +1091,7 @@ mod model_tests {
     /// Test group: IAM secrets never appear in Debug output and token families validate.
     #[test]
     fn auth_tokens_are_redacted_and_typed() {
-        let exchange = AuthExchangeRequest { short_lived_token: "oac_single_use".into(), org_id: "tos".into() };
+        let exchange = AuthExchangeRequest { short_lived_token: "oac_single_use".into(), org_id: Some("tos".into()) };
         assert!(exchange.validate().is_ok());
         assert_eq!(
             serde_json::to_value(&exchange).unwrap(),
@@ -1092,12 +1099,12 @@ mod model_tests {
         );
         assert!(!format!("{exchange:?}").contains("oac_single_use"));
         assert!(
-            AuthExchangeRequest { short_lived_token: "oac_single_use".into(), org_id: String::new() }
+            AuthExchangeRequest { short_lived_token: "oac_single_use".into(), org_id: Some(String::new()) }
                 .validate()
                 .is_err()
         );
         assert!(
-            AuthExchangeRequest { short_lived_token: "oat_wrong_family".into(), org_id: "tos".into() }
+            AuthExchangeRequest { short_lived_token: "oat_wrong_family".into(), org_id: Some("tos".into()) }
                 .validate()
                 .is_err()
         );
@@ -1105,7 +1112,7 @@ mod model_tests {
             serde_json::from_value::<AuthExchangeRequest>(json!({
                 "short_lived_token": "oac_single_use"
             }))
-            .is_err()
+            .is_ok()
         );
 
         let request = AuthRefreshRequest { refresh_token: "ort_secret".into(), org_id: "tos".into() };

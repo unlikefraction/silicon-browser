@@ -92,15 +92,13 @@ function App() {
       }
     } finally { if (ticket === revision) setLoading(false); }
   }
-  async function tokenFor(org: string) {
+  async function tokenFor() {
     signInAbort = new AbortController(); setSigningIn(true);
-    try { return await signInPopup(org, signInAbort.signal); } finally { setSigningIn(false); signInAbort = null; }
+    try { return await signInPopup(signInAbort.signal); } finally { setSigningIn(false); signInAbort = null; }
   }
   async function login() {
-    const chosenOrg = org().trim();
-    if (!chosenOrg) throw new Error('Enter your organization ID.');
-    const token = await tokenFor(chosenOrg);
-    const result = acceptAuth(await api.request<AuthSession>('/auth/exchange', 'POST', { short_lived_token: token, org_id: chosenOrg }, null), chosenOrg);
+    const token = await tokenFor();
+    const result = acceptAuth(await api.request<AuthSession>('/auth/exchange', 'POST', { short_lived_token: token }, null));
     api.setSession(result); setAuth(result);
     await enterWorkspace();
   }
@@ -115,7 +113,7 @@ function App() {
   }
   async function authorize() {
     const current = auth(); if (!current) return;
-    const token = await tokenFor(current.org.id);
+    const token = await tokenFor();
     const result = await api.call<Delivery>('/auth/delivery', 'POST', { short_lived_token: token });
     setDelivery(result);
     setNotice('Recording access is ready. Your recordings will be saved after each session.');
@@ -197,7 +195,7 @@ function App() {
         <Show when={signingIn()}><div class="notice auth-wait" role="status"><span>Complete sign-in in the IAM window.</span><button onClick={() => signInAbort?.abort()}>Cancel sign-in</button></div></Show>
         <Show when={auth()} fallback={<section class="welcome">
           <span class="eyebrow">YOUR BROWSER WORKSPACE</span><h1>A browser, ready<br/>when you are.</h1><p>Start a session. Keep your profiles. Work together across the web.</p>
-          <form class="login-panel" onSubmit={event => submit(event, login)}><h2>Sign in to Browser</h2><p class="muted">Use your Silicon IAM identity to continue.</p><label>Organization ID<input name="org" autocomplete="organization" required value={org()} onInput={event => setOrg(event.currentTarget.value)} placeholder="your-organization"/></label><button class="primary wide" disabled={busy()}>{busy() ? 'Waiting for sign-in…' : 'Continue with IAM'} <span aria-hidden="true">↗</span></button><p class="fine">Sign-in opens in a separate window. You’ll stay signed in when you refresh this tab.</p></form>
+          <form class="login-panel" onSubmit={event => submit(event, login)}><h2>Sign in to Browser</h2><p class="muted">Use your Silicon IAM identity to continue.</p><button class="primary wide" disabled={busy()}>{busy() ? 'Waiting for sign-in…' : 'Continue with IAM'} <span aria-hidden="true">↗</span></button><p class="fine">Sign-in opens in a separate window. You’ll stay signed in when you refresh this tab.</p></form>
           <Show when={pendingLive}><p class="hint">You have a live browser invitation. Sign in to its organization to continue.</p></Show>
           <div class="welcome-features"><div><span class="mono">01 / PROFILES</span><p>Keep a consistent identity across sessions.</p></div><div><span class="mono">02 / TOGETHER</span><p>Bring people and agents into the same browser.</p></div><div><span class="mono">03 / RECORDED</span><p>Return to your work when a session ends.</p></div></div>
         </section>}>
