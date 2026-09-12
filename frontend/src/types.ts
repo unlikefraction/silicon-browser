@@ -1,4 +1,5 @@
 export interface Identity { id: string; name: string; kind: 'carbon' | 'silicon' }
+export interface Organization { id: string; name: string }
 export interface AuthSession { access_token: string; refresh_token: string; expires_at: string; identity: Identity; org: { id: string; name: string }; services?: string[] }
 export interface Location { code: string; name: string }
 export interface Profile { id: string; name: string; fingerprint: string; location: Location; access: string[]; owner_id: string; sessions_run: number; status: string }

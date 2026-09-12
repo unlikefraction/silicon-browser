@@ -119,7 +119,7 @@ npm run build --prefix frontend
 
 Automated tests use fakes and do not read `.env` or create paid browsers. A synthetic file-backed WAL test exercises 500 simultaneous clients fetching connections and reporting commands; it does not establish a deployed SLA or provider quota. [Readiness evidence](docs/PRODUCTION_READINESS.md) distinguishes current code checks from earlier real Carbon/Silicon recording and live-view tests.
 
-IAM integration tests use a test application and `IAM_TEST_ENVIRONMENT_KEY`, the environment's secret root key rather than its public UUID. Leave that variable unset in production. Briefcase tests need its separate key paired with the IAM environment. The backend uses `silicon-iam-client 1.4.0`; recorded CLI checks used IAM 1.2.2 and Briefcase 0.1.3.
+IAM integration tests use a test application and `IAM_TEST_ENVIRONMENT_KEY`, the environment's secret root key rather than its public UUID. Leave that variable unset in production. Briefcase tests need its separate key paired with the IAM environment. The backend uses `silicon-iam-client 1.5.0`; recorded CLI checks used IAM 1.2.2 and Briefcase 0.1.3.
 
 `scripts/test_live_auth.py` checks exchange/refresh, identity and organization scoping, rejection behavior and optional CLI use without creating provider sessions. Supply `SB_TEST_BACKEND`, `SB_TEST_ORG`, a fresh `SB_TEST_SLT`, and optionally an absolute `SB_TEST_CLI`. It consumes and rotates the resulting test authorization without printing credentials.
 

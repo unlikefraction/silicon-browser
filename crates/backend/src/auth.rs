@@ -598,18 +598,31 @@ impl SiliconIamIdentityProvider {
         // can recover a late idempotency replay. Exchange metadata alone is not authority.
         let claims = self.introspect_credential(&response.refresh_token, Some(org), "refresh_token").await?;
         validate_common_claims(&claims, &self.app_id, Utc::now())?;
-        let kind = actor_ref_kind(&response.actor.type_field, operation)?;
-        let kind_matches = matches!(
-            (&claims.actor_type, kind),
-            (Some(TokenIntrospectionActorType::Carbon), IdentityKind::Carbon)
-                | (Some(TokenIntrospectionActorType::Silicon), IdentityKind::Silicon)
-        );
-        if claims.org_id.as_deref() != Some(org)
-            || claims.principal_id != Some(response.actor.principal_id)
-            || response.actor.principal_id.is_nil()
-            || !kind_matches
-        {
+        if claims.org_id.as_deref() != Some(org) {
             return Err(IdentityError::Forbidden);
+        }
+        let kind = match claims.actor_type {
+            Some(TokenIntrospectionActorType::Carbon) => IdentityKind::Carbon,
+            Some(TokenIntrospectionActorType::Silicon) => IdentityKind::Silicon,
+            _ => {
+                return Err(IdentityError::Contract {
+                    operation,
+                    reason: "refresh actor type was not carbon or silicon",
+                });
+            }
+        };
+        let principal_id = claims.principal_id.filter(|id| !id.is_nil()).ok_or(IdentityError::Forbidden)?;
+        if let Some(actor) = response.actor.as_ref() {
+            let snapshot_public_id =
+                claims.authorization.as_ref().and_then(|authorization| authorization.public_id.as_deref());
+            if actor.principal_id.is_nil()
+                || principal_id != actor.principal_id
+                || kind != actor_ref_kind(&actor.type_field, operation)?
+                || actor.public_id.trim().is_empty()
+                || snapshot_public_id.is_some_and(|public_id| public_id != actor.public_id)
+            {
+                return Err(IdentityError::Forbidden);
+            }
         }
         let membership_id = claims.membership_id.filter(|id| !id.is_nil()).ok_or(IdentityError::Forbidden)?;
         let authorization_epoch =
@@ -623,8 +636,8 @@ impl SiliconIamIdentityProvider {
                 refresh_token: response.refresh_token,
                 scope: claims.scope.unwrap_or_default(),
                 identity: PrincipalIdentity {
-                    principal_id: response.actor.principal_id,
-                    public_id: Some(response.actor.public_id),
+                    principal_id,
+                    public_id: response.actor.as_ref().map(|actor| actor.public_id.clone()),
                     tags: None,
                     kind,
                     org_id: org.into(),
@@ -655,9 +668,17 @@ impl SiliconIamIdentityProvider {
             .map_err(|_| IdentityError::Contract { operation, reason: "access_token did not have IAM's OAT form" })?;
         validate_opaque_token(&response.refresh_token, &["ort_"])
             .map_err(|_| IdentityError::Contract { operation, reason: "refresh_token did not have IAM's ORT form" })?;
-        if response.actor.public_id.trim().is_empty() {
-            return Err(IdentityError::Contract { operation, reason: "exchange actor had no public_id" });
-        }
+        let actor_public_id = response
+            .actor
+            .as_ref()
+            .map(|actor| {
+                if actor.public_id.trim().is_empty() {
+                    Err(IdentityError::Contract { operation, reason: "exchange actor had no public_id" })
+                } else {
+                    Ok(actor.public_id.clone())
+                }
+            })
+            .transpose()?;
 
         // Do not trust exchange metadata alone. Verify that IAM considers the
         // new OAT active in an organization already authorized by the SLT.
@@ -674,15 +695,10 @@ impl SiliconIamIdentityProvider {
         } else {
             self.introspect(&response.access_token, Some(&org_id)).await?
         };
-        let identity = identity_from_claims(
-            &selected_claims,
-            &self.app_id,
-            &org_id,
-            Some(response.actor.public_id.clone()),
-            Utc::now(),
-        )?;
-        if identity.principal_id != response.actor.principal_id
-            || identity.kind != actor_ref_kind(&response.actor.type_field, operation)?
+        let identity = identity_from_claims(&selected_claims, &self.app_id, &org_id, actor_public_id, Utc::now())?;
+        if let Some(actor) = response.actor.as_ref()
+            && (identity.principal_id != actor.principal_id
+                || identity.kind != actor_ref_kind(&actor.type_field, operation)?)
         {
             return Err(IdentityError::Contract { operation, reason: "exchange actor did not match introspection" });
         }
@@ -791,7 +807,7 @@ impl IdentityProvider for SiliconIamIdentityProvider {
         }
         let mutation = Mutation::with_key(IdempotencyKey::parse(request.idempotency_key).map_err(obo_sdk_error)?);
         let proof = self.sdk.obo().exchange_signed(&silicon_iam_client::models::OboExchangeRequest {
-            subject_token: bearer.to_owned(), audience: request.audience, endpoint_id: RECORDING_ENDPOINT_ID.into(),
+            org_id: Some(request.expected_org_id.clone()), subject_token: bearer.to_owned(), audience: request.audience, endpoint_id: RECORDING_ENDPOINT_ID.into(),
             metadata: serde_json::json!({"path":request.path, "name":request.name, "content_type":request.content_type}),
             request: silicon_iam_client::models::OboExchangeRequestBinding {
                 method: "POST".into(), body_sha256: request.body_sha256,
@@ -922,9 +938,10 @@ fn identity_from_claims(
     let authorization = claims.authorization.as_ref().ok_or_else(invalid)?;
     let kind_matches = matches!(
         (&authorization.actor_type, identity.kind),
-        (ApplicationAuthorizationActorType::Carbon, IdentityKind::Carbon)
-            | (ApplicationAuthorizationActorType::Silicon, IdentityKind::Silicon)
+        (Some(ApplicationAuthorizationActorType::Carbon), IdentityKind::Carbon)
+            | (Some(ApplicationAuthorizationActorType::Silicon), IdentityKind::Silicon)
     );
+    let authorization_public_id = authorization.public_id.as_deref().filter(|id| !id.trim().is_empty());
     let scopes: HashSet<&str> = claims.scope.as_deref().ok_or_else(invalid)?.split_whitespace().collect();
     let authorization_scopes: HashSet<&str> = authorization.scopes.iter().map(String::as_str).collect();
     if authorization.principal_id != identity.principal_id
@@ -933,17 +950,17 @@ fn identity_from_claims(
         || authorization.membership_id != identity.membership_id
         || authorization.authorization_epoch != identity.authorization_epoch
         || authorization.audience != app_id
-        || authorization.public_id.trim().is_empty()
-        || identity.public_id.as_ref().is_some_and(|id| id != &authorization.public_id)
+        || authorization_public_id.is_none()
+        || identity.public_id.as_deref().is_some_and(|id| Some(id) != authorization_public_id)
         || scopes != authorization_scopes
         || authorization.scopes.len() != authorization_scopes.len()
         || (authorization.tags.is_some() && !scopes.contains("memberships.read"))
-        || (authorization.org_role.is_some() && !scopes.contains("roles.read"))
+        || (authorization.org_role.is_some() && !scopes.contains("self.membership.read"))
         || authorization.tags.as_ref().is_some_and(|tags| tags.iter().any(|tag| tag.name.trim().is_empty()))
     {
         return Err(invalid());
     }
-    identity.public_id = Some(authorization.public_id.clone());
+    identity.public_id = Some(authorization_public_id.expect("validated above").to_owned());
     identity.tags = authorization.tags.as_ref().map(|tags| tags.iter().map(|tag| tag.name.clone()).collect());
     Ok(identity)
 }
@@ -1441,8 +1458,8 @@ mod tests {
             authorization_epoch: Some(7),
             authorization: Some(silicon_iam_client::models::ApplicationAuthorization {
                 principal_id: Uuid::from_u128(1),
-                actor_type: ApplicationAuthorizationActorType::Silicon,
-                public_id: "silicon-1".into(),
+                actor_type: Some(ApplicationAuthorizationActorType::Silicon),
+                public_id: Some("silicon-1".into()),
                 organization_id: Uuid::from_u128(4),
                 org_id: ORG.into(),
                 membership_id: Uuid::from_u128(2),
@@ -1504,12 +1521,12 @@ mod tests {
             let snapshot = inspected.authorization.as_mut().unwrap();
             match mutation {
                 0 => snapshot.principal_id = Uuid::new_v4(),
-                1 => snapshot.actor_type = ApplicationAuthorizationActorType::Carbon,
+                1 => snapshot.actor_type = Some(ApplicationAuthorizationActorType::Carbon),
                 2 => snapshot.org_id = "another-org".into(),
                 3 => snapshot.membership_id = Uuid::new_v4(),
                 4 => snapshot.authorization_epoch += 1,
                 5 => snapshot.audience = "another>app".into(),
-                6 => snapshot.public_id.clear(),
+                6 => snapshot.public_id = Some(String::new()),
                 7 => snapshot.scopes.push("roles.read".into()),
                 8 => snapshot.org_role = Some("owner".into()),
                 _ => inspected.authorization = None,
@@ -1707,7 +1724,7 @@ mod tests {
                         assert!(lower.contains("authorization: basic "));
                         assert!(!lower.contains("x-org-id:"));
                         json!({"application":{"app_id":"tos>briefcase","org_id":ORG},"endpoints":[{
-                            "endpoint_id":RECORDING_ENDPOINT_ID,"path":RECORDING_ENDPOINT_PATH,
+                            "critical":false,"endpoint_id":RECORDING_ENDPOINT_ID,"path":RECORDING_ENDPOINT_PATH,
                             "metadata":{"path":{"type":"string"},"name":{"type":"string"},"content_type":{"type":"string"}}
                         }]})
                     }
@@ -1724,7 +1741,7 @@ mod tests {
                             serde_json::from_str(request.split_once("\r\n\r\n").unwrap().1).unwrap();
                         assert_eq!(
                             wire,
-                            json!({"subject_token":oat('A'),"audience":"tos>briefcase","endpoint_id":RECORDING_ENDPOINT_ID,
+                            json!({"org_id":ORG,"subject_token":oat('A'),"audience":"tos>briefcase","endpoint_id":RECORDING_ENDPOINT_ID,
                             "metadata":{"path":"","name":"session-recording.webm","content_type":"video/webm"},
                             "request":{"method":"POST","body_sha256":expected_digest}})
                         );

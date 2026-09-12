@@ -2345,9 +2345,9 @@ dependencies = [
 
 [[package]]
 name = "silicon-iam-client"
-version = "1.4.0"
+version = "1.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "47343a94ab566732e59ec03781455c6ffce446a3a7b4abdd727ee62bbc9448c8"
+checksum = "97d7f325519d50895359d8b73b39cd68ef8e21ea10e53dcfdb4c36ca0791725c"
 dependencies = [
  "hmac 0.12.1",
  "http",

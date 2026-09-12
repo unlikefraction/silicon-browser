@@ -10,7 +10,7 @@ import { BrowserApi, acceptAuth, publicError, safeHttps, segment, shellQuote, da
 import { readEntry, completeCallback, signInPopup } from './auth';
 import { recordingRecovery } from './recordings';
 import { TabSession } from './session';
-import type { AuthSession, Profile, Session, Recording, Usage, UsageLimits, Location, Delivery, SessionLog } from './types';
+import type { AuthSession, Organization, Profile, Session, Recording, Usage, UsageLimits, Location, Delivery, SessionLog } from './types';
 
 const entry = readEntry(new URL(location.href));
 // Remove one-use credentials and live grants before rendering, login, or API requests.
@@ -36,7 +36,7 @@ function Badge(props: { state: string }) { return <span class={`badge ${props.st
 function Empty(props: { children: JSX.Element }) { return <div class="empty">{props.children}</div>; }
 function App() {
   const [auth, setAuth] = createSignal<AuthSession | null>(restored);
-  const [org, setOrg] = createSignal(restored?.org.id || 'tos');
+  const [organizations, setOrganizations] = createSignal<Organization[]>(restored ? [restored.org] : []);
   const [busy, setBusy] = createSignal(false);
   const [loading, setLoading] = createSignal(false);
   const [notice, setNotice] = createSignal('');
@@ -102,13 +102,33 @@ function App() {
     api.setSession(result); setAuth(result);
     await enterWorkspace();
   }
+  async function loadOrganizations() {
+    const current = api.currentSession(); if (!current) return;
+    const items = await api.call<Organization[]>('/orgs');
+    if (!items.some(item => item.id === current.org.id)) items.unshift(current.org);
+    setOrganizations(items.filter((item, index, all) => all.findIndex(candidate => candidate.id === item.id) === index));
+  }
   async function enterWorkspace() {
+    await loadOrganizations();
     if (pendingLive) { const link = pendingLive; pendingLive = null; await openLive(link.id, link.grant); }
     else await navigate('sessions');
   }
+  async function switchOrganization(next: Organization) {
+    const current = api.currentSession(); if (!current || current.org.id === next.id) return;
+    const previous = current;
+    api.setSession({ ...current, org: next }); setAuth(api.currentSession());
+    try { await api.call('/me'); await navigate(activeTab() as Tab); }
+    catch (error) { api.setSession(previous); setAuth(previous); throw error; }
+  }
+  async function attachOrganizations() {
+    const token = await tokenFor();
+    const result = acceptAuth(await api.request<AuthSession>('/auth/exchange', 'POST', { short_lived_token: token }, null));
+    api.setSession(result); setAuth(result); await enterWorkspace();
+    setNotice('Organization access updated.');
+  }
   function logout() {
     api.setSession(null); setAuth(null); ++revision; setLiveUrl(''); setSession(undefined); pendingLive = null;
-    setNotice(''); setLoading(false); setDelivery(undefined); setSessions([]); setProfiles([]); setRecordings([]); setUsage([]); setTotal(undefined); setLimits(undefined); setLogs([]);
+    setNotice(''); setLoading(false); setDelivery(undefined); setSessions([]); setProfiles([]); setRecordings([]); setUsage([]); setTotal(undefined); setLimits(undefined); setLogs([]); setOrganizations([]);
     history.replaceState(null, '', '/');
   }
   async function authorize() {
@@ -184,6 +204,9 @@ function App() {
       <a class="brand" href="/" aria-label="Browser home"><img src={brandMark} alt="" width="28" height="28"/><span class="brand-wordmark">Browser</span></a>
       <div class="rail-label">WORKSPACE</div>
       <Show when={auth()} fallback={<p class="rail-note">A shared browser workspace for Carbons and Silicons.</p>}>
+        <div class="rail-label org-label">ORGANIZATIONS</div>
+        <div class="org-list" aria-label="Organizations"><For each={organizations()}>{item => <button class="org-item" classList={{ selected: auth()?.org.id === item.id }} disabled={busy()} aria-current={auth()?.org.id === item.id ? 'page' : undefined} onClick={() => void perform(() => switchOrganization(item))}><span class="org-dot" aria-hidden="true">{item.name.slice(0, 1).toUpperCase()}</span><span>{item.name}</span></button>}</For><button class="org-add" disabled={busy()} title="Attach another organization" onClick={() => void perform(attachOrganizations)}><span aria-hidden="true">+</span><span>Attach organization</span></button></div>
+        <div class="rail-label workspace-label">WORKSPACE</div>
         <nav aria-label="Workspace"><For each={tabs}>{tab => <button disabled={busy()} aria-current={activeTab() === tab ? 'page' : undefined} onClick={() => void perform(() => navigate(tab))}><span>{tab === 'settings' ? 'Settings' : tab[0].toUpperCase() + tab.slice(1)}</span><span aria-hidden="true">{activeTab() === tab ? '→' : ''}</span></button>}</For></nav>
       </Show>
       <div class="rail-bottom"><a href="https://github.com/teamofsilicons/silicon-browser#readme" target="_blank" rel="noopener noreferrer">CLI & documentation ↗</a><span class="mono">TEAM OF SILICONS</span></div>
