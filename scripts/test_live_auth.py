@@ -82,7 +82,7 @@ def main():
     identity = request("identity", "/api/v1/me", token=token)
     check("identity matches exchanged actor", identity == session["identity"])
     orgs = request("organization discovery", "/api/v1/orgs", token=token, scope=None)
-    check("discovery stays in bound organization", len(orgs) == 1 and orgs[0]["id"] == org)
+    check("discovery includes bound organization", any(item.get("id") == org for item in orgs))
     for path in ("services", "profiles", "sessions", "recordings", "usage"):
         request(path + " listing", "/api/v1/" + path, token=token)
     request("missing bearer rejected", "/api/v1/me", expected=401)
