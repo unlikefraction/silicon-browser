@@ -7,5 +7,5 @@ for (const file of ['package.json', 'README.md', 'LICENSE', 'bin/launcher.js', '
   if (!existsSync(join(root, file))) throw new Error(`missing ${file}`);
 }
 const result = spawnSync(process.execPath, [join(root, 'bin/launcher.js'), '--version'], { encoding: 'utf8' });
-if (process.platform === 'darwin' && result.status !== 0) throw new Error(result.stderr || 'native --version failed');
+if ((process.platform === 'darwin' || process.platform === 'linux') && result.status !== 0) throw new Error(result.stderr || 'native --version failed');
 console.log('package files and native launcher check passed');

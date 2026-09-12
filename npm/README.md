@@ -4,10 +4,10 @@ This package replaces the previous `silicon-browser` npm CLI with the managed Si
 
 ```sh
 npx silicon-browser --version
-npx sb login
 npx sb setup
+npx sb login <short-lived-token>
 ```
 
-The package bundles verified release binaries for macOS and Linux on x64 and arm64, so installation does not run a downloader or postinstall script. Linux requires glibc 2.34 or newer; Windows, Alpine, and other platforms are unsupported.
+The package bundles checksum-verified release binaries for macOS and Linux on x64 and arm64, so installation does not run a downloader or postinstall script. Linux requires glibc 2.34 or newer; Windows, Alpine, and other platforms are unsupported.
 
 See the current product site at https://browser.teamofsilicons.com.
