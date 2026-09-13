@@ -56,7 +56,7 @@ Run `sb setup` to install the pinned runner and unlock its version-matched actio
     name = "sb",
     version,
     about = "Managed remote browsers and fast web discovery",
-    long_about = "Silicon Browser has two daily paths:\n  remote-browser   interaction-heavy work in an authenticated browser\n  search-and-fetch read-heavy research without a browser session\n\nRun `sb --help remote-browser` or `sb --help search-and-fetch` for the shortest useful flow.",
+    long_about = "Silicon Browser has two daily paths:\n  remote-browser   interaction-heavy work in an authenticated browser\n  search-and-fetch read-heavy research without a browser session\n\nRun `sb --help remote-browser` or `sb --help search-and-fetch` for the shortest useful flow.\n\nSource: https://github.com/unlikefraction/silicon-browser\nDocs: https://github.com/unlikefraction/silicon-browser/tree/main/docs\nRust crate: https://crates.io/crates/silicon-browser",
     disable_help_subcommand = true,
     arg_required_else_help = false
 )]
@@ -83,6 +83,19 @@ enum Command {
         token: Option<String>,
         #[command(subcommand)]
         command: Option<LoginCommand>,
+    },
+    /// Submit a reproducible bug report to the public GitHub repository.
+    #[command(name = "report-bug", visible_alias = "bug", visible_alias = "bug-report")]
+    ReportBug {
+        /// Short issue title.
+        #[arg(long)]
+        title: String,
+        /// Reproduction, observed output, and expected behavior.
+        #[arg(long)]
+        details: String,
+        /// Optional GitHub PR/branch/commit that fixes the issue.
+        #[arg(long, visible_alias = "pr-ref")]
+        pr: Option<String>,
     },
     /// Install/check the runner and authenticate with an IAM short-lived token.
     /// Recording delivery uses a separate fresh Browser oac_ token via SB_RECORDING_SLT
@@ -434,6 +447,9 @@ fn execute(cli: Cli, arguments: &[String]) -> Result<(), Box<dyn std::error::Err
             }
             return Ok(());
         }
+        Some(Command::ReportBug { title, details, pr }) => {
+            return report_bug(title, details, pr.as_deref(), cli.json);
+        }
         Some(Command::Login { command: Some(LoginCommand::Status), .. }) => {
             return login_status(backend, cli.json, cli.org_id.as_deref());
         }
@@ -541,6 +557,42 @@ fn execute(cli: Cli, arguments: &[String]) -> Result<(), Box<dyn std::error::Err
     Ok(())
 }
 
+fn report_bug(title: &str, details: &str, pr: Option<&str>, json: bool) -> Result<(), Box<dyn std::error::Error>> {
+    if title.trim().is_empty() || details.trim().is_empty() {
+        return Err("--title and --details must both be non-empty".into());
+    }
+    let mut body = format!(
+        "## Reproduction and observed behavior\n\n{details}\n\n---\n\nCLI version: {}\nRepository: https://github.com/unlikefraction/silicon-browser\nDocumentation: https://github.com/unlikefraction/silicon-browser/tree/main/docs\nRust package: https://crates.io/crates/silicon-browser",
+        env!("CARGO_PKG_VERSION")
+    );
+    if let Some(pr) = pr.filter(|value| !value.trim().is_empty()) {
+        body.push_str(&format!("\n\nProposed fix: {pr}"));
+    }
+    let output = std::process::Command::new("gh")
+        .args(["issue", "create", "--repo", "unlikefraction/silicon-browser", "--title", title, "--body", &body])
+        .env("GH_PROMPT_DISABLED", "1")
+        .output()
+        .map_err(|error| {
+            format!("cannot submit bug report: `gh` is required (install GitHub CLI and authenticate first): {error}")
+        })?;
+    if !output.status.success() {
+        let message = String::from_utf8_lossy(&output.stderr).trim().to_owned();
+        return Err(format!(
+            "GitHub rejected bug report (exit {}): {}",
+            output.status,
+            if message.is_empty() { "no diagnostic output" } else { &message }
+        )
+        .into());
+    }
+    let url = String::from_utf8_lossy(&output.stdout).trim().to_owned();
+    if json {
+        print_json(&serde_json::json!({"submitted": true, "url": url}))?;
+    } else {
+        println!("bug report submitted: {url}");
+    }
+    Ok(())
+}
+
 fn login_status(backend: &str, json: bool, org_override: Option<&str>) -> Result<(), Box<dyn std::error::Error>> {
     let root = default_home();
     let home = state::home_for_backend(&root, backend)?;
@@ -591,10 +643,7 @@ fn validate_runtime_environment_auth(state: &State) -> Result<(), Box<dyn std::e
                 .into(),
         );
     }
-    Err(
-        "SB_AUTHTOKEN must be an IAM oat_ access token, or an oac_ short-lived token exchanged with `sb setup`"
-            .into(),
-    )
+    Err("SB_AUTHTOKEN must be an IAM oat_ access token, or an oac_ short-lived token exchanged with `sb setup`".into())
 }
 
 fn resolve_org_if_missing(state: &mut State, home: &std::path::Path) -> Result<(), Box<dyn std::error::Error>> {
@@ -904,7 +953,7 @@ fn dispatch(
     home: &std::path::Path,
 ) -> Result<(), Box<dyn std::error::Error>> {
     match command {
-        Command::Iam | Command::Login { .. } => unreachable!(),
+        Command::Iam | Command::Login { .. } | Command::ReportBug { .. } => unreachable!(),
         Command::Setup { .. } => unreachable!(),
         Command::Profile(service) => profile(client, service.command, json)?,
         Command::Proxy(service) => match service.command {
@@ -1435,7 +1484,10 @@ fn prompt(label: &str) -> io::Result<String> {
 
 fn select_org(orgs: Vec<Org>) -> Result<String, Box<dyn std::error::Error>> {
     match orgs.as_slice() {
-        [] => Err("this token has no accessible organization; mint an IAM short-lived token authorized for an organization".into()),
+        [] => Err(
+            "this token has no accessible organization; mint an IAM short-lived token authorized for an organization"
+                .into(),
+        ),
         [org] => Ok(org.id.clone()),
         many if io::stdin().is_terminal() => {
             for (index, org) in many.iter().enumerate() {
@@ -1601,6 +1653,7 @@ mod tests {
             vec!["sb", "usage", "show", "--org"],
             vec!["sb", "search", "query", "--purpose", "reason"],
             vec!["sb", "fetch", "https://example.com", "--purpose", "reason"],
+            vec!["sb", "report-bug", "--title", "broken", "--details", "steps and output", "--pr", "owner/repo#1"],
             vec!["sb", "run", "s1", "fill @e1 'hello world'", "--json"],
         ] {
             Cli::try_parse_from(args).unwrap();
