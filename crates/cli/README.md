@@ -3,6 +3,9 @@
 `sb` is the stateful command-line shell over the stateless `silicon-browser` Rust package.
 Run `sb --help` to choose between a managed remote browser and fast search/fetch.
 
+For the full command contract, agent-oriented diagnostics, and development
+workflow, see [`docs/CLI.md`](../../docs/CLI.md).
+
 Install and set up from a macOS or Linux terminal:
 
 ```sh
