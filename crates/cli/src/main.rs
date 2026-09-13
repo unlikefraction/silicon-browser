@@ -77,8 +77,14 @@ struct Cli {
 #[derive(Subcommand, Debug)]
 enum Command {
     /// Print this application's IAM identifier.
+    #[command(
+        long_about = "Print this application's canonical IAM identifier without authentication.\n\nUse it when minting a short-lived token with the official IAM CLI:\n  iam login --app-id '<app-id>' --grant-org <org>\n  sb login '<short-lived-token>'"
+    )]
     Iam,
     /// Exchange an IAM short-lived token and store the resulting session.
+    #[command(
+        long_about = "Exchange an IAM short-lived token and store the resulting session.\n\nTokens come from the official IAM CLI or its web consent flow; Browser never asks for an IAM password or credentials.\n\nTypical flow:\n  iam login --app-id '<app-id>' --grant-org <org>\n  sb login '<short-lived-token>'\n  sb login status --json"
+    )]
     Login {
         token: Option<String>,
         #[command(subcommand)]
