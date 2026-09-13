@@ -33,7 +33,7 @@ disable that stream and never block browser use.
 
 For installation without interactive setup, use `curl -fsSL https://raw.githubusercontent.com/unlikefraction/silicon-browser/v2/scripts/install.sh | sh -s -- --no-setup`, then run `~/.local/bin/sb setup` when ready. You can also [download prebuilt binaries](https://github.com/unlikefraction/silicon-browser/releases/tag/managed-v0.2.0) or use `cargo install silicon-browser-cli --version 0.2.0 --locked` with Rust 1.98 or later. For a source checkout, use `cargo install --path crates/cli`.
 
-`sb login <SLT>` exchanges a short-lived IAM token without an organization argument; IAM handles organization consent and Browser selects the active workspace. `sb login status --json` reports the current session, and `sb iam --json` prints the canonical application ID.
+`sb login <SLT>` exchanges a short-lived IAM token; use `--org-id` when the IAM CLI token authorizes multiple workspaces. For example, `iam login --app-id 'tos>browser' --grant-org tos -o json | jq -r .slt` followed by `sb --org-id tos login '<SLT>'`. `sb login status --json` reports the current session, and `sb iam --json` prints the canonical application ID.
 
 The dashboard is live at [browser.teamofsilicons.com](https://browser.teamofsilicons.com). The CLI uses its production API by default. The published [Rust client](https://crates.io/crates/silicon-browser) is available with `cargo add silicon-browser@0.2.0`.
 

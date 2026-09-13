@@ -36,6 +36,17 @@ sb login "<short-lived IAM token>"
 sb login status --json
 ```
 
+The official IAM CLI can mint Browser's token directly. Pass the selected
+organization when a Carbon has access to more than one workspace:
+
+```sh
+slt=$(iam login --app-id 'tos>browser' --grant-org tos -o json | jq -r .slt)
+sb --org-id tos login "$slt"
+```
+
+The SLT is single-use and expires quickly; Browser never receives an IAM
+password, verification code, Silicon token, or refresh credential.
+
 `iam --json` always returns an object containing `app_id`; `login status --json`
 always returns `authenticated` and may include identity, organization, and
 expiry details. Treat unknown JSON fields as forward-compatible additions.
