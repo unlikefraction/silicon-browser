@@ -13,7 +13,7 @@ sb run --help
 
 Each command explains what it is for, a normal next step, accepted flags, and
 the exact error code returned on failure. JSON output is intended for agents;
-put `--json` before the command (`sb --json session ls`).
+the standard form places `--json` after the command (`sb iam --json`).
 The web dashboard is a convenience subset of these API capabilities; automation
 should use the CLI or the stateless Rust client.
 
