@@ -128,8 +128,21 @@ npm run build --prefix frontend
 
 Automated tests use fakes and do not read `.env` or create paid browsers. A synthetic file-backed WAL test exercises 500 simultaneous clients fetching connections and reporting commands; it does not establish a deployed SLA or provider quota. [Readiness evidence](docs/PRODUCTION_READINESS.md) distinguishes current code checks from earlier real Carbon/Silicon recording and live-view tests.
 
-IAM integration tests use a test application and `IAM_TEST_ENVIRONMENT_KEY`, the environment's secret root key rather than its public UUID. Leave that variable unset in production. Briefcase tests need its separate key paired with the IAM environment. The backend uses `silicon-iam-client 1.5.0`; recorded CLI checks used IAM 1.2.2 and Briefcase 0.1.3.
+IAM integration tests use a test application and `IAM_TEST_ENVIRONMENT_KEY`, the environment's secret root key rather than its public UUID. Leave that variable unset in production. Briefcase tests need its separate key paired with the IAM environment. The backend uses `silicon-iam-client 1.9.0`; recorded CLI checks used IAM 1.2.2 and Briefcase 0.1.3.
 
 `scripts/test_live_auth.py` checks exchange/refresh, identity and organization scoping, rejection behavior and optional CLI use without creating provider sessions. Supply `SB_TEST_BACKEND`, `SB_TEST_ORG`, a fresh `SB_TEST_SLT`, and optionally an absolute `SB_TEST_CLI`. It consumes and rotates the resulting test authorization without printing credentials.
+
+Browser tests use the same `sb` binary and API paths as production. Run a test
+backend with `IAM_TEST_ENVIRONMENT_KEY` and an isolated database, then mint the
+SLT inside the matching IAM environment and pass it to the test backend:
+
+```sh
+slt=$(iam --test <environment-uuid> login --app-id 'tos>browser' --grant-org tos -o json | jq -r .slt)
+SB_TEST_BACKEND=https://browser-test.example SB_TEST_ORG=tos SB_TEST_SLT="$slt" \
+  SB_TEST_CLI=/absolute/path/to/sb python3 scripts/test_live_auth.py
+```
+
+Production credentials and test credentials are rejected across planes; no
+production browser session is created by this test.
 
 External observations remain in local reports. IAM's sibling-OAT revocation behavior and independently owned refresh recovery are documented in [the IAM finding](docs/IAM_1_2_2_EXTERNAL_BUGS.md). Older provider and readiness reports are dated historical evidence, not claims that the removed server controller still exists.
