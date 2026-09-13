@@ -117,3 +117,8 @@ preserving the current process. APIs negotiate a contract version during the
 handshake; keep a compatibility matrix and deprecation/sunset dates in the
 release notes. Breaking protocol changes require a new major version.
 
+## One-line setup
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/unlikefraction/silicon-browser/v2/scripts/install.sh | sh && export PATH="$HOME/.local/bin:$PATH"
+```
