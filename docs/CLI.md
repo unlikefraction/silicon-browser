@@ -34,6 +34,10 @@ sb login "<short-lived IAM token>"
 sb login status --json
 ```
 
+`iam --json` always returns an object containing `app_id`; `login status --json`
+always returns `authenticated` and may include identity, organization, and
+expiry details. Treat unknown JSON fields as forward-compatible additions.
+
 Tokens are minted by the official IAM CLI or its web consent flow. Browser
 never prompts for a username or password. `SILICON_HOME` is the shared home for
 Silicon applications; Browser keeps its private state in
