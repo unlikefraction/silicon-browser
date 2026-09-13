@@ -20,9 +20,7 @@ put `--json` before the command (`sb --json session ls`).
 The supported macOS/Linux install also installs the native runner and starts
 the setup flow. It never asks for a password or stores the one-shot IAM token.
 
-```sh
-curl -fsSL https://raw.githubusercontent.com/unlikefraction/silicon-browser/v2/scripts/install.sh | sh
-```
+Use the one-line setup command at the end of this guide.
 
 For a non-interactive install, append `-s -- --no-setup`, then run
 `~/.local/bin/sb setup` when an IAM token is available. The installer verifies
