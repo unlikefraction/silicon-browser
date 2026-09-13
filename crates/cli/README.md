@@ -16,6 +16,12 @@ This selects and verifies the native release, installs `sb` into `~/.local/bin`,
 
 CLI state lives in `$SILICON_HOME/.silicon-browser`, falling back to `~/.silicon-browser` when `SILICON_HOME` is unset. `SB_HOME` overrides the entire state directory for tests and isolated runs.
 
+Browser telemetry can be routed to Space Station's `tos` tables when enabled by
+the deployment: backend/daemon events use `browserbackend`, CLI events use
+`browsercli`, and frontend analytics/events use `browserfrontendanalytics` and
+`browserfrontendevents`. Keep their table keys server-side; see the [CLI
+telemetry contract](../../docs/CLI.md#telemetry-updates-and-compatibility).
+
 `sb iam --json` prints the canonical application ID. `sb login <SLT>` authenticates with an IAM short-lived token; organization consent is handled by IAM. `sb login status --json` reports the current session. `sb setup --org <id>` authenticates, checks recording delivery, and installs the native local controller when needed. It uses a private installation under the CLI state directory’s `bin` folder, verifies the pinned release SHA-256, and reuses an already correctly pinned PATH installation. No Node/npm or local Chromium installation is required.
 
 ```sh
