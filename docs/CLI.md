@@ -115,8 +115,20 @@ Space Station telemetry is opt-in by default for IAM apps. Events should be
 self-contained (`source`, `step`, `progress`, correlation IDs, outcome, and
 timestamps); do not include credentials or browser output. Browser command
 reports are durable and idempotent. Deployments that add Space Station tables
-use the `tos.browser` namespace with separate analytics and frontend-event
-stores.
+use the `tos` organization and these separate stores:
+
+| Producer | Table | Server-side key variable |
+| --- | --- | --- |
+| Browser backend and daemon | `browserbackend` | `SPACE_STATION_BROWSER_BACKEND_KEY` |
+| Browser CLI | `browsercli` | `SPACE_STATION_BROWSER_CLI_KEY` |
+| Browser frontend analytics | `browserfrontendanalytics` | `SPACE_STATION_FRONTEND_ANALYTICS_KEY` |
+| Browser frontend events | `browserfrontendevents` | `SPACE_STATION_FRONTEND_EVENTS_KEY` |
+
+Set `SPACE_STATION_URL`, `SPACE_STATION_ORG=tos`, and the keys in the backend
+environment. Frontend keys stay behind its same-origin telemetry endpoint;
+never put a table key in browser JavaScript. Set `SPACE_STATION_TELEMETRY=0`
+to opt out. Missing keys disable that producer rather than breaking browser
+operations.
 
 Daemons check for CLI updates hourly and apply a verified release while
 preserving the current process. APIs negotiate a contract version during the
