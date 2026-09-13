@@ -62,7 +62,8 @@ sb
 ├── recording {ls,show,send,rm}
 ├── usage {limits,ls,show}
 ├── search <query> --purpose <text>
-└── fetch <url[,url...]> --purpose <text>
+├── fetch <url[,url...]> --purpose <text>
+└── report-bug --title <text> --details <text> [--pr <ref>]
 ```
 
 Use `session new --incognito` for one-off work, or create a profile when the
@@ -81,10 +82,11 @@ app unhook
 The daemon owns one server WebSocket per machine and multiplexes all registered
 Silicons. Webhook deliveries use `{type, data, metadata}`.
 
-All IAM app CLIs should also expose `app bug-report` with a reproducible
-description, diagnostics, and an optional `--pr <ref>`. The command submits a
-report only; agents can inspect the linked repository, patch it, and attach a
-pull request themselves.
+All IAM app CLIs should expose a bug-report command with a reproducible
+description, diagnostics, and an optional `--pr <ref>`. In `sb`, use
+`report-bug` (aliases: `bug`, `bug-report`). The command submits a report only;
+agents can inspect the linked repository, patch it, and attach a pull request
+themselves.
 
 ## Build and develop
 

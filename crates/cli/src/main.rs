@@ -568,13 +568,22 @@ fn report_bug(title: &str, details: &str, pr: Option<&str>, json: bool) -> Resul
     if let Some(pr) = pr.filter(|value| !value.trim().is_empty()) {
         body.push_str(&format!("\n\nProposed fix: {pr}"));
     }
-    let output = std::process::Command::new("gh")
-        .args(["issue", "create", "--repo", "unlikefraction/silicon-browser", "--title", title, "--body", &body])
+    let mut child = std::process::Command::new("gh")
+        .args(["issue", "create", "--repo", "unlikefraction/silicon-browser", "--title", title, "--body-file", "-"])
         .env("GH_PROMPT_DISABLED", "1")
-        .output()
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
         .map_err(|error| {
             format!("cannot submit bug report: `gh` is required (install GitHub CLI and authenticate first): {error}")
         })?;
+    child
+        .stdin
+        .take()
+        .ok_or("cannot submit bug report: GitHub CLI stdin was unavailable")?
+        .write_all(body.as_bytes())?;
+    let output = child.wait_with_output()?;
     if !output.status.success() {
         let message = String::from_utf8_lossy(&output.stderr).trim().to_owned();
         return Err(format!(
