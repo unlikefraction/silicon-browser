@@ -69,5 +69,6 @@ let profiles = browser.profiles(None)?;
 ```
 
 Test actor IDs or test SLTs use the same authenticated APIs as production.
-Creating browser sessions additionally requires a paired Briefcase test key and
-recording authorization. See the [API and CLI guide](https://browser.teamofsilicons.com/docs).
+Creating browser sessions additionally requires the imported Briefcase IAM app
+secret (`ask_` plus 43 base64url characters) from the same world, passed through
+`briefcase_test_environment_key`, and recording authorization. See the [API and CLI guide](https://browser.teamofsilicons.com/docs).

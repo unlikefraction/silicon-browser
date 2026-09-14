@@ -139,7 +139,7 @@ impl TestingRegistry {
         state.testing_environment = identity.testing_environment_id();
         state.identity = Arc::new(identity);
         // Never send a test recording to production Briefcase storage. The
-        // paired Briefcase environment is independently selected by its key.
+        // same IAM world is selected in Briefcase by its imported app secret.
         if let (Some(url), Some(audience), Some(key)) =
             (&self.0.config.briefcase_url, &self.0.config.briefcase_app_id, &credentials.briefcase_test_environment_key)
         {

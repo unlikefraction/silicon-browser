@@ -65,8 +65,9 @@ pub struct BriefcaseEntry {
 
 impl BriefcaseClient {
     /// `origin` must be a root HTTP(S) origin, not `/api/v1`. Plain HTTP is
-    /// accepted only for loopback development. A test key selects Briefcase's
-    /// own sandbox, and is distinct from the paired IAM environment key.
+    /// accepted only for loopback development. Testing requires the imported
+    /// Briefcase IAM app secret (`ask_` plus 43 base64url characters), distinct
+    /// from Browser's app secret and the 32-character IAM environment root key.
     pub fn new(origin: &str, testing_key: Option<&str>) -> ProviderResult<Self> {
         Self::with_upload_limit(origin, testing_key, DEFAULT_BRIEFCASE_UPLOAD_LIMIT)
     }
@@ -82,8 +83,11 @@ impl BriefcaseClient {
         endpoint.set_path(BRIEFCASE_OBO_PATH);
         let testing_key = testing_key
             .map(|value| {
-                if value.len() != 32 || !value.bytes().all(|byte| byte.is_ascii_alphanumeric()) {
-                    return Err(invalid("invalid Briefcase testing environment key"));
+                if value.len() != 47
+                    || !value.starts_with("ask_")
+                    || !value[4..].bytes().all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-'))
+                {
+                    return Err(invalid("invalid Briefcase testing application secret"));
                 }
                 secret_header(value)
             })
@@ -184,12 +188,12 @@ impl BriefcaseClient {
     ) -> ProviderResult<BriefcaseEntry> {
         let organization = identifier_header(org_id)?;
         let application = identifier_header(app_id)?;
-        let Some((app_org, app_name)) = app_id.split_once('>') else {
+        if !canonical_application_id(app_id) {
             return Err(invalid("Briefcase OBO requires a canonical org>application ID"));
-        };
-        if app_org != org_id || app_name.is_empty() || app_name.contains('>') {
-            return Err(invalid("Briefcase OBO application must belong to the requested organization"));
         }
+        // The issuer's owning organization is independent of the represented
+        // member's storage organization. IAM's request-bound proof and Briefcase
+        // verify that exact delegation; neither identity may be rewritten here.
         let proof_value = proof.expose();
         if !proof_value.starts_with("obo_")
             || proof_value.len() <= 4
@@ -208,7 +212,7 @@ impl BriefcaseClient {
             .header(reqwest::header::CONTENT_LENGTH, size)
             .body(body);
         if let Some(key) = &self.testing_key {
-            request = request.header("x-testing-environment-key", key.clone());
+            request = request.header("x-briefcase-app-secret", key.clone());
         }
         let response = request.send().await.map_err(|error| transport(PROVIDER, error))?;
         let status = response.status();
@@ -272,6 +276,18 @@ fn identifier_header(value: &str) -> ProviderResult<HeaderValue> {
         return Err(invalid("invalid Briefcase organization or application identifier"));
     }
     HeaderValue::from_str(value).map_err(|_| invalid("invalid Briefcase identifier header"))
+}
+
+fn canonical_application_id(value: &str) -> bool {
+    let Some((organization, application)) = value.split_once('>') else {
+        return false;
+    };
+    let canonical = |byte: u8| byte.is_ascii_lowercase() || byte.is_ascii_digit() || matches!(byte, b'_' | b'-');
+    (3..=50).contains(&organization.len())
+        && organization.bytes().all(canonical)
+        && (3..=80).contains(&application.len())
+        && application.as_bytes().first().is_some_and(u8::is_ascii_lowercase)
+        && application.bytes().all(canonical)
 }
 
 fn secret_header(value: &str) -> ProviderResult<HeaderValue> {
@@ -374,7 +390,8 @@ mod tests {
 
     #[tokio::test]
     async fn upload_sends_bound_raw_bytes_and_only_obo_credentials_in_selected_plane() {
-        for testing_key in [None, Some("0123456789abcdefghijklmnopqrstuv")] {
+        let app_secret = format!("ask_{}_-9", "a".repeat(40));
+        for testing_key in [None, Some(app_secret.as_str())] {
             let bytes = b"\0\xffraw\n".to_vec();
             let (base, mut requests, server) = spawn_json_server(vec![(201, entry(bytes.len()).to_string())]).await;
             let client = BriefcaseClient::new(&base, testing_key).unwrap();
@@ -399,13 +416,16 @@ mod tests {
             ] {
                 assert!(headers.contains(expected), "missing expected header");
             }
-            for forbidden in ["authorization:", "idempotency-key:", "content-digest:", "x-path:"] {
+            for forbidden in
+                ["authorization:", "idempotency-key:", "content-digest:", "x-path:", "x-testing-environment-key:"]
+            {
                 assert!(!headers.contains(forbidden));
             }
-            assert_eq!(headers.contains("x-testing-environment-key:"), testing_key.is_some());
+            assert_eq!(headers.contains("x-briefcase-app-secret:"), testing_key.is_some());
             if let Some(key) = testing_key {
-                assert!(headers.contains(&format!("x-testing-environment-key: {key}")));
+                assert!(headers.contains(&format!("x-briefcase-app-secret: {key}")));
                 assert!(!format!("{client:?}").contains(key));
+                assert!(client.testing_key.as_ref().unwrap().is_sensitive());
             }
         }
     }
@@ -423,8 +443,17 @@ mod tests {
         ] {
             assert!(BriefcaseClient::new(origin, None).is_err());
         }
-        for key in ["", "short", "0123456789abcdefghijklmnopqrstu\n"] {
-            assert!(BriefcaseClient::new("http://127.0.0.1:1", Some(key)).is_err());
+        for key in [
+            String::new(),
+            "short".into(),
+            "k".repeat(32),
+            format!("ask_{}", "a".repeat(42)),
+            format!("ask_{}", "a".repeat(44)),
+            format!("ort_{}", "a".repeat(43)),
+            format!("ask_{}+", "a".repeat(42)),
+            format!("ask_{}\n", "a".repeat(42)),
+        ] {
+            assert!(BriefcaseClient::new("http://127.0.0.1:1", Some(&key)).is_err());
         }
         assert!(BriefcaseClient::with_upload_limit("http://127.0.0.1:1", None, 0).is_err());
         let client = BriefcaseClient::with_upload_limit("http://127.0.0.1:1", None, 3).unwrap();
@@ -433,12 +462,55 @@ mod tests {
         let error = client.upload_raw("test-org", "test-org>browser", &proof(), b"four".to_vec()).await.unwrap_err();
         assert!(matches!(error, ProviderError::InvalidInput(_)));
         for (org, app, grant) in [
-            ("test-org", "other-org>browser", proof()),
+            ("test-org", ">browser", proof()),
+            ("test-org", "tos>", proof()),
+            ("test-org", "tos>Browser", proof()),
+            ("test-org", "tos>browser>other", proof()),
+            ("test-org", "tos>2browser", proof()),
             ("test-org", "browser", proof()),
             ("test-org\r\n", "test-org>browser", proof()),
             ("test-org", "test-org>browser", OnBehalfOfGrant::new("invalid-proof-secret").unwrap()),
         ] {
             assert!(matches!(client.upload_raw(org, app, &grant, vec![]).await, Err(ProviderError::InvalidInput(_))));
+        }
+    }
+
+    #[tokio::test]
+    async fn delegated_upload_preserves_distinct_issuer_owner_and_storage_organization() {
+        let app_secret = format!("ask_{}", "b".repeat(43));
+        for testing_key in [None, Some(app_secret.as_str())] {
+            let mut response = entry(3);
+            response["org_id"] = json!("interface-client");
+            response["path"] = json!("private/worker/apps/tos>browser/recording.bin");
+            response["origin_app_id"] = json!("tos>browser");
+            response["permanent_url"] =
+                json!("https://briefcase.example/interface-client/private/worker/apps/tos%3Ebrowser/recording.bin");
+            let (base, mut requests, server) = spawn_json_server(vec![(201, response.to_string())]).await;
+            let client = BriefcaseClient::new(&base, testing_key).unwrap();
+            let result = client.upload_raw("interface-client", "tos>browser", &proof(), b"abc".to_vec()).await.unwrap();
+            assert_eq!(result.org_id, "interface-client");
+            assert_eq!(result.origin_app_id.as_deref(), Some("tos>browser"));
+            let request = requests.recv().await.unwrap();
+            server.await.unwrap();
+            assert!(request.headers.contains("x-app-id: tos>browser\r\n"));
+            assert!(request.headers.contains("x-org-id: interface-client\r\n"));
+            assert!(request.headers.contains("x-iam-obo-access-proof: obo_request-bound-secret\r\n"));
+            assert_eq!(request.body, b"abc");
+            assert!(!request.headers.contains("x-testing-environment-key:"));
+            assert_eq!(request.headers.contains("x-briefcase-app-secret:"), testing_key.is_some());
+        }
+        // A canonical issuer alone grants nothing: preserve Briefcase's rejection
+        // of an invalid proof/world, and reject a receipt for another organization.
+        for (status, response) in [(403, "private rejection".into()), (201, entry(3).to_string())] {
+            let (base, mut requests, server) = spawn_json_server(vec![(status, response)]).await;
+            let client = BriefcaseClient::new(&base, Some(&app_secret)).unwrap();
+            let error =
+                client.upload_raw("interface-client", "tos>browser", &proof(), b"abc".to_vec()).await.unwrap_err();
+            assert!(matches!(error, ProviderError::Http { status: 403, .. } | ProviderError::InvalidResponse { .. }));
+            requests.recv().await.unwrap();
+            server.await.unwrap();
+            assert!(requests.try_recv().is_err());
+            assert!(!error.to_string().contains("private rejection"));
         }
     }
 

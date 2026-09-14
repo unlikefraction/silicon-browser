@@ -10,9 +10,23 @@ makes no production deployment claim.
 ## Setup and credential ownership
 
 Configure `BRIEFCASE_URL` and `BRIEFCASE_APP_ID` together, alongside Browser's IAM
-application credentials. Issuer and audience must be canonical applications in
-the same organization. In tests, configure both `IAM_TEST_ENVIRONMENT_KEY` and
-`BRIEFCASE_TEST_ENVIRONMENT_KEY` for the paired sandboxes; their values are distinct.
+application credentials. Issuer and audience must be canonical application IDs.
+The issuer’s owning organization may differ from the client’s storage organization:
+for example, `tos>browser` can deliver into an authorized `interface-client` workspace.
+Browser preserves the issuer in `X-App-ID` and the storage organization in `X-Org-ID`;
+IAM’s request-bound proof and Briefcase’s authorization still enforce the exact actor,
+organization, destination, bytes, and selected testing environment.
+
+In a server-wide test deployment, `IAM_TEST_ENVIRONMENT_KEY` is the 32-character
+IAM root key. `BRIEFCASE_TEST_ENVIRONMENT_KEY` must instead contain the imported
+Briefcase IAM application secret (`ask_` plus 43 base64url characters) from the same
+world. Browser sends it only as `X-Briefcase-App-Secret`; the old Briefcase root-key
+header and 32-character credential are rejected. Ordinary shared-backend enrollment
+uses `briefcase_test_environment_key` / `SB_BRIEFCASE_TEST_KEY` for that same app secret.
+These existing names remain for compatibility. Import `tos>briefcase` into the
+Browser test world and use its returned `app_secret`; no separate legacy Briefcase
+root key is needed. These compatibility changes are covered with local HTTP fixtures;
+a new hosted recording walkthrough remains a separate check.
 The production backend entrypoint requires recording delivery before permitting a
 paid browser session. `BRIEFCASE_URL` alone is insufficient.
 

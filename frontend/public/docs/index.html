@@ -60,11 +60,11 @@ sb --test ENVIRONMENT_UUID testing status --json
 sb --test ENVIRONMENT_UUID login status --json
 sb --test ENVIRONMENT_UUID profile ls</code></pre>
   <p><code>sb testing login</code> also reads <code>SB_TEST_APP_SECRET</code>. Test login accepts an existing test actor ID such as <code>alice</code> or <code>worker:tos</code>, or an IAM test <code>oac_</code> token. Mint a short-lived test token with <code>iam --test ENVIRONMENT_UUID login --app-id 'tos&gt;browser' --grant-org tos -o json</code>.</p>
-  <p class="note"><strong>Browser sessions require test recording storage.</strong> Add <code>briefcase_test_environment_key</code> to the enrollment JSON (or set <code>SB_BRIEFCASE_TEST_KEY</code>) using a Briefcase environment paired with this IAM environment. Run <code>sb --test ENVIRONMENT_UUID setup</code> to authorize recording delivery as the signed-in actor. Missing storage or authorization fails explicitly.</p>
+  <p class="note"><strong>Browser sessions require test recording storage.</strong> Add <code>briefcase_test_environment_key</code> to the enrollment JSON (or set <code>SB_BRIEFCASE_TEST_KEY</code>) using the Briefcase app secret imported into this same IAM environment. Run <code>sb --test ENVIRONMENT_UUID setup</code> to authorize recording delivery as the signed-in actor. Missing storage or authorization fails explicitly.</p>
   <h3>Website</h3>
   <ol>
     <li>Open <a href="/">Browser</a> and select <strong>Testing environment</strong> on the welcome screen or workspace header.</li>
-    <li>Enter the test app secret, an actor ID or test short-lived token, and its organization. Add the paired Briefcase key to create browser sessions.</li>
+    <li>Enter the test app secret, an actor ID or test short-lived token, and its organization. Add the imported Briefcase test app secret to create browser sessions.</li>
     <li>Select <strong>Enter test mode</strong>. The badge shows the verified environment name and UUID.</li>
     <li>In Settings, enable recording access using that test actor or a fresh test token.</li>
     <li>Select <strong>Exit test mode</strong> to restore your production workspace. Reloading also clears the test sign-in.</li>
@@ -80,7 +80,7 @@ Content-Type: application/json
 {"app_secret":"ask_..."}</code></pre>
   <p>IAM verifies that the secret belongs to the Browser test application. The response identifies its environment:</p>
   <pre><code>{"data":{"environment_id":"ENVIRONMENT_UUID","app_id":"tos&gt;browser","name":"My test environment"}}</code></pre>
-  <p>The JSON may additionally include <code>iam_test_key</code> and <code>briefcase_test_environment_key</code>. Each optional key must be exactly 32 ASCII letters or digits. A supplied IAM key must select the same environment as the app secret.</p>
+  <p>The JSON may additionally include <code>iam_test_key</code> and <code>briefcase_test_environment_key</code>. The optional <code>iam_test_key</code> is exactly 32 ASCII letters or digits. <code>briefcase_test_environment_key</code> contains the imported Briefcase IAM app secret (<code>ask_</code> plus 43 base64url characters). Both must belong to the Browser app secret’s IAM environment; existing field names are retained for compatibility.</p>
   <h3>2. Authenticate a test actor</h3>
   <pre><code>POST https://backend.browser.teamofsilicons.com/testing/ENVIRONMENT_UUID/api/v1/auth/exchange
 Content-Type: application/json

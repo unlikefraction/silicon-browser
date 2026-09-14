@@ -77,7 +77,10 @@ sb --test <environment-uuid> profile ls
 
 Enrollment verifies the secret with IAM and reports its environment UUID.
 JSON may also include `iam_test_key` and `briefcase_test_environment_key`;
-each optional key is exactly 32 ASCII letters or digits. The app secret is
+`iam_test_key` is exactly 32 ASCII letters or digits. The Briefcase field holds
+the imported Briefcase app secret from the same IAM world: `ask_` followed by
+43 base64url characters. Its existing field and `SB_BRIEFCASE_TEST_KEY` names
+remain compatible. The Browser app secret is
 developer test configuration, never a production login credential. Test login
 accepts an actor ID in that environment or an IAM test `oac_` token.
 Production login continues to require a short-lived token.

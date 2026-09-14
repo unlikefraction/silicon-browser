@@ -26,7 +26,8 @@ sb --test <environment-uuid> setup
 ```
 
 The JSON requires `app_secret`; `iam_test_key` is optional. Browser sessions
-also require a paired `briefcase_test_environment_key`. Test actor IDs are only
+also require a `briefcase_test_environment_key` containing the imported Briefcase IAM app secret
+(`ask_` plus 43 base64url characters) from the same world. Test actor IDs are only
 accepted inside the verified environment. Production login requires an IAM
 short-lived token. See [testing instructions](https://browser.teamofsilicons.com/docs#testing).
 

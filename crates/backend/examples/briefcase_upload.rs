@@ -23,7 +23,8 @@ async fn run() -> Result<(), String> {
     if !args.is_empty() && !proof_only {
         return Err("usage: briefcase_upload [--proof-only]".into());
     }
-    // Both test keys are mandatory for uploads. Proof-only never contacts Briefcase.
+    // Uploads need the IAM test root and the imported Briefcase app secret.
+    // Proof-only never contacts Briefcase.
     let iam_key = required("IAM_TEST_ENVIRONMENT_KEY")?;
     let briefcase_key = if proof_only { None } else { Some(required("BRIEFCASE_TEST_ENVIRONMENT_KEY")?) };
     let iam_url = std::env::var("SILICON_IAM_URL").unwrap_or_else(|_| "https://backend.iam.teamofsilicons.com".into());
