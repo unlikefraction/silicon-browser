@@ -2,7 +2,7 @@
 use crate::{
     auth::{
         DeliveryTokenExchange, ExchangeRequest, IdentityError, IdentityProvider, PrincipalIdentity, RecordingProof,
-        RecordingProofRequest, RefreshRequest,
+        RecordingProofRequest, RefreshRequest, recording_authority, recording_scope_authority,
     },
     crypto::SecretBox,
     store::Store,
@@ -33,6 +33,7 @@ pub struct DeliveryAuth {
     store: Store,
     secrets: SecretBox,
     identity: Arc<dyn IdentityProvider>,
+    audience: String,
 }
 #[derive(FromRow)]
 struct Grant {
@@ -57,8 +58,8 @@ struct Credentials {
 }
 
 impl DeliveryAuth {
-    pub fn new(store: Store, secrets: SecretBox, identity: Arc<dyn IdentityProvider>) -> Self {
-        Self { store, secrets, identity }
+    pub fn new(store: Store, secrets: SecretBox, identity: Arc<dyn IdentityProvider>, audience: String) -> Self {
+        Self { store, secrets, identity, audience }
     }
     fn context(row: &Grant) -> String {
         format!(
@@ -387,8 +388,8 @@ impl DeliveryAuth {
             let credentials = self.open(&row)?;
             let token = credentials.access.as_deref().ok_or(DeliveryAuthError::NeedsAuthorization)?;
             let result = async {
-                let current = self.identity.identify(token, &row.org_id).await?;
-                if !Self::matches(&row, &current) {
+                let current = self.identity.identify_for_delivery(token, &row.org_id).await?;
+                if !Self::matches(&row, &current) || !recording_authority(&current, &self.audience) {
                     return Err(IdentityError::Forbidden);
                 }
                 match &request {
@@ -502,9 +503,13 @@ impl DeliveryAuth {
                 let active = result.access_active;
                 let bound = Self::matches(&row, &auth.identity)
                     && auth.identity.expires_at > Utc::now()
-                    && ["obo.issue", "memberships.read", "roles.read"]
-                        .iter()
-                        .all(|s| auth.scope.split_whitespace().any(|v| v == *s));
+                    && if active {
+                        recording_authority(&auth.identity, &self.audience)
+                    } else {
+                        // An inactive OAT never authorizes a session or upload. Persist only
+                        // the recovered family, then require a fresh OAT snapshot on refresh.
+                        recording_scope_authority(&auth.scope, &self.audience)
+                    };
                 let payload = self.seal(
                     &row,
                     &Credentials { slt: None, access: Some(auth.access_token), refresh: Some(auth.refresh_token) },
@@ -558,6 +563,8 @@ mod tests {
         fail_exchange: AtomicBool,
         fail_refresh: AtomicBool,
         wrong_actor: AtomicBool,
+        missing_grant: AtomicBool,
+        missing_role: AtomicBool,
         hold_refresh: AtomicBool,
         revoked: AtomicBool,
         access_revoked: AtomicBool,
@@ -573,6 +580,11 @@ mod tests {
                     principal_id: Uuid::from_u128(1),
                     public_id: Some("actor".into()),
                     tags: Some(vec![]),
+                    org_role: Some("member".into()),
+                    scopes: "self.identity.read self.membership.read obo:org>briefcase:briefcase.files.create"
+                        .split_whitespace()
+                        .map(str::to_owned)
+                        .collect(),
                     kind: IdentityKind::Silicon,
                     org_id: "org".into(),
                     membership_id: Uuid::from_u128(2),
@@ -584,6 +596,8 @@ mod tests {
                 fail_exchange: AtomicBool::new(false),
                 fail_refresh: AtomicBool::new(false),
                 wrong_actor: AtomicBool::new(false),
+                missing_grant: AtomicBool::new(false),
+                missing_role: AtomicBool::new(false),
                 hold_refresh: AtomicBool::new(false),
                 revoked: AtomicBool::new(false),
                 access_revoked: AtomicBool::new(false),
@@ -598,11 +612,17 @@ mod tests {
             if self.wrong_actor.load(Ordering::SeqCst) {
                 identity.principal_id = Uuid::from_u128(9);
             }
+            if self.missing_grant.load(Ordering::SeqCst) {
+                identity.scopes.retain(|scope| !scope.starts_with("obo:"));
+            }
+            if self.missing_role.load(Ordering::SeqCst) {
+                identity.org_role = None;
+            }
             ExchangedAuth {
                 access_token: "oat_owned_backend".into(),
                 refresh_token: "ort_owned_backend".into(),
                 identity,
-                scope: "obo.issue roles.read memberships.read".into(),
+                scope: "self.identity.read self.membership.read obo:org>briefcase:briefcase.files.create".into(),
             }
         }
         fn transient() -> IdentityError {
@@ -618,7 +638,7 @@ mod tests {
             if self.revoked.load(Ordering::SeqCst) || self.access_revoked.load(Ordering::SeqCst) {
                 return Err(IdentityError::Unauthenticated);
             }
-            Ok(self.expected.clone())
+            Ok(self.auth().identity)
         }
         async fn orgs(&self, _: &str) -> std::result::Result<Vec<OrganizationAccess>, IdentityError> {
             Ok(vec![])
@@ -657,6 +677,9 @@ mod tests {
                 self.calls.lock().unwrap().push(("late_replay".into(), r.idempotency_key));
                 let mut auth = self.auth();
                 auth.refresh_token = "ort_recovered_backend".into();
+                auth.identity.org_role = None;
+                auth.identity.tags = None;
+                auth.identity.scopes.clear();
                 return Ok(DeliveryTokenExchange { auth, access_active: false });
             }
             self.refresh(r).await.map(|auth| DeliveryTokenExchange { auth, access_active: true })
@@ -682,7 +705,7 @@ mod tests {
     async fn fixture() -> (DeliveryAuth, Arc<Mock>) {
         let store = Store::connect("sqlite::memory:").await.unwrap();
         let mock = Arc::new(Mock::new());
-        (DeliveryAuth::new(store, SecretBox::new(&[37; 32]), mock.clone()), mock)
+        (DeliveryAuth::new(store, SecretBox::new(&[37; 32]), mock.clone(), "org>briefcase".into()), mock)
     }
     fn slt() -> String {
         format!("oac_{}", "a".repeat(43))
@@ -713,6 +736,53 @@ mod tests {
         assert_eq!(service.status_for_principal("org", &mock.expected).await.unwrap().state, State::Active);
         assert_eq!(service.live_status_for_principal("org", &mock.expected).await.unwrap().state, State::NeedsAuth);
         assert_eq!(mock.calls.lock().unwrap().iter().filter(|call| call.0 == "refresh").count(), 1);
+    }
+
+    #[tokio::test]
+    async fn canonical_enrollment_rejects_missing_endpoint_grant_or_undisclosed_role_and_revokes_owned_family() {
+        for missing_role in [false, true] {
+            let (service, mock) = fixture().await;
+            if missing_role {
+                mock.missing_role.store(true, Ordering::SeqCst);
+            } else {
+                mock.missing_grant.store(true, Ordering::SeqCst);
+            }
+            assert!(matches!(
+                service.enroll("org", &mock.expected, &slt()).await,
+                Err(DeliveryAuthError::Identity(IdentityError::Forbidden))
+            ));
+            let row: Grant =
+                sqlx::query_as("SELECT * FROM delivery_credentials").fetch_one(service.store.pool()).await.unwrap();
+            assert!(!row.enabled);
+            assert_eq!(row.operation.as_deref(), Some("revoke"));
+            assert!(service.open(&row).unwrap().slt.is_none());
+            service.recover_pending_once().await.unwrap();
+            assert_eq!(service.get(&row.id).await.unwrap().state, "disabled");
+        }
+    }
+
+    #[tokio::test]
+    async fn changed_recording_grant_blocks_a_previously_active_family_before_paid_start() {
+        let (service, mock) = fixture().await;
+        service.enroll("org", &mock.expected, &slt()).await.unwrap();
+        mock.missing_grant.store(true, Ordering::SeqCst);
+        assert!(matches!(
+            service
+                .validate_authorized_binding_for_principal(
+                    "org",
+                    "actor",
+                    &mock.expected.principal_id.to_string(),
+                    &mock.expected.membership_id.to_string()
+                )
+                .await,
+            Err(DeliveryAuthError::NeedsAuthorization)
+        ));
+        assert_eq!(service.status_for_principal("org", &mock.expected).await.unwrap().state, State::NeedsAuth);
+        assert_eq!(
+            mock.calls.lock().unwrap().len(),
+            1,
+            "only original exchange; no proof or refresh after grant denial"
+        );
     }
 
     #[tokio::test]
@@ -777,7 +847,8 @@ mod tests {
         mock.fail_exchange.store(true, Ordering::SeqCst);
         assert!(service.enroll("org", &mock.expected, &slt()).await.is_err());
         expire(&service).await;
-        let restarted = DeliveryAuth::new(service.store.clone(), service.secrets.clone(), mock.clone());
+        let restarted =
+            DeliveryAuth::new(service.store.clone(), service.secrets.clone(), mock.clone(), "org>briefcase".into());
         assert_eq!(restarted.recover_pending_once().await.unwrap(), 1);
         mock.fail_refresh.store(true, Ordering::SeqCst);
         expire(&restarted).await;
@@ -893,7 +964,12 @@ mod tests {
         replacement_mock.expected.principal_id = Uuid::from_u128(98);
         replacement_mock.expected.membership_id = Uuid::from_u128(99);
         let replacement_mock = Arc::new(replacement_mock);
-        let replacement = DeliveryAuth::new(service.store.clone(), service.secrets.clone(), replacement_mock.clone());
+        let replacement = DeliveryAuth::new(
+            service.store.clone(),
+            service.secrets.clone(),
+            replacement_mock.clone(),
+            "org>briefcase".into(),
+        );
         assert!(!replacement.status_for_principal("org", &replacement_mock.expected).await.unwrap().enabled);
         replacement.disable_for_principal("org", &replacement_mock.expected).await.unwrap();
         assert!(service.status_for_principal("org", &mock.expected).await.unwrap().enabled);
@@ -936,7 +1012,8 @@ mod tests {
         assert_eq!(row.access_expires_at, 0);
         assert_eq!(service.open(&row).unwrap().refresh.as_deref(), Some("ort_recovered_backend"));
         assert_ne!(row.mutation_key.as_deref(), Some(original_key.as_str()));
-        let restarted = DeliveryAuth::new(service.store.clone(), service.secrets.clone(), mock.clone());
+        let restarted =
+            DeliveryAuth::new(service.store.clone(), service.secrets.clone(), mock.clone(), "org>briefcase".into());
         restarted.recover_pending_once().await.unwrap();
         assert_eq!(restarted.status("org", "actor").await.unwrap().state, State::Active);
         restarted.issue_recording_proof(request()).await.unwrap();

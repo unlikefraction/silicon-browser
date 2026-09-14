@@ -30,6 +30,34 @@ a new hosted recording walkthrough remains a separate check.
 The production backend entrypoint requires recording delivery before permitting a
 paid browser session. `BRIEFCASE_URL` alone is insufficient.
 
+Recording authorization requires the current IAM grants `self.identity.read`,
+`self.membership.read`, and the exact external endpoint grant
+`obo:<BRIEFCASE_APP_ID>:briefcase.files.create` (for example,
+`obo:tos>briefcase:briefcase.files.create`). IAM application approval and the
+Carbon/Silicon's actual consent must authorize those grants for the selected
+organization. This release does not add permissions or consent automatically.
+Both the native scope and the corresponding identity/role disclosure must be
+present; Browser never fills in a missing membership role. Optional membership
+tags are disclosed only by `self.tags.read`; undisclosed tags remain absent.
+The old `obo.issue`, `memberships.read`, and `roles.read` aliases do not grant
+recording authority. IAM still independently enforces recipient approval,
+endpoint consent, current actor/membership epochs and exact signed request bytes.
+
+The live selected OAT snapshot is rechecked without the metadata cache before a
+paid session starts or a recording is uploaded. Retried refresh exchanges are
+separate: IAM refresh introspection intentionally contains no authorization
+snapshot. Its verified current family binding can recover an ORT after an
+uncertain response, but cannot authorize a session or upload. Browser persists
+that family, stays in `refreshing`, and requires a fresh active OAT snapshot.
+
+The recipient catalog identifies the Briefcase application's owning organization,
+which must match its canonical app ID; it need not equal the client organization.
+The selected client organization remains mandatory in IAM introspection and the
+signed OBO exchange, and the upload remains bound to that organization and world.
+These authorization fixes have local HTTP/SQLite regression coverage. A hosted
+provider start, stop and recording receipt after this release require a separate
+manual verification.
+
 `sb setup` first establishes the CLI login. Recording delivery needs a **second,
 fresh Browser-targeted IAM `oac_` token**, supplied through the masked prompt or
 `SB_RECORDING_SLT`. An already active delivery authorization is reused. Never reuse

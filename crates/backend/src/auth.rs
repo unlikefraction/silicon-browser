@@ -45,6 +45,10 @@ pub struct PrincipalIdentity {
     pub principal_id: Uuid,
     pub public_id: Option<String>,
     pub tags: Option<Vec<String>>,
+    /// Present only when IAM discloses the current organization membership role.
+    pub org_role: Option<String>,
+    /// Effective scopes from this OAT’s verified selected authorization snapshot.
+    pub scopes: Vec<String>,
     pub kind: IdentityKind,
     pub org_id: String,
     pub membership_id: Uuid,
@@ -224,6 +228,11 @@ pub trait IdentityProvider: Send + Sync {
 
     /// Resolve an OAT inside an explicit organization context.
     async fn identify(&self, bearer: &str, org: &str) -> Result<PrincipalIdentity, IdentityError>;
+
+    /// Recheck paid-session/delivery authority without a metadata cache.
+    async fn identify_for_delivery(&self, bearer: &str, org: &str) -> Result<PrincipalIdentity, IdentityError> {
+        self.identify(bearer, org).await
+    }
 
     /// Return only the organizations currently authorized by an OAT.
     async fn orgs(&self, bearer: &str) -> Result<Vec<OrganizationAccess>, IdentityError>;
@@ -707,6 +716,8 @@ impl SiliconIamIdentityProvider {
                     principal_id,
                     public_id: response.actor.as_ref().map(|actor| actor.public_id.clone()),
                     tags: None,
+                    org_role: None,
+                    scopes: Vec::new(),
                     kind,
                     org_id: org.into(),
                     membership_id,
@@ -775,7 +786,8 @@ impl SiliconIamIdentityProvider {
             access_token: response.access_token,
             refresh_token: response.refresh_token,
             identity,
-            scope: response.scope,
+            // Current selected introspection is authority; exchange metadata may be an older replay.
+            scope: selected_claims.scope.unwrap_or_default(),
         })
     }
 }
@@ -799,6 +811,11 @@ impl IdentityProvider for SiliconIamIdentityProvider {
         } else {
             self.identify_fresh(bearer, org).await
         }
+    }
+
+    async fn identify_for_delivery(&self, bearer: &str, org: &str) -> Result<PrincipalIdentity, IdentityError> {
+        validate_org_id(org)?;
+        self.identify_fresh(bearer, org).await
     }
 
     async fn orgs(&self, bearer: &str) -> Result<Vec<OrganizationAccess>, IdentityError> {
@@ -859,8 +876,7 @@ impl IdentityProvider for SiliconIamIdentityProvider {
         if identity.public_id.as_deref() != Some(&request.expected_actor_id) {
             return Err(IdentityError::Forbidden);
         }
-        let scopes: HashSet<_> = claims.scope.as_deref().unwrap_or_default().split_whitespace().collect();
-        if !["obo.issue", "memberships.read", "roles.read"].iter().all(|scope| scopes.contains(scope)) {
+        if !recording_authority(&identity, &request.audience) {
             return Err(IdentityError::Forbidden);
         }
         let catalog = self.sdk.obo().endpoints(&request.audience).await.map_err(obo_sdk_error)?;
@@ -870,7 +886,7 @@ impl IdentityProvider for SiliconIamIdentityProvider {
             reason: "Briefcase file creation is absent from the IAM endpoint catalog",
         })?;
         if catalog.application.app_id != request.audience
-            || catalog.application.org_id != request.expected_org_id
+            || Some(catalog.application.org_id.as_str()) != canonical_application_owner(&request.audience)
             || endpoint.path != RECORDING_ENDPOINT_PATH
             || endpoints.next().is_some()
         {
@@ -993,6 +1009,8 @@ fn identity_from_claims(
         })?,
         public_id,
         tags: None,
+        org_role: None,
+        scopes: Vec::new(),
         kind,
         org_id: expected_org.to_owned(),
         membership_id: claims.membership_id.ok_or(IdentityError::Contract {
@@ -1028,13 +1046,16 @@ fn identity_from_claims(
         || identity.public_id.as_deref().is_some_and(|id| Some(id) != authorization_public_id)
         || scopes != authorization_scopes
         || authorization.scopes.len() != authorization_scopes.len()
-        || (authorization.tags.is_some() && !scopes.contains("memberships.read"))
+        || (authorization.tags.is_some() && !scopes.contains("self.tags.read"))
         || (authorization.org_role.is_some() && !scopes.contains("self.membership.read"))
+        || authorization.org_role.as_deref().is_some_and(|role| !matches!(role, "owner" | "admin" | "member"))
         || authorization.tags.as_ref().is_some_and(|tags| tags.iter().any(|tag| tag.name.trim().is_empty()))
     {
         return Err(invalid());
     }
     identity.public_id = Some(authorization_public_id.expect("validated above").to_owned());
+    identity.org_role = authorization.org_role.clone();
+    identity.scopes = authorization.scopes.clone();
     identity.tags = authorization.tags.as_ref().map(|tags| tags.iter().map(|tag| tag.name.clone()).collect());
     Ok(identity)
 }
@@ -1155,19 +1176,42 @@ fn validate_org_id(org: &str) -> Result<(), IdentityError> {
     Ok(())
 }
 
+/// IAM's endpoint grant is distinct from identity and membership disclosure.
+/// The actual proof exchange rechecks active exact consent, application approval and epochs.
+pub(crate) fn recording_authority(identity: &PrincipalIdentity, audience: &str) -> bool {
+    identity.public_id.as_deref().is_some_and(|id| !id.trim().is_empty())
+        && matches!(identity.org_role.as_deref(), Some("owner" | "admin" | "member"))
+        && recording_scope_authority(&identity.scopes.join(" "), audience)
+}
+
+/// Family recovery may check scopes, but never treat them as role/identity disclosure.
+pub(crate) fn recording_scope_authority(scope: &str, audience: &str) -> bool {
+    let scopes: HashSet<_> = scope.split_whitespace().collect();
+    canonical_application_owner(audience).is_some()
+        && scopes.contains("self.identity.read")
+        && scopes.contains("self.membership.read")
+        && scopes.contains(format!("obo:{audience}:{RECORDING_ENDPOINT_ID}").as_str())
+}
+
+fn canonical_application_owner(value: &str) -> Option<&str> {
+    let (owner, app) = value.split_once('>')?;
+    let valid = |part: &str, maximum| {
+        !part.is_empty()
+            && part.len() <= maximum
+            && part
+                .bytes()
+                .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || matches!(byte, b'-' | b'_'))
+    };
+    (valid(owner, 128) && valid(app, 100)).then_some(owner)
+}
+
 fn validate_recording_proof_request(request: &RecordingProofRequest) -> Result<(), IdentityError> {
     validate_org_id(&request.expected_org_id)?;
     validate_idempotency_key(&request.idempotency_key)?;
-    let valid_app = request.audience.split_once('>').is_some_and(|(org, app)| {
-        org == request.expected_org_id
-            && !app.is_empty()
-            && app.len() <= 100
-            && app.bytes().all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'-')
-    });
-    if !valid_app {
+    if canonical_application_owner(&request.audience).is_none() {
         return Err(IdentityError::InvalidInput {
             field: "audience",
-            reason: "expected a configured application in the session organization",
+            reason: "expected a configured canonical audience application",
         });
     }
     if request.expected_actor_id.is_empty()
@@ -1554,7 +1598,7 @@ mod tests {
             org_id: Some(ORG.to_owned()),
             membership_id: Some(Uuid::from_u128(2)),
             session_id: Some(Uuid::from_u128(3)),
-            scope: Some("browser memberships.read".to_owned()),
+            scope: Some("self.identity.read self.tags.read".to_owned()),
             audience: Some(APP.to_owned()),
             issued_at: Some(Utc::now().timestamp() - 1),
             expires_at: Some(Utc::now().timestamp() + 1_800),
@@ -1570,7 +1614,7 @@ mod tests {
                 authorization_epoch: 7,
                 audience: APP.into(),
                 testing_environment_id: None,
-                scopes: vec!["browser".into(), "memberships.read".into()],
+                scopes: vec!["self.identity.read".into(), "self.tags.read".into()],
                 org_role: None,
                 tags: Some(vec![silicon_iam_client::models::AuthorizationTag {
                     id: Uuid::from_u128(5),
@@ -1740,12 +1784,15 @@ mod tests {
     }
 
     #[test]
-    fn recording_proof_inputs_reject_cross_org_audiences_and_unsafe_metadata() {
+    fn recording_proof_inputs_allow_installed_audiences_and_reject_unsafe_metadata() {
         assert!(validate_recording_proof_request(&recording_request()).is_ok());
+        let mut installed = recording_request();
+        installed.expected_org_id = "interface-client".into();
+        assert!(validate_recording_proof_request(&installed).is_ok());
         for mutation in 0..7 {
             let mut request = recording_request();
             match mutation {
-                0 => request.audience = "other>briefcase".into(),
+                0 => request.audience = "other>brief/case".into(),
                 1 => request.body_sha256 = "A".repeat(64),
                 2 => request.name = "../recording".into(),
                 3 => request.path = "private/../another".into(),
@@ -1755,6 +1802,32 @@ mod tests {
             }
             assert!(validate_recording_proof_request(&request).is_err());
         }
+    }
+
+    #[test]
+    fn recording_authority_requires_exact_endpoint_and_disclosed_identity_and_role() {
+        let mut identity = identity();
+        identity.org_role = Some("member".into());
+        let scope = "self.identity.read self.membership.read obo:tos>briefcase:briefcase.files.create";
+        identity.scopes = scope.split_whitespace().map(str::to_owned).collect();
+        assert!(recording_authority(&identity, "tos>briefcase"));
+        for rejected in [
+            "obo.issue memberships.read roles.read",
+            "self.identity.read self.membership.read",
+            "self.membership.read obo:tos>briefcase:briefcase.files.create",
+            "self.identity.read obo:tos>briefcase:briefcase.files.create",
+            "self.identity.read self.membership.read obo:other>briefcase:briefcase.files.create",
+            "self.identity.read self.membership.read obo:tos>briefcase:briefcase.files.read",
+        ] {
+            identity.scopes = rejected.split_whitespace().map(str::to_owned).collect();
+            assert!(!recording_authority(&identity, "tos>briefcase"));
+        }
+        identity.scopes = scope.split_whitespace().map(str::to_owned).collect();
+        identity.org_role = None;
+        assert!(!recording_authority(&identity, "tos>briefcase"));
+        identity.org_role = Some("member".into());
+        identity.public_id = None;
+        assert!(!recording_authority(&identity, "tos>briefcase"));
     }
 
     #[tokio::test]
@@ -1767,9 +1840,14 @@ mod tests {
                 read_request_head(&mut stream).await;
                 let mut claims = claims();
                 if wrong_actor {
-                    claims.scope = Some("browser memberships.read roles.read obo.issue".into());
-                    claims.authorization.as_mut().unwrap().scopes =
-                        vec!["browser".into(), "memberships.read".into(), "roles.read".into(), "obo.issue".into()];
+                    claims.scope = Some("self.identity.read self.membership.read self.tags.read obo:tos>briefcase:briefcase.files.create".into());
+                    claims.authorization.as_mut().unwrap().scopes = vec![
+                        "self.identity.read".into(),
+                        "self.membership.read".into(),
+                        "self.tags.read".into(),
+                        "obo:tos>briefcase:briefcase.files.create".into(),
+                    ];
+                    claims.authorization.as_mut().unwrap().org_role = Some("member".into());
                 }
                 write_test_response(&mut stream, "200 OK", &[], &serde_json::to_string(&claims).unwrap()).await;
             });
@@ -1790,12 +1868,87 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn delivery_identity_bypasses_cached_metadata_when_an_endpoint_grant_changes() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let base = Url::parse(&format!("http://{}/", listener.local_addr().unwrap())).unwrap();
+        let server = tokio::spawn(async move {
+            for active_grant in [true, false] {
+                let (mut stream, _) = listener.accept().await.unwrap();
+                read_request_head(&mut stream).await;
+                let mut current = claims();
+                let mut scopes = vec!["self.identity.read", "self.membership.read", "self.tags.read"];
+                if active_grant {
+                    scopes.push("obo:tos>briefcase:briefcase.files.create");
+                }
+                current.scope = Some(scopes.join(" "));
+                current.authorization.as_mut().unwrap().scopes = scopes.iter().map(|scope| (*scope).into()).collect();
+                current.authorization.as_mut().unwrap().org_role = Some("member".into());
+                write_test_response(&mut stream, "200 OK", &[], &serde_json::to_string(&current).unwrap()).await;
+            }
+        });
+        let provider =
+            SiliconIamIdentityProvider::from_parts(reqwest::Client::new(), base, APP.into(), "app-secret".into())
+                .unwrap()
+                .with_authorization_cache(Arc::new(crate::auth_cache::AuthorizationCache::default()));
+        assert!(recording_authority(&provider.identify(&oat('A'), ORG).await.unwrap(), "tos>briefcase"));
+        assert!(recording_authority(&provider.identify(&oat('A'), ORG).await.unwrap(), "tos>briefcase"));
+        assert!(!recording_authority(&provider.identify_for_delivery(&oat('A'), ORG).await.unwrap(), "tos>briefcase"));
+        server.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn recording_catalog_rejects_wrong_application_owner_path_or_duplicate_endpoint_before_exchange() {
+        for invalid in 0..4 {
+            let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let base = Url::parse(&format!("http://{}/", listener.local_addr().unwrap())).unwrap();
+            let server = tokio::spawn(async move {
+                for step in 0..2 {
+                    let (mut stream, _) = listener.accept().await.unwrap();
+                    let request = read_request_head(&mut stream).await;
+                    let body = if step == 0 {
+                        assert!(request.starts_with("POST /api/v1/oauth/introspect "));
+                        let mut current = claims();
+                        current.scope = Some("self.identity.read self.membership.read self.tags.read obo:tos>briefcase:briefcase.files.create".into());
+                        current.authorization.as_mut().unwrap().scopes =
+                            current.scope.as_ref().unwrap().split_whitespace().map(str::to_owned).collect();
+                        current.authorization.as_mut().unwrap().org_role = Some("member".into());
+                        serde_json::to_value(current).unwrap()
+                    } else {
+                        assert!(request.starts_with("GET /api/v1/obo-access/applications/tos%3Ebriefcase/endpoints "));
+                        let mut catalog = json!({"application":{"app_id":"tos>briefcase","org_id":"tos"},"endpoints":[{
+                            "critical":false,"endpoint_id":RECORDING_ENDPOINT_ID,"path":RECORDING_ENDPOINT_PATH,
+                            "metadata":{"path":{"type":"string"},"name":{"type":"string"},"content_type":{"type":"string"}}
+                        }]});
+                        match invalid {
+                            0 => catalog["application"]["org_id"] = json!("client"),
+                            1 => catalog["application"]["app_id"] = json!("other>briefcase"),
+                            2 => catalog["endpoints"][0]["path"] = json!("/different"),
+                            _ => {
+                                let copy = catalog["endpoints"][0].clone();
+                                catalog["endpoints"].as_array_mut().unwrap().push(copy);
+                            }
+                        }
+                        catalog
+                    };
+                    write_test_response(&mut stream, "200 OK", &[], &body.to_string()).await;
+                }
+            });
+            let provider =
+                SiliconIamIdentityProvider::from_parts(reqwest::Client::new(), base, APP.into(), "app-secret".into())
+                    .unwrap();
+            assert!(provider.issue_recording_proof(&oat('A'), recording_request()).await.is_err());
+            server.await.unwrap();
+        }
+    }
+
+    #[tokio::test]
     async fn recording_proof_sdk_binds_exact_bytes_metadata_actor_app_and_testing_plane() {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let base = format!("http://{}/", listener.local_addr().unwrap());
         let environment_key = "T".repeat(32);
         let expected_environment = environment_key.clone();
-        let request = recording_request();
+        let mut request = recording_request();
+        request.expected_org_id = "interface-client".into();
         let expected_digest = request.body_sha256.clone();
         let expected_key = request.idempotency_key.clone();
         let raw_proof = format!("obo_{}", "P".repeat(43));
@@ -1820,12 +1973,19 @@ mod tests {
                     2 => {
                         assert!(request.starts_with("POST /api/v1/oauth/introspect "));
                         assert!(lower.contains("authorization: basic "));
-                        assert!(lower.contains("x-org-id: tos\r\n"));
+                        assert!(lower.contains("x-org-id: interface-client\r\n"));
                         let mut claims = claims();
-                        claims.scope = Some("browser memberships.read roles.read obo.issue".into());
+                        claims.org_id = Some("interface-client".into());
+                        claims.authorization.as_mut().unwrap().org_id = "interface-client".into();
+                        claims.scope = Some("self.identity.read self.membership.read self.tags.read obo:tos>briefcase:briefcase.files.create".into());
                         let snapshot = claims.authorization.as_mut().unwrap();
-                        snapshot.scopes =
-                            vec!["browser".into(), "memberships.read".into(), "roles.read".into(), "obo.issue".into()];
+                        snapshot.scopes = vec![
+                            "self.identity.read".into(),
+                            "self.membership.read".into(),
+                            "self.tags.read".into(),
+                            "obo:tos>briefcase:briefcase.files.create".into(),
+                        ];
+                        snapshot.org_role = Some("member".into());
                         snapshot.testing_environment_id = Some(Uuid::from_u128(10));
                         serde_json::to_value(claims).unwrap()
                     }
@@ -1851,7 +2011,7 @@ mod tests {
                             serde_json::from_str(request.split_once("\r\n\r\n").unwrap().1).unwrap();
                         assert_eq!(
                             wire,
-                            json!({"org_id":ORG,"subject_token":oat('A'),"audience":"tos>briefcase","endpoint_id":RECORDING_ENDPOINT_ID,
+                            json!({"org_id":"interface-client","subject_token":oat('A'),"audience":"tos>briefcase","endpoint_id":RECORDING_ENDPOINT_ID,
                             "metadata":{"path":"","name":"session-recording.webm","content_type":"video/webm"},
                             "request":{"method":"POST","body_sha256":expected_digest}})
                         );
@@ -1882,7 +2042,7 @@ mod tests {
         for wrong_principal in [false, true] {
             let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
             let base = Url::parse(&format!("http://{}", listener.local_addr().unwrap())).unwrap();
-            let response:OAuthTokenResponse=serde_json::from_value(json!({"access_token":oat('A'),"refresh_token":format!("ort_{}","R".repeat(43)),"token_type":"Bearer","expires_in":1800,"scope":"obo.issue memberships.read roles.read","org_id":ORG,"actor":{"principal_id":Uuid::from_u128(1),"public_id":"silicon-1","type":"silicon"}})).unwrap();
+            let response:OAuthTokenResponse=serde_json::from_value(json!({"access_token":oat('A'),"refresh_token":format!("ort_{}","R".repeat(43)),"token_type":"Bearer","expires_in":1800,"scope":"self.identity.read self.membership.read self.tags.read obo:tos>briefcase:briefcase.files.create","org_id":ORG,"actor":{"principal_id":Uuid::from_u128(1),"public_id":"silicon-1","type":"silicon"}})).unwrap();
             let server = tokio::spawn(async move {
                 for index in 0..3 {
                     let (mut stream, _) = listener.accept().await.unwrap();
@@ -1895,7 +2055,8 @@ mod tests {
                         assert!(request.contains("token_type_hint=refresh_token"));
                         assert!(request.contains("token=ort_"));
                         current.authorization = None;
-                        current.scope = Some("obo.issue memberships.read roles.read".into());
+                        current.scope = Some("self.identity.read self.membership.read self.tags.read obo:tos>briefcase:briefcase.files.create".into());
+
                         if wrong_principal {
                             current.principal_id = Some(Uuid::from_u128(99));
                         }
@@ -1919,6 +2080,9 @@ mod tests {
                 assert!(!recovered.access_active);
                 assert_eq!(recovered.auth.identity.principal_id, Uuid::from_u128(1));
                 assert!(recovered.auth.identity.tags.is_none());
+                assert!(recovered.auth.identity.org_role.is_none());
+                assert!(recovered.auth.identity.scopes.is_empty());
+                assert!(!recording_authority(&recovered.auth.identity, "tos>briefcase"));
             }
             server.await.unwrap();
         }
@@ -2275,7 +2439,7 @@ mod tests {
                         assert!(request.starts_with("POST /api/v1/app-auth/tokens "));
                         assert!(request.ends_with("app_id=tos%3Ebrowser&slt=worker%3Atos"));
                         json!({"access_token": oat('A'), "refresh_token": format!("ort_{}", "R".repeat(43)), "token_type":"Bearer",
-                            "expires_in": 1800, "scope":"browser memberships.read", "org_id": ORG})
+                            "expires_in": 1800, "scope":"self.identity.read self.tags.read", "org_id": ORG})
                     }
                     _ => {
                         assert!(request.starts_with("POST /api/v1/oauth/introspect "));

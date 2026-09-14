@@ -125,6 +125,11 @@ mod tests {
             principal_id: Uuid::nil(),
             public_id: Some("test".into()),
             tags: None,
+            org_role: Some("member".into()),
+            scopes: "self.identity.read self.membership.read obo:org-1>briefcase:briefcase.files.create"
+                .split_whitespace()
+                .map(str::to_owned)
+                .collect(),
             kind: IdentityKind::Carbon,
             org_id: "tos".into(),
             membership_id: Uuid::nil(),
