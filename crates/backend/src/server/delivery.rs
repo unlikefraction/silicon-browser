@@ -40,7 +40,7 @@ impl AppState {
             return Err("recording issuer and Briefcase audience must be canonical applications".into());
         }
         self.recording_delivery = Some(Arc::new(RecordingDeliveryServices {
-            auth: DeliveryAuth::new(self.store.clone(), self.secrets.clone(), self.identity.clone()),
+            auth: DeliveryAuth::new(self.store.clone(), self.secrets.clone(), self.identity.clone(), audience.clone()),
             transfer: RecordingDelivery::new(briefcase, self.browser.clone()),
             issuer,
             audience,

@@ -48,12 +48,12 @@ async fn iam_stub(State(state): State<Arc<TestIam>>, request: axum::extract::Req
     assert_eq!(path, "/api/v1/oauth/introspect");
     Json(json!({"active":true,"principal_id":Uuid::from_u128(1),"actor_type":"silicon","client_id":"tos>browser",
         "org_id":"org-1","membership_id":Uuid::from_u128(2),"session_id":Uuid::from_u128(3),
-        "scope":"browser memberships.read","audience":"tos>browser","issued_at":Utc::now().timestamp()-1,
+        "scope":"self.identity.read self.tags.read","audience":"tos>browser","issued_at":Utc::now().timestamp()-1,
         "expires_at":Utc::now().timestamp()+1800,"authorization_epoch":7,
         "authorization":{"principal_id":Uuid::from_u128(1),"actor_type":"silicon","public_id":"owner-1",
             "organization_id":Uuid::from_u128(4),"org_id":"org-1","membership_id":Uuid::from_u128(2),
             "membership_version":1,"authorization_epoch":7,"audience":"tos>browser",
-            "testing_environment_id":environment,"scopes":["browser","memberships.read"],"tags":[]}}))
+            "testing_environment_id":environment,"scopes":["self.identity.read","self.tags.read"],"tags":[]}}))
     .into_response()
 }
 
