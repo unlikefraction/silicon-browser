@@ -48,7 +48,9 @@ use crate::store::{
 use crate::url_policy::{has_forbidden_host, is_https_or_loopback_http};
 
 mod delivery;
+mod testing;
 mod usage_limits;
+pub use testing::TestingRegistry;
 
 const MAX_REQUEST_BODY: usize = 2 * 1024 * 1024;
 const PROFILE_RECONCILIATION_ITEM_TIMEOUT: Duration = Duration::from_secs(10);
@@ -84,6 +86,7 @@ pub struct AppState {
     usage_limits: usage_limits::UsageLimitsCache,
     recording_delivery: Option<Arc<delivery::RecordingDeliveryServices>>,
     recording_delivery_required: bool,
+    testing_environment: Option<Uuid>,
 }
 
 impl AppState {
@@ -119,6 +122,7 @@ impl AppState {
             usage_limits: usage_limits::UsageLimitsCache::default(),
             recording_delivery: None,
             recording_delivery_required: false,
+            testing_environment: None,
         })
     }
 
@@ -558,19 +562,43 @@ impl AppState {
 /// Native API middleware. `SB_ORIGIN` is the separately hosted frontend origin.
 pub fn production_router(state: AppState) -> Router {
     let origin = HeaderValue::from_str(&state.public_origin).expect("AppState validates an HTTP origin");
-    router(state)
+    api_middleware(router(state).layer(axum::middleware::from_fn(testing::reject_misdirected_credentials)), origin)
+}
+
+pub fn production_router_with_testing(state: AppState, testing: TestingRegistry) -> Router {
+    let origin = HeaderValue::from_str(&state.public_origin).expect("AppState validates an HTTP origin");
+    api_middleware(
+        router(state).layer(axum::middleware::from_fn(testing::reject_misdirected_credentials)).merge(testing.router()),
+        origin,
+    )
+}
+
+fn api_middleware(router: Router, origin: HeaderValue) -> Router {
+    router
         .layer(
             tower_http::cors::CorsLayer::new()
                 .allow_origin(origin)
                 .allow_methods([Method::GET, Method::POST, Method::PATCH])
-                .allow_headers([AUTHORIZATION, CONTENT_TYPE, HeaderName::from_static("x-org-id")])
+                .allow_headers([
+                    AUTHORIZATION,
+                    CONTENT_TYPE,
+                    HeaderName::from_static("x-org-id"),
+                    HeaderName::from_static("x-sb-test-app-secret"),
+                    HeaderName::from_static("x-testing-environment-key"),
+                    HeaderName::from_static("x-sb-test-briefcase-key"),
+                ])
                 .expose_headers([
                     HeaderName::from_static("x-sb-auth-rejected"),
                     HeaderName::from_static("x-request-id"),
                 ]),
         )
         .layer(tower_http::trace::TraceLayer::new_for_http())
-        .layer(tower_http::sensitive_headers::SetSensitiveRequestHeadersLayer::new([AUTHORIZATION]))
+        .layer(tower_http::sensitive_headers::SetSensitiveRequestHeadersLayer::new([
+            AUTHORIZATION,
+            HeaderName::from_static("x-sb-test-app-secret"),
+            HeaderName::from_static("x-testing-environment-key"),
+            HeaderName::from_static("x-sb-test-briefcase-key"),
+        ]))
 }
 
 pub fn router(state: AppState) -> Router {
@@ -720,16 +748,23 @@ async fn exchange_auth(
     payload: Result<Json<AuthExchangeRequest>, JsonRejection>,
 ) -> Result<impl IntoResponse, ApiFailure> {
     let request = json_payload(payload)?;
-    request.validate().map_err(ApiFailure::validation)?;
+    if state.identity.is_testing() {
+        request.validate_testing().map_err(ApiFailure::validation)?;
+    } else {
+        request.validate().map_err(ApiFailure::validation)?;
+    }
     let requested_org = request.org_id;
+    // A test actor is reusable: another login needs a new token family after
+    // logout/rotation, whereas a single-use SLT must retain replay recovery.
+    let idempotency_key = if state.identity.is_testing() && !request.short_lived_token.starts_with("oac_") {
+        Uuid::new_v4().to_string()
+    } else {
+        stable_idempotency("exchange", &request.short_lived_token, requested_org.as_deref().unwrap_or("unscoped"))
+    };
     let exchanged = state
         .identity
         .exchange_short_lived_token(ExchangeRequest {
-            idempotency_key: stable_idempotency(
-                "exchange",
-                &request.short_lived_token,
-                requested_org.as_deref().unwrap_or("unscoped"),
-            ),
+            idempotency_key,
             short_lived_token: request.short_lived_token,
             required_org_id: requested_org,
         })
@@ -1199,7 +1234,11 @@ async fn live_session(
         // Fragments are never sent in HTTP requests. The authenticated web UI
         // can explicitly redeem this TTL-bounded grant later without putting a
         // provider URL or IAM bearer in browser history and access logs.
-        url: format!("{}/sessions/{session_id}/live#grant={grant}", state.public_origin),
+        url: format!(
+            "{}/sessions/{session_id}/live#grant={grant}{}",
+            state.public_origin,
+            state.testing_environment.map(|id| format!("&test={id}")).unwrap_or_default()
+        ),
         expires_at: session.expires_at,
     }))
 }
@@ -2238,6 +2277,9 @@ pub fn spawn_ttl_reaper(state: AppState, interval: Duration) -> tokio::task::Joi
 
 #[cfg(test)]
 mod tests {
+    mod testing_routing {
+        include!("server/testing_tests.rs");
+    }
     mod local_control {
         include!("server/local_control_tests.rs");
     }

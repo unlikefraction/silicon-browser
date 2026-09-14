@@ -260,7 +260,11 @@ pub(super) async fn authorize(
     payload: Result<Json<DeliveryAuthorizationRequest>, JsonRejection>,
 ) -> Result<impl IntoResponse, ApiFailure> {
     let request = json_payload(payload)?;
-    request.validate().map_err(ApiFailure::validation)?;
+    if state.identity.is_testing() {
+        request.validate_testing().map_err(ApiFailure::validation)?;
+    } else {
+        request.validate().map_err(ApiFailure::validation)?;
+    }
     let delivery = state.recording_delivery.as_ref().ok_or_else(|| {
         ApiFailure::new(
             StatusCode::SERVICE_UNAVAILABLE,

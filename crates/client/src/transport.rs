@@ -1,6 +1,7 @@
 use std::time::Duration;
 
 use serde_json::Value;
+use silicon_browser_shared::{TestingCredentials, Validate};
 
 use crate::Error;
 
@@ -70,6 +71,7 @@ struct RecoveredCredential {
 
 pub struct HttpTransport {
     agent: ureq::Agent,
+    testing: Option<(url::Url, TestingCredentials)>,
     unauthorized_recovery: Option<std::sync::Arc<UnauthorizedRecovery>>,
     recovered: std::sync::Mutex<Option<RecoveredCredential>>,
 }
@@ -84,11 +86,25 @@ impl Default for HttpTransport {
             .max_redirects(0)
             .build()
             .new_agent();
-        Self { agent, unauthorized_recovery: None, recovered: std::sync::Mutex::new(None) }
+        Self { agent, testing: None, unauthorized_recovery: None, recovered: std::sync::Mutex::new(None) }
     }
 }
 
 impl HttpTransport {
+    /// Pin developer credentials to one `/testing/<environment-id>` API base.
+    /// Requests outside that origin and path fail locally; redirects remain disabled.
+    pub fn with_testing(mut self, base: &str, credentials: TestingCredentials) -> Result<Self, Error> {
+        credentials.validate().map_err(|error| Error::Local(error.to_string()))?;
+        let base = url::Url::parse(&crate::normalize_backend_url(base)?)
+            .map_err(|_| Error::Local("invalid test backend URL".into()))?;
+        let (parent, id) = base.path().rsplit_once('/').unwrap_or_default();
+        if !parent.ends_with("/testing") || uuid::Uuid::parse_str(id).is_err() {
+            return Err(Error::Local("test transport requires a backend ending in /testing/<environment-uuid>".into()));
+        }
+        self.testing = Some((base, credentials));
+        Ok(self)
+    }
+
     /// Optional caller-owned credential recovery. Only a marked pre-handler HTTP 401 may
     /// trigger one retry. No refresh token or filesystem state is owned by this transport.
     pub fn with_unauthorized_recovery(
@@ -149,49 +165,55 @@ impl HttpTransport {
     }
 
     fn perform(&self, request: &Request, timeout: Duration) -> Result<ureq::http::Response<ureq::Body>, Error> {
+        if let Some((base, _)) = &self.testing {
+            let target = url::Url::parse(&request.url).map_err(|_| Error::Local("invalid request URL".into()))?;
+            let path = target.path().to_ascii_lowercase();
+            if target.origin() != base.origin()
+                || !target.username().is_empty()
+                || target.password().is_some()
+                || !target.path().starts_with(&format!("{}/api/v1/", base.path()))
+                || path.contains("%2f")
+                || path.contains("%5c")
+            {
+                return Err(Error::Local(
+                    "test credentials cannot be sent outside their enrolled environment API".into(),
+                ));
+            }
+        }
         match request.method {
             Method::Get => {
                 let built = self.agent.get(&request.url).config().timeout_global(Some(timeout)).build();
-                match request.bearer.as_deref() {
-                    Some(token) => {
-                        let built = built.header("Authorization", &format!("Bearer {token}"));
-                        match request.org.as_deref() {
-                            Some(org) => built.header("X-Org-ID", org).call(),
-                            None => built.call(),
-                        }
-                    }
-                    None => match request.org.as_deref() {
-                        Some(org) => built.header("X-Org-ID", org).call(),
-                        None => built.call(),
-                    },
-                }
+                self.headers(built, request).call()
             }
             Method::Post => {
                 let built = self.agent.post(&request.url).config().timeout_global(Some(timeout)).build();
-                let built = match request.bearer.as_deref() {
-                    Some(token) => built.header("Authorization", &format!("Bearer {token}")),
-                    None => built,
-                };
-                let built = match request.org.as_deref() {
-                    Some(org) => built.header("X-Org-ID", org),
-                    None => built,
-                };
-                built.send_json(request.body.as_ref().unwrap_or(&Value::Null))
+                self.headers(built, request).send_json(request.body.as_ref().unwrap_or(&Value::Null))
             }
             Method::Patch => {
                 let built = self.agent.patch(&request.url).config().timeout_global(Some(timeout)).build();
-                let built = match request.bearer.as_deref() {
-                    Some(token) => built.header("Authorization", &format!("Bearer {token}")),
-                    None => built,
-                };
-                let built = match request.org.as_deref() {
-                    Some(org) => built.header("X-Org-ID", org),
-                    None => built,
-                };
-                built.send_json(request.body.as_ref().unwrap_or(&Value::Null))
+                self.headers(built, request).send_json(request.body.as_ref().unwrap_or(&Value::Null))
             }
         }
         .map_err(|error| Error::Transport(redact_url(error.to_string(), &request.url)))
+    }
+
+    fn headers<B>(&self, mut built: ureq::RequestBuilder<B>, request: &Request) -> ureq::RequestBuilder<B> {
+        if let Some(token) = &request.bearer {
+            built = built.header("Authorization", format!("Bearer {token}"));
+        }
+        if let Some(org) = &request.org {
+            built = built.header("X-Org-ID", org);
+        }
+        if let Some((_, credentials)) = &self.testing {
+            built = built.header("x-sb-test-app-secret", &credentials.app_secret);
+            if let Some(key) = &credentials.iam_test_key {
+                built = built.header("x-testing-environment-key", key);
+            }
+            if let Some(key) = &credentials.briefcase_test_environment_key {
+                built = built.header("x-sb-test-briefcase-key", key);
+            }
+        }
+        built
     }
 }
 
@@ -229,6 +251,76 @@ mod tests {
     use std::net::TcpListener;
 
     use super::*;
+
+    #[test]
+    fn test_transport_sends_credentials_on_all_methods_and_rejects_other_scopes() {
+        let server = TcpListener::bind("127.0.0.1:0").unwrap();
+        let origin = format!("http://{}", server.local_addr().unwrap());
+        let base = format!("{origin}/testing/{}", uuid::Uuid::new_v4());
+        let worker = std::thread::spawn(move || {
+            for method in ["GET", "POST", "PATCH"] {
+                let (mut connection, _) = server.accept().unwrap();
+                connection.set_read_timeout(Some(Duration::from_secs(3))).unwrap();
+                let mut reader = std::io::BufReader::new(&mut connection);
+                let mut first = String::new();
+                std::io::BufRead::read_line(&mut reader, &mut first).unwrap();
+                assert!(first.starts_with(method));
+                let mut headers = String::new();
+                loop {
+                    let mut line = String::new();
+                    std::io::BufRead::read_line(&mut reader, &mut line).unwrap();
+                    assert!(!line.is_empty());
+                    if line == "\r\n" {
+                        break;
+                    }
+                    headers.push_str(&line.to_ascii_lowercase());
+                }
+                assert!(headers.contains("x-sb-test-app-secret: ask_private\r\n"));
+                assert!(headers.contains(&format!("x-testing-environment-key: {}\r\n", "a".repeat(32))));
+                assert!(headers.contains(&format!("x-sb-test-briefcase-key: {}\r\n", "b".repeat(32))));
+                assert!(headers.contains("authorization: bearer oat_private\r\n"));
+                assert!(headers.contains("x-org-id: tos\r\n"));
+                let body_length = headers
+                    .lines()
+                    .find_map(|line| line.strip_prefix("content-length: "))
+                    .map(|v| v.trim().parse::<usize>().unwrap())
+                    .unwrap_or(0);
+                let mut body = vec![0; body_length];
+                reader.read_exact(&mut body).unwrap();
+                connection.write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\n{}").unwrap();
+            }
+        });
+        let transport = HttpTransport::default()
+            .with_testing(
+                &base,
+                TestingCredentials {
+                    app_secret: "ask_private".into(),
+                    iam_test_key: Some("a".repeat(32)),
+                    briefcase_test_environment_key: Some("b".repeat(32)),
+                },
+            )
+            .unwrap();
+        let request = |method, url| Request {
+            method,
+            url,
+            bearer: Some("oat_private".into()),
+            org: Some("tos".into()),
+            body: None,
+        };
+        for path in [
+            format!("{origin}/api/v1/profiles"),
+            format!("{base}-other/api/v1/profiles"),
+            format!("{base}/api/v1/../../profiles"),
+            format!("{base}/api/v1/%2f..%2fprofiles"),
+            "https://other.example/api/v1/profiles".into(),
+        ] {
+            assert!(matches!(transport.send(request(Method::Get, path)), Err(Error::Local(_))));
+        }
+        for method in [Method::Get, Method::Post, Method::Patch] {
+            assert_eq!(transport.send(request(method, format!("{base}/api/v1/profiles"))).unwrap().status, 200);
+        }
+        worker.join().unwrap();
+    }
 
     /// Redirects cannot replay bearer credentials to another origin.
 

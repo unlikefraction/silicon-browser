@@ -50,18 +50,63 @@ impl Client {
 
     /// Discover the backend's IAM application without an existing login.
     pub fn iam(base: impl Into<String>) -> Result<IamInfo, Error> {
-        let client = Self::new(base, Auth::new("pre-auth")?)?;
+        Self::iam_with_transport(base, Arc::new(HttpTransport::default()))
+    }
+
+    pub fn iam_with_transport(base: impl Into<String>, transport: Arc<dyn Transport>) -> Result<IamInfo, Error> {
+        let client = Self::with_transport(base, Auth::new("pre-auth")?, transport)?;
         let info: IamInfo = client.send_without_auth(Method::Get, "/api/v1/iam", None)?;
         validate_id(&info.app_id, "app_id")?;
         Ok(info)
     }
 
+    /// Verify explicit test credentials against IAM and discover their environment.
+    pub fn testing_context(
+        base: impl Into<String>,
+        credentials: &TestingCredentials,
+    ) -> Result<TestingEnvironment, Error> {
+        credentials.validate().map_err(validation)?;
+        let client = Self::new(base, Auth::new("pre-auth")?)?;
+        let environment: TestingEnvironment =
+            client.send_without_auth(Method::Post, "/api/v1/testing/context", Some(json(credentials)?))?;
+        validate_id(&environment.app_id, "app_id")?;
+        if environment.environment_id.is_nil() {
+            return Err(Error::Protocol("testing context returned an empty environment ID".into()));
+        }
+        Ok(environment)
+    }
+
     /// Exchange a single-use IAM short-lived token. This is deliberately an associated
     /// function: there is no bearer with which to construct a normal Client yet.
     pub fn exchange(base: impl Into<String>, request: &AuthExchangeRequest) -> Result<AuthSession, Error> {
+        Self::exchange_with_transport(base, request, Arc::new(HttpTransport::default()))
+    }
+
+    pub fn exchange_with_transport(
+        base: impl Into<String>,
+        request: &AuthExchangeRequest,
+        transport: Arc<dyn Transport>,
+    ) -> Result<AuthSession, Error> {
         request.validate().map_err(validation)?;
         let placeholder = Auth::new("pre-auth")?;
-        let client = Self::new(base, placeholder)?;
+        let client = Self::with_transport(base, placeholder, transport)?;
+        let session: AuthSession =
+            client.send_without_auth(Method::Post, "/api/v1/auth/exchange", Some(json(request)?))?;
+        validate_auth_session(&session, request.org_id.as_deref())?;
+        Ok(session)
+    }
+
+    /// Exchange an IAM test SLT or select a test actor using enrolled developer credentials.
+    /// The test transport prevents requests from reaching any production API path.
+    pub fn exchange_testing(
+        base: impl Into<String>,
+        request: &AuthExchangeRequest,
+        credentials: TestingCredentials,
+    ) -> Result<AuthSession, Error> {
+        request.validate_testing().map_err(validation)?;
+        let base = normalize_backend_url(&base.into())?;
+        let transport = HttpTransport::default().with_testing(&base, credentials)?;
+        let client = Self::with_transport(base, Auth::new("pre-auth")?, Arc::new(transport))?;
         let session: AuthSession =
             client.send_without_auth(Method::Post, "/api/v1/auth/exchange", Some(json(request)?))?;
         validate_auth_session(&session, request.org_id.as_deref())?;
@@ -69,9 +114,17 @@ impl Client {
     }
 
     pub fn refresh(base: impl Into<String>, request: &AuthRefreshRequest) -> Result<AuthSession, Error> {
+        Self::refresh_with_transport(base, request, Arc::new(HttpTransport::default()))
+    }
+
+    pub fn refresh_with_transport(
+        base: impl Into<String>,
+        request: &AuthRefreshRequest,
+        transport: Arc<dyn Transport>,
+    ) -> Result<AuthSession, Error> {
         request.validate().map_err(validation)?;
         let placeholder = Auth::new("pre-auth")?;
-        let client = Self::new(base, placeholder)?;
+        let client = Self::with_transport(base, placeholder, transport)?;
         let session: AuthSession =
             client.send_without_auth(Method::Post, "/api/v1/auth/refresh", Some(json(request)?))?;
         validate_auth_session(&session, Some(&request.org_id))?;
@@ -87,6 +140,18 @@ impl Client {
     pub fn authorize_delivery(&self, request: &DeliveryAuthorizationRequest) -> Result<DeliveryAuthorization, Error> {
         request.validate().map_err(validation)?;
         self.post_scoped("/api/v1/auth/delivery", request)
+    }
+
+    /// Enroll a separate background IAM family using a test SLT or test actor ID.
+    pub fn authorize_delivery_testing(
+        &self,
+        request: &DeliveryAuthorizationRequest,
+        credentials: TestingCredentials,
+    ) -> Result<DeliveryAuthorization, Error> {
+        request.validate_testing().map_err(validation)?;
+        let transport = HttpTransport::default().with_testing(&self.base, credentials)?;
+        let client = Self { transport: Arc::new(transport), ..self.clone() };
+        client.post_scoped("/api/v1/auth/delivery", request)
     }
 
     pub fn end_delivery_authorization(&self) -> Result<DeliveryAuthorization, Error> {
@@ -486,6 +551,21 @@ mod tests {
         assert!(matches!(client.end_delivery_authorization(), Err(Error::Local(_))));
         let client = client.org("org-1").unwrap();
         assert!(client.authorize_delivery(&DeliveryAuthorizationRequest { short_lived_token: String::new() }).is_err());
+        let actor = DeliveryAuthorizationRequest { short_lived_token: "worker:tos".into() };
+        assert!(client.authorize_delivery(&actor).is_err());
+        assert!(
+            client
+                .authorize_delivery_testing(
+                    &actor,
+                    TestingCredentials {
+                        app_secret: format!("ask_{}", "S".repeat(43)),
+                        iam_test_key: None,
+                        briefcase_test_environment_key: None,
+                    }
+                )
+                .is_err(),
+            "test authorization must reject a production API base"
+        );
         assert!(transport.0.lock().unwrap().is_empty());
     }
 

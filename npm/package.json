@@ -1,10 +1,14 @@
 {
   "name": "silicon-browser",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Silicon Browser managed CLI",
   "license": "MIT",
   "type": "module",
-  "files": ["bin", "README.md", "LICENSE"],
+  "files": [
+    "bin",
+    "README.md",
+    "LICENSE"
+  ],
   "bin": {
     "sb": "bin/launcher.js",
     "silicon-browser": "bin/launcher.js"

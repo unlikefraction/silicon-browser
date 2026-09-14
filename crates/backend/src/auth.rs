@@ -11,14 +11,15 @@ use std::sync::{Arc, RwLock};
 use std::time::Duration;
 
 use async_trait::async_trait;
+use base64::Engine as _;
 use chrono::{DateTime, Utc};
 use reqwest::header::{ACCEPT, CONTENT_TYPE, HeaderMap, HeaderValue};
 use serde::Deserialize;
 use sha2::{Digest as _, Sha256};
-use silicon_browser_shared::{Identity, IdentityKind, Org};
+use silicon_browser_shared::{AuthExchangeRequest, Identity, IdentityKind, Org};
 use silicon_iam_client::models::{
-    ActorRefType, ApiVersionNegotiation, ApplicationAuthorizationActorType, DirectoryMember, OAuthTokenResponse,
-    OrganizationPage, TokenIntrospection, TokenIntrospectionActorType,
+    ActorRefType, ApiVersionNegotiation, ApplicationAuthorizationActorType, ApplicationTestingContext, DirectoryMember,
+    OAuthTokenResponse, OrganizationPage, TokenIntrospection, TokenIntrospectionActorType,
 };
 use silicon_iam_client::{Credential, EnvironmentKey, IdempotencyKey, Mutation};
 use thiserror::Error;
@@ -216,6 +217,11 @@ pub trait IdentityProvider: Send + Sync {
         "tos>browser"
     }
 
+    /// True only after IAM has authenticated an isolated testing context.
+    fn is_testing(&self) -> bool {
+        false
+    }
+
     /// Resolve an OAT inside an explicit organization context.
     async fn identify(&self, bearer: &str, org: &str) -> Result<PrincipalIdentity, IdentityError>;
 
@@ -262,7 +268,7 @@ pub struct SiliconIamIdentityProvider {
     base_url: Url,
     app_id: Arc<str>,
     app_secret: Secret,
-    testing_environment: bool,
+    testing_environment: Option<Uuid>,
     authorization_cache: Option<Arc<crate::auth_cache::AuthorizationCache>>,
 }
 
@@ -298,6 +304,11 @@ impl fmt::Debug for Secret {
 }
 
 impl SiliconIamIdentityProvider {
+    /// The exact isolated environment authenticated by IAM, or production.
+    pub fn testing_environment_id(&self) -> Option<Uuid> {
+        self.testing_environment
+    }
+
     /// Build a redirect-refusing IAM client and negotiate the service contract
     /// before accepting traffic.
     pub async fn connect(base_url: &str, app_id: String, app_secret: String) -> Result<Self, IdentityError> {
@@ -325,6 +336,65 @@ impl SiliconIamIdentityProvider {
             value.set_sensitive(true);
             headers.insert("x-testing-environment-key", value);
         }
+        let mut provider = Self::connect_with_headers(base_url, app_id, app_secret, headers).await?;
+        if let Some(key) = environment_key {
+            provider.sdk = provider.sdk.with_environment(EnvironmentKey::new(key).map_err(obo_sdk_error)?);
+            provider.bind_testing_context().await?;
+        }
+        Ok(provider)
+    }
+
+    /// Authenticate the application's test secret without retaining an IAM root key.
+    /// IAM, rather than any caller-supplied identifier, determines the environment.
+    pub async fn connect_testing_application(
+        base_url: &str,
+        app_id: String,
+        app_secret: String,
+    ) -> Result<(Self, ApplicationTestingContext), IdentityError> {
+        validate_opaque_token(&app_secret, &["ask_"]).map_err(|_| IdentityError::InvalidInput {
+            field: "app_secret",
+            reason: "expected IAM's ask_ application-secret form",
+        })?;
+        let encoded = base64::engine::general_purpose::STANDARD.encode(format!("{app_id}:{app_secret}"));
+        let mut selector = HeaderValue::from_str(&format!("Basic {encoded}")).map_err(|_| {
+            IdentityError::InvalidInput { field: "app_secret", reason: "invalid testing application credential" }
+        })?;
+        selector.set_sensitive(true);
+        let mut headers = HeaderMap::new();
+        headers.insert("x-testing-application", selector);
+        let mut provider = Self::connect_with_headers(base_url, app_id, app_secret, headers).await?;
+        provider.sdk = provider
+            .sdk
+            .with_testing_application(&provider.app_id, provider.app_secret.expose())
+            .map_err(testing_context_error)?;
+        let context = provider.bind_testing_context().await?;
+        Ok((provider, context))
+    }
+
+    async fn bind_testing_context(&mut self) -> Result<ApplicationTestingContext, IdentityError> {
+        let context = self.sdk.applications().testing_context().await.map_err(testing_context_error)?;
+        if context.application.app_id != self.app_id.as_ref()
+            || context.environment_id.is_nil()
+            || context
+                .environment
+                .as_ref()
+                .is_some_and(|environment| environment.environment_id != context.environment_id)
+        {
+            return Err(IdentityError::Contract {
+                operation: "testing context",
+                reason: "IAM returned a different application or invalid environment identity",
+            });
+        }
+        self.testing_environment = Some(context.environment_id);
+        Ok(context)
+    }
+
+    async fn connect_with_headers(
+        base_url: &str,
+        app_id: String,
+        app_secret: String,
+        headers: HeaderMap,
+    ) -> Result<Self, IdentityError> {
         validate_app_credential(&app_id, &app_secret)?;
         let parsed = Url::parse(base_url)
             .map_err(|_| IdentityError::InvalidInput { field: "iam_url", reason: "expected an HTTP(S) URL" })?;
@@ -370,12 +440,7 @@ impl SiliconIamIdentityProvider {
         )
         .await?;
         validate_negotiation(&negotiated)?;
-        let mut provider = Self::from_parts(http, parsed, app_id, app_secret)?;
-        if let Some(key) = environment_key {
-            provider.sdk = provider.sdk.with_environment(EnvironmentKey::new(key).map_err(obo_sdk_error)?);
-        }
-        provider.testing_environment = environment_key.is_some();
-        Ok(provider)
+        Self::from_parts(http, parsed, app_id, app_secret)
     }
 
     fn from_parts(
@@ -397,7 +462,7 @@ impl SiliconIamIdentityProvider {
             base_url,
             app_id: Arc::from(app_id),
             app_secret: Secret::new(app_secret),
-            testing_environment: false,
+            testing_environment: None,
             authorization_cache: None,
         })
     }
@@ -538,8 +603,11 @@ impl SiliconIamIdentityProvider {
             request = request.header("x-org-id", org);
         }
         let claims: TokenIntrospection = decode_response("token introspection", request.send().await).await?;
-        if let Some(authorization) = &claims.authorization
-            && authorization.testing_environment_id.is_some() != self.testing_environment
+        if claims
+            .authorization
+            .iter()
+            .chain(claims.authorizations.iter().flatten())
+            .any(|authorization| authorization.testing_environment_id != self.testing_environment)
         {
             return Err(IdentityError::Contract {
                 operation: "token introspection",
@@ -550,7 +618,7 @@ impl SiliconIamIdentityProvider {
     }
 
     async fn exchange_slt(&self, request: &ExchangeRequest) -> Result<OAuthTokenResponse, IdentityError> {
-        validate_exchange_request(request)?;
+        validate_exchange_request(request, self.is_testing())?;
         let body = form(&[("app_id", self.app_id.as_ref()), ("slt", &request.short_lived_token)]);
         let response = self
             .http
@@ -718,9 +786,15 @@ impl IdentityProvider for SiliconIamIdentityProvider {
         &self.app_id
     }
 
+    fn is_testing(&self) -> bool {
+        self.testing_environment.is_some()
+    }
+
     async fn identify(&self, bearer: &str, org: &str) -> Result<PrincipalIdentity, IdentityError> {
         validate_org_id(org)?;
-        if let Some(cache) = &self.authorization_cache {
+        if let Some(cache) = &self.authorization_cache
+            && !self.is_testing()
+        {
             cache.resolve(bearer, org, || self.identify_fresh(bearer, org)).await
         } else {
             self.identify_fresh(bearer, org).await
@@ -1031,11 +1105,20 @@ fn validate_app_credential(app_id: &str, secret: &str) -> Result<(), IdentityErr
     Ok(())
 }
 
-fn validate_exchange_request(request: &ExchangeRequest) -> Result<(), IdentityError> {
-    validate_opaque_token(&request.short_lived_token, &["oac_"]).map_err(|_| IdentityError::InvalidInput {
-        field: "short_lived_token",
-        reason: "expected IAM's oac_ short-lived-token form",
-    })?;
+fn validate_exchange_request(request: &ExchangeRequest, testing: bool) -> Result<(), IdentityError> {
+    if testing {
+        AuthExchangeRequest { short_lived_token: request.short_lived_token.clone(), org_id: None }
+            .validate_testing()
+            .map_err(|_| IdentityError::InvalidInput {
+            field: "short_lived_token",
+            reason: "expected an IAM short-lived token or a Carbon/Silicon public ID in this testing environment",
+        })?;
+    } else {
+        validate_opaque_token(&request.short_lived_token, &["oac_"]).map_err(|_| IdentityError::InvalidInput {
+            field: "short_lived_token",
+            reason: "expected IAM's oac_ short-lived-token form",
+        })?;
+    }
     if let Some(org) = &request.required_org_id {
         validate_org_id(org)?;
     }
@@ -1122,6 +1205,16 @@ fn validate_recording_proof_request(request: &RecordingProofRequest) -> Result<(
         });
     }
     Ok(())
+}
+
+fn testing_context_error(error: silicon_iam_client::Error) -> IdentityError {
+    match obo_sdk_error(error) {
+        IdentityError::Contract { .. } => IdentityError::Contract {
+            operation: "testing context",
+            reason: "IAM rejected the testing context request or response contract",
+        },
+        error => error,
+    }
 }
 
 fn obo_sdk_error(error: silicon_iam_client::Error) -> IdentityError {
@@ -1442,6 +1535,16 @@ mod tests {
         format!("oac_{}", character.to_string().repeat(43))
     }
 
+    fn testing_context() -> serde_json::Value {
+        json!({
+            "environment_id": Uuid::from_u128(10),
+            "application": {"app_id": APP, "base_url": "https://browser.example", "app_scope": {"iam": [], "external": []},
+                "webhook_scope": [], "testing_idle_days": 30},
+            "environment": {"environment_id": Uuid::from_u128(10), "org_id": ORG, "name": "Browser test", "version": 1,
+                "key_generation": 1, "created_at": "2026-09-12T00:00:00Z", "creator_type": "application", "creator_id": APP}
+        })
+    }
+
     fn claims() -> TokenIntrospection {
         TokenIntrospection {
             active: true,
@@ -1595,11 +1698,14 @@ mod tests {
         assert!(validate_oat(&format!("oat_{}", "A".repeat(42))).is_err());
         assert!(validate_oat(&format!("cat_{}", "A".repeat(43))).is_err());
         assert!(
-            validate_exchange_request(&ExchangeRequest {
-                short_lived_token: oac('C'),
-                required_org_id: Some(ORG.into()),
-                idempotency_key: "0123456789abcdef".into(),
-            })
+            validate_exchange_request(
+                &ExchangeRequest {
+                    short_lived_token: oac('C'),
+                    required_org_id: Some(ORG.into()),
+                    idempotency_key: "0123456789abcdef".into(),
+                },
+                false
+            )
             .is_ok()
         );
         assert!(
@@ -1697,7 +1803,7 @@ mod tests {
         let expires_at = Utc::now() + chrono::TimeDelta::seconds(50);
         let expected_expiry = expires_at;
         let server = tokio::spawn(async move {
-            for index in 0..4 {
+            for index in 0..5 {
                 let (mut stream, _) = listener.accept().await.unwrap();
                 let request = read_request_head(&mut stream).await;
                 let lower = request.to_ascii_lowercase();
@@ -1708,6 +1814,10 @@ mod tests {
                         json!({"service":"silicon-iam","selected_api_version":"v1","supported_api_versions":["v1"],"build":"test","commit":"test"})
                     }
                     1 => {
+                        assert!(request.starts_with("GET /api/v1/application/testing-context "));
+                        testing_context()
+                    }
+                    2 => {
                         assert!(request.starts_with("POST /api/v1/oauth/introspect "));
                         assert!(lower.contains("authorization: basic "));
                         assert!(lower.contains("x-org-id: tos\r\n"));
@@ -1719,7 +1829,7 @@ mod tests {
                         snapshot.testing_environment_id = Some(Uuid::from_u128(10));
                         serde_json::to_value(claims).unwrap()
                     }
-                    2 => {
+                    3 => {
                         assert!(request.starts_with("GET /api/v1/obo-access/applications/tos%3Ebriefcase/endpoints "));
                         assert!(lower.contains("authorization: basic "));
                         assert!(!lower.contains("x-org-id:"));
@@ -2068,13 +2178,153 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn actor_login_requires_a_verified_testing_provider() {
+        let provider = SiliconIamIdentityProvider::from_parts(
+            reqwest::Client::new(),
+            Url::parse("http://127.0.0.1:1").unwrap(),
+            APP.into(),
+            "production-secret".into(),
+        )
+        .unwrap();
+        assert!(!provider.is_testing());
+        for actor in ["alice", "worker:tos"] {
+            let request = ExchangeRequest {
+                short_lived_token: actor.into(),
+                required_org_id: Some(ORG.into()),
+                idempotency_key: "0123456789abcdef".into(),
+            };
+            assert!(validate_exchange_request(&request, true).is_ok());
+            assert!(matches!(
+                provider.exchange_short_lived_token(request).await,
+                Err(IdentityError::InvalidInput { .. })
+            ));
+        }
+    }
+
+    #[tokio::test]
+    async fn testing_application_context_must_match_the_configured_app_and_environment() {
+        for mutation in 0..4 {
+            let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let base = format!("http://{}/", listener.local_addr().unwrap());
+            let server = tokio::spawn(async move {
+                let (mut stream, _) = listener.accept().await.unwrap();
+                assert!(read_request_head(&mut stream).await.starts_with("GET /api/version "));
+                write_test_response(
+                    &mut stream,
+                    "200 OK",
+                    &[],
+                    &json!({"service":"silicon-iam", "selected_api_version":"v1",
+                    "supported_api_versions":["v1"],"build":"test","commit":"test"})
+                    .to_string(),
+                )
+                .await;
+                let (mut stream, _) = listener.accept().await.unwrap();
+                assert!(read_request_head(&mut stream).await.starts_with("GET /api/v1/application/testing-context "));
+                let mut context = testing_context();
+                match mutation {
+                    0 => context["application"]["app_id"] = json!("other>app"),
+                    1 => context["environment_id"] = json!(Uuid::nil()),
+                    2 => context["environment"]["environment_id"] = json!(Uuid::from_u128(99)),
+                    _ => context = json!({"error": {"code": "unauthenticated", "message": "test credential rejected"}}),
+                }
+                write_test_response(
+                    &mut stream,
+                    if mutation == 3 { "401 Unauthorized" } else { "200 OK" },
+                    &[],
+                    &context.to_string(),
+                )
+                .await;
+            });
+            let secret = format!("ask_{}", "S".repeat(43));
+            let error = SiliconIamIdentityProvider::connect_testing_application(&base, APP.into(), secret.clone())
+                .await
+                .unwrap_err();
+            assert!(matches!(
+                error,
+                IdentityError::Contract { operation: "testing context", .. } | IdentityError::Unauthenticated
+            ));
+            assert!(!format!("{error:?}").contains(&secret));
+            server.await.unwrap();
+        }
+    }
+
+    #[tokio::test]
+    async fn testing_application_selector_authenticates_actor_login_and_binds_every_snapshot() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let base = format!("http://{}/", listener.local_addr().unwrap());
+        let secret = format!("ask_{}", "S".repeat(43));
+        let selector = format!("Basic {}", base64::engine::general_purpose::STANDARD.encode(format!("{APP}:{secret}")));
+        let server = tokio::spawn(async move {
+            for index in 0..6 {
+                let (mut stream, _) = listener.accept().await.unwrap();
+                let request = read_request_head(&mut stream).await;
+                assert!(request.contains(&format!("x-testing-application: {selector}\r\n")));
+                assert!(!request.contains("x-testing-environment-key:"));
+                if index > 0 {
+                    assert!(request.contains(&format!("authorization: {selector}\r\n")));
+                }
+                let body = match index {
+                    0 => {
+                        json!({"service":"silicon-iam", "selected_api_version":"v1", "supported_api_versions":["v1"],"build":"test","commit":"test"})
+                    }
+                    1 => {
+                        assert!(request.starts_with("GET /api/v1/application/testing-context "));
+                        testing_context()
+                    }
+                    2 => {
+                        assert!(request.starts_with("POST /api/v1/app-auth/tokens "));
+                        assert!(request.ends_with("app_id=tos%3Ebrowser&slt=worker%3Atos"));
+                        json!({"access_token": oat('A'), "refresh_token": format!("ort_{}", "R".repeat(43)), "token_type":"Bearer",
+                            "expires_in": 1800, "scope":"browser memberships.read", "org_id": ORG})
+                    }
+                    _ => {
+                        assert!(request.starts_with("POST /api/v1/oauth/introspect "));
+                        let mut current = claims();
+                        current.authorization.as_mut().unwrap().testing_environment_id =
+                            Some(Uuid::from_u128(if index == 3 { 10 } else { 99 }));
+                        if index == 5 {
+                            current.org_id = None;
+                            current.authorizations = Some(vec![current.authorization.take().unwrap()]);
+                        }
+                        serde_json::to_value(current).unwrap()
+                    }
+                };
+                write_test_response(&mut stream, "200 OK", &[], &body.to_string()).await;
+            }
+        });
+        let (provider, context) =
+            SiliconIamIdentityProvider::connect_testing_application(&base, APP.into(), secret.clone()).await.unwrap();
+        assert!(provider.is_testing());
+        assert_eq!(context.environment_id, Uuid::from_u128(10));
+        assert!(!format!("{provider:?}").contains(&secret));
+        let authenticated = provider
+            .exchange_short_lived_token(ExchangeRequest {
+                short_lived_token: "worker:tos".into(),
+                required_org_id: Some(ORG.into()),
+                idempotency_key: "0123456789abcdef".into(),
+            })
+            .await
+            .unwrap();
+        assert_eq!(authenticated.identity.org_id, ORG);
+        assert!(matches!(
+            provider.identify(&oat('A'), ORG).await,
+            Err(IdentityError::Contract { operation: "token introspection", .. })
+        ));
+        assert!(matches!(
+            provider.orgs(&oat('A')).await,
+            Err(IdentityError::Contract { operation: "token introspection", .. })
+        ));
+        server.await.unwrap();
+    }
+
+    #[tokio::test]
     async fn every_iam_operation_stays_in_the_selected_environment() {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let base = format!("http://{}/", listener.local_addr().unwrap());
         let key = "T".repeat(32);
         let expected_key = key.clone();
         let server = tokio::spawn(async move {
-            for index in 0..7 {
+            for index in 0..8 {
                 let (mut stream, _) = listener.accept().await.unwrap();
                 let head = read_request_head(&mut stream).await;
                 assert!(head.contains(&format!("x-testing-environment-key: {expected_key}\r\n")));
@@ -2084,6 +2334,9 @@ mod tests {
                         "supported_api_versions": ["v1"], "build": "test", "commit": "test" })
                     .to_string();
                     write_test_response(&mut stream, "200 OK", &[], &body).await;
+                } else if index == 1 {
+                    assert!(head.starts_with("GET /api/v1/application/testing-context "));
+                    write_test_response(&mut stream, "200 OK", &[], &testing_context().to_string()).await;
                 } else {
                     assert!(head.to_ascii_lowercase().contains("authorization: "));
                     write_test_response(&mut stream, "401 Unauthorized", &[], "{}").await;

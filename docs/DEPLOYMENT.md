@@ -16,7 +16,7 @@ Vercel serves `https://browser.teamofsilicons.com`. A dedicated AWS host runs th
 
 ## Vercel frontend
 
-Set the project Root Directory to `frontend`, Framework Preset to **Vite**, and Node to **24.x**. The frontend uses SolidJS, TypeScript and Vite. `frontend/vercel.json` defines the build, `dist` output, security headers, and rewrites for `/auth/callback` and `/sessions/:id/live`. There is no API proxy or serverless function. See [frontend setup](../frontend/README.md).
+Set the project Root Directory to `frontend`, Framework Preset to **Vite**, and Node to **24.x**. The frontend uses SolidJS, TypeScript and Vite. `frontend/vercel.json` defines the build, `dist` output, security headers, and rewrites for `/auth/callback`, `/sessions/:id/live`, and `/docs`. The static documentation landing page is published at `/docs/`; the build copies repository Markdown into the same directory. Deploy from the repository root with files outside the frontend root available to the build. There is no API proxy or serverless function. See [frontend setup](../frontend/README.md).
 
 The public API origin defaults to `https://backend.browser.teamofsilicons.com`. `SB_PUBLIC_BACKEND_URL` is build-time public configuration, never a place for credentials. Provider keys, IAM application secrets, webhook secrets and test-environment keys belong only on AWS.
 
@@ -41,7 +41,7 @@ CARGO_INCREMENTAL=0 cargo zigbuild --release --locked --target aarch64-unknown-l
 python3 deploy/release-native.py
 ```
 
-The [installer](../deploy/install-native.sh) verifies startup through `/healthz`, preserves the previous release and restores its environment/unit files on failure. SQLite migrations must remain compatible with the previous binary; rollback does not reverse database changes. The systemd service runs as an unprivileged user with restricted writable paths. A fifteen-minute timer creates an online SQLite backup, checks its integrity and uploads it to the private bucket. Backups expire after 90 days. A separate restore check must compare schema/migrations and verify the restored database; successfully uploading a file is not enough.
+The [installer](../deploy/install-native.sh) verifies startup through `/healthz`, preserves the previous release and restores its environment/unit files on failure. SQLite migrations must remain compatible with the previous binary; rollback does not reverse database changes. The systemd service runs as an unprivileged user with restricted writable paths. A fifteen-minute timer creates online SQLite backups, checks their integrity and uploads them to the private bucket. It snapshots the root registry first, then each registered test database. Test snapshots use `<timestamp>.testing/<namespace>.db`; the root `<timestamp>.db` is uploaded last to mark a complete set. Each database is internally consistent, without a transaction spanning separate databases. Restore the complete set with the same encryption key and test databases beside the main file in `<database-file>.testing/`. Backups expire after 90 days. A separate restore check must compare schema/migrations and verify the restored databases; successfully uploading files is not enough.
 
 ## IAM webhook and authorization cache
 

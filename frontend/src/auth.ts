@@ -5,9 +5,21 @@ const CALLBACK_TYPE = 'silicon-browser:sign-in';
 export function readEntry(url: URL) {
   const match = url.pathname.match(/^\/sessions\/([^/]+)\/live\/?$/);
   let pending: PendingLive | null = null;
-  try { const grant = new URLSearchParams(url.hash.slice(1)).get('grant'); if (match && grant && grant.length <= 16384) pending = { id: decodeURIComponent(match[1]), grant }; } catch { /* malformed handoff */ }
+  let error = '';
+  try {
+    const fragment = new URLSearchParams(url.hash.slice(1)), grant = fragment.get('grant'), environment = fragment.get('test');
+    if (match && grant && grant.length <= 16384) {
+      if (fragment.has('test') && (fragment.getAll('test').length !== 1 || !/^[a-f\d]{8}(?:-[a-f\d]{4}){3}-[a-f\d]{12}$/i.test(environment || ''))) throw new Error('The live invitation has an invalid test environment. Request a new invitation.');
+      pending = { id: decodeURIComponent(match[1]), grant, ...(environment ? { testEnvironmentId: environment.toLowerCase() } : {}) };
+    }
+  } catch (cause) { error = cause instanceof URIError ? 'The live invitation has an invalid session ID. Request a new invitation.' : (cause as Error).message; }
   const callback = url.pathname === '/auth/callback' ? { nonce: url.searchParams.get('nonce'), token: url.searchParams.get('slt') } : null;
-  return { pending, callback, cleanPath: url.pathname };
+  return { pending, callback, cleanPath: url.pathname, error };
+}
+export function requireLiveEnvironment(link: PendingLive, environmentId?: string) {
+  if (link.testEnvironmentId !== environmentId) throw new Error(link.testEnvironmentId
+    ? `This live invitation requires testing environment ${link.testEnvironmentId}. Open Testing environment and enroll it before continuing.`
+    : 'This live invitation belongs to production. Exit test mode before opening it.');
 }
 export function loginUrl(origin: string, nonce: string) {
   const callback = new URL('/auth/callback', origin); callback.searchParams.set('nonce', nonce);

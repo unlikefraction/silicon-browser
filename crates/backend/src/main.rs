@@ -6,7 +6,7 @@ use silicon_browser_backend::config::Config;
 use silicon_browser_backend::crypto::SecretBox;
 use silicon_browser_backend::providers::{BriefcaseClient, BrowserUseV3, FairSearchPool};
 use silicon_browser_backend::store::Store;
-use silicon_browser_backend::{AppState, production_router, spawn_ttl_reaper};
+use silicon_browser_backend::{AppState, TestingRegistry, production_router_with_testing, spawn_ttl_reaper};
 
 #[tokio::main]
 async fn main() {
@@ -82,7 +82,8 @@ async fn run() -> Result<(), String> {
         tracing::warn!("Briefcase is not configured; new browser sessions are disabled");
     }
 
-    let mut app = production_router(state.clone());
+    let testing = TestingRegistry::new(config.clone(), state.clone())?;
+    let mut app = production_router_with_testing(state.clone(), testing.clone());
     if let Some(webhook) = webhook {
         app = app.merge(webhook);
     }
@@ -91,11 +92,13 @@ async fn run() -> Result<(), String> {
         .map_err(|error| format!("could not bind {}: {error}", config.bind))?;
     tracing::info!(address = %config.bind, "Silicon Browser backend listening");
     let reaper = spawn_ttl_reaper(state, Duration::from_secs(15));
+    let test_maintenance = testing.spawn_maintenance(Duration::from_secs(15));
     let result = axum::serve(listener, app)
         .with_graceful_shutdown(shutdown_signal())
         .await
         .map_err(|error| format!("HTTP server failed: {error}"));
     reaper.abort();
+    test_maintenance.abort();
     result
 }
 

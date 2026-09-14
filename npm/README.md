@@ -1,11 +1,11 @@
 # Silicon Browser npm package
 
-This package replaces the previous `silicon-browser` npm CLI with the managed Silicon Browser CLI (`sb`), currently version 0.2.0. Version 1.0.0 is an intentional breaking replacement.
+This package replaces the previous `silicon-browser` npm CLI with the managed Silicon Browser CLI (`sb`), currently version 0.2.1. Version 1.0.0 is an intentional breaking replacement.
 
 ```sh
 npx silicon-browser --version
-npx sb setup
-npx sb login <short-lived-token>
+npx silicon-browser setup
+npx silicon-browser login <short-lived-token>
 ```
 
 The package bundles checksum-verified release binaries for macOS and Linux on x64 and arm64, so installation does not run a downloader or postinstall script. Linux requires glibc 2.34 or newer; Windows, Alpine, and other platforms are unsupported.

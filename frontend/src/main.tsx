@@ -6,8 +6,8 @@ import '@fontsource/ibm-plex-sans/latin-600.css';
 import '@fontsource/ibm-plex-mono/latin-400.css';
 import './styles.css';
 import brandMark from './assets/mark.svg';
-import { BrowserApi, acceptAuth, publicError, safeHttps, segment, shellQuote, dateForApi } from './api';
-import { readEntry, completeCallback, signInPopup } from './auth';
+import { BrowserApi, acceptAuth, publicError, safeHttps, segment, shellQuote, dateForApi, type TestingContext } from './api';
+import { readEntry, requireLiveEnvironment, completeCallback, signInPopup } from './auth';
 import { recordingRecovery } from './recordings';
 import { TabSession } from './session';
 import type { AuthSession, Organization, Profile, Session, Recording, Usage, UsageLimits, Location, Delivery, SessionLog } from './types';
@@ -16,10 +16,10 @@ const entry = readEntry(new URL(location.href));
 // Remove one-use credentials and live grants before rendering, login, or API requests.
 if (location.hash || location.search) history.replaceState(null, '', entry.cleanPath);
 const savedSession = new TabSession(import.meta.env.SB_BACKEND_ORIGIN);
-const api = new BrowserApi(import.meta.env.SB_BACKEND_ORIGIN, undefined, value => savedSession.save(value));
+const productionApi = new BrowserApi(import.meta.env.SB_BACKEND_ORIGIN, undefined, value => savedSession.save(value));
 // The popup only hands off its one-use code; it must not restore the opener's session.
 const restored = entry.callback ? null : savedSession.load();
-if (restored) api.setSession(restored);
+if (restored) productionApi.setSession(restored);
 const date = (value: string) => new Date(value).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' });
 const cost = (value?: Usage) => value?.cost?.total ? `${(value.cost.total.micros / 1e6).toFixed(4)} ${value.cost.total.currency}` : 'Pending';
 const bytes = (value: number) => value >= 1e9 ? `${(value / 1e9).toFixed(2)} GB` : `${(value / 1e6).toFixed(1)} MB`;
@@ -35,12 +35,16 @@ function ExternalLink(props: { href?: string; children: JSX.Element }) {
 function Badge(props: { state: string }) { return <span class={`badge ${props.state === 'active' || props.state === 'complete' ? 'positive' : ''}`}>{props.state.replaceAll('_', ' ')}</span>; }
 function Empty(props: { children: JSX.Element }) { return <div class="empty">{props.children}</div>; }
 function App() {
+  let api = productionApi;
   const [auth, setAuth] = createSignal<AuthSession | null>(restored);
+  const [testing, setTesting] = createSignal<TestingContext>();
+  const [showTesting, setShowTesting] = createSignal(!!entry.pending?.testEnvironmentId);
   const [organizations, setOrganizations] = createSignal<Organization[]>(restored ? [restored.org] : []);
   const [busy, setBusy] = createSignal(false);
   const [loading, setLoading] = createSignal(false);
-  const [notice, setNotice] = createSignal('');
+  const [notice, setNotice] = createSignal(entry.error);
   const [signingIn, setSigningIn] = createSignal(false);
+  const [testTokenRequest, setTestTokenRequest] = createSignal<{ purpose: string; accept: (token: string) => void; cancel: () => void }>();
   let signInAbort: AbortController | null = null;
   const [view, setView] = createSignal<View>('sessions');
   const [profiles, setProfiles] = createSignal<Profile[]>([]);
@@ -92,7 +96,11 @@ function App() {
       }
     } finally { if (ticket === revision) setLoading(false); }
   }
-  async function tokenFor() {
+  async function tokenFor(purpose = 'sign-in') {
+    if (testing()) {
+      try { return await new Promise<string>((resolve, reject) => setTestTokenRequest({ purpose, accept: resolve, cancel: () => reject(new Error('Test authorization cancelled.')) })); }
+      finally { setTestTokenRequest(undefined); }
+    }
     signInAbort = new AbortController(); setSigningIn(true);
     try { return await signInPopup(signInAbort.signal); } finally { setSigningIn(false); signInAbort = null; }
   }
@@ -109,6 +117,7 @@ function App() {
     setOrganizations(items.filter((item, index, all) => all.findIndex(candidate => candidate.id === item.id) === index));
   }
   async function enterWorkspace() {
+    if (pendingLive) requireLiveEnvironment(pendingLive, testing()?.environment_id);
     await loadOrganizations();
     if (pendingLive) { const link = pendingLive; pendingLive = null; await openLive(link.id, link.grant); }
     else await navigate('sessions');
@@ -121,19 +130,40 @@ function App() {
     catch (error) { api.setSession(previous); setAuth(previous); throw error; }
   }
   async function attachOrganizations() {
-    const token = await tokenFor();
+    const token = await tokenFor('organization access');
     const result = acceptAuth(await api.request<AuthSession>('/auth/exchange', 'POST', { short_lived_token: token }, null));
     api.setSession(result); setAuth(result); await enterWorkspace();
     setNotice('Organization access updated.');
   }
-  function logout() {
-    api.setSession(null); setAuth(null); ++revision; setLiveUrl(''); setSession(undefined); pendingLive = null;
+  function clearWorkspace() {
+    ++revision; setLiveUrl(''); setSession(undefined); setProfile(undefined); pendingLive = null;
     setNotice(''); setLoading(false); setDelivery(undefined); setSessions([]); setProfiles([]); setRecordings([]); setUsage([]); setTotal(undefined); setLimits(undefined); setLogs([]); setOrganizations([]);
+    setLocations([]); setView('sessions'); setFilter('');
     history.replaceState(null, '', '/');
+  }
+  function logout() {
+    if (testing()) { api.close(); setShowTesting(true); }
+    else api.setSession(null);
+    setAuth(null); clearWorkspace();
+  }
+  async function startTesting(data: FormData) {
+    const result = await productionApi.startTesting({
+      app_secret: String(data.get('app_secret') || '').trim(),
+      ...(data.get('iam_test_key') ? { iam_test_key: String(data.get('iam_test_key')).trim() } : {}),
+      ...(data.get('briefcase_test_environment_key') ? { briefcase_test_environment_key: String(data.get('briefcase_test_environment_key')).trim() } : {}),
+    }, String(data.get('token') || '').trim(), String(data.get('org') || '').trim(), pendingLive?.testEnvironmentId);
+    const invitation = pendingLive?.testEnvironmentId === result.context.environment_id ? pendingLive : null;
+    if (api !== productionApi) api.close();
+    api = result.api; clearWorkspace(); pendingLive = invitation; setTesting(result.context); setAuth(api.currentSession()); setShowTesting(false);
+    await enterWorkspace();
+  }
+  async function exitTesting() {
+    api.close(); api = productionApi; clearWorkspace(); setTesting(undefined); setShowTesting(false); setAuth(api.currentSession());
+    if (api.currentSession()) await enterWorkspace();
   }
   async function authorize() {
     const current = auth(); if (!current) return;
-    const token = await tokenFor();
+    const token = await tokenFor('recording access');
     const result = await api.call<Delivery>('/auth/delivery', 'POST', { short_lived_token: token });
     setDelivery(result);
     setNotice('Recording access is ready. Your recordings will be saved after each session.');
@@ -152,7 +182,7 @@ function App() {
     setNotice('Recording access is ready. Pending recordings will resume delivery automatically.');
   }
   onMount(() => {
-    if (restored) void perform(enterWorkspace);
+    if (restored && !pendingLive?.testEnvironmentId) void perform(enterWorkspace);
     const timer = window.setInterval(() => {
       if (auth() && view() === 'recordings' && !busy() && !loading() && recordings().some(item => ['recording', 'pending'].includes(item.status))) {
         void refreshRecordings(revision, true).catch(() => {});
@@ -176,7 +206,10 @@ function App() {
         const link = await api.call<{url: string}>(`/sessions/${segment(id)}/live`, 'POST');
         const url = new URL(link.url);
         if (url.origin !== location.origin) throw new Error('The live link did not match this website.');
-        grant = new URLSearchParams(url.hash.slice(1)).get('grant') || undefined;
+        const invitation = readEntry(url).pending;
+        if (!invitation || invitation.id !== id) throw new Error('The live link did not match this session.');
+        requireLiveEnvironment(invitation, testing()?.environment_id);
+        grant = invitation.grant;
       }
       if (!grant) throw new Error('The live browser link is unavailable. Refresh the session and try again.');
       const result = await api.call<{url: string}>(`/sessions/${segment(id)}/live/redeem`, 'POST', { grant });
@@ -209,16 +242,39 @@ function App() {
         <div class="rail-label workspace-label">WORKSPACE</div>
         <nav aria-label="Workspace"><For each={tabs}>{tab => <button disabled={busy()} aria-current={activeTab() === tab ? 'page' : undefined} onClick={() => void perform(() => navigate(tab))}><span>{tab === 'settings' ? 'Settings' : tab[0].toUpperCase() + tab.slice(1)}</span><span aria-hidden="true">{activeTab() === tab ? '→' : ''}</span></button>}</For></nav>
       </Show>
-      <div class="rail-bottom"><a href="https://github.com/teamofsilicons/silicon-browser#readme" target="_blank" rel="noopener noreferrer">CLI & documentation ↗</a><span class="mono">TEAM OF SILICONS</span></div>
+      <div class="rail-bottom"><a href="/docs/" target="_blank" rel="noopener noreferrer">CLI & documentation ↗</a><span class="mono">TEAM OF SILICONS</span></div>
     </aside>
     <div class="main-shell">
-      <header class="topbar"><span class="breadcrumb">Browser <span>/</span> {auth() ? activeTab() : 'Welcome'}</span><Show when={auth()}>{current => <div class="identity"><span>{current().identity.name} <small>{current().org.id}</small></span><button class="quiet" disabled={busy()} onClick={logout}>Sign out</button></div>}</Show></header>
+      <header class="topbar"><span class="breadcrumb">Browser <span>/</span> {showTesting() ? 'Testing environment' : auth() ? activeTab() : 'Welcome'}</span><div class="identity"><button class="quiet" disabled={busy()} aria-expanded={showTesting()} onClick={() => { setNotice(''); setShowTesting(!showTesting()); }}>Testing environment</button><Show when={auth()}>{current => <><span>{current().identity.name} <small>{current().org.id}</small></span><button class="quiet" disabled={busy()} onClick={logout}>Sign out</button></>}</Show></div></header>
       <main classList={{ 'live-main': view() === 'live' && !!auth() }}>
         <Show when={notice()}><div role="status" class="notice">{notice()}</div></Show>
         <Show when={signingIn()}><div class="notice auth-wait" role="status"><span>Complete sign-in in the IAM window.</span><button onClick={() => signInAbort?.abort()}>Cancel sign-in</button></div></Show>
+        <Show when={testing()}>{context => <div class="notice auth-wait" role="status"><span><strong>Test mode · {context().name}</strong><br/><span class="mono">{context().environment_id}</span><br/>Test credentials stay in memory and are cleared when you exit or reload.</span>{button('Exit test mode', exitTesting)}</div>}</Show>
+        <Show when={testTokenRequest()}>{request => <form class="panel form-panel" autocomplete="off" onSubmit={event => { event.preventDefault(); const form = event.currentTarget; const token = String(new FormData(form).get('test_token') || '').trim(); if (!/^[^\s\x00-\x1f\x7f]{1,16384}$/.test(token)) { setNotice('Enter an existing IAM test actor ID or a test short-lived token without whitespace.'); return; } form.reset(); request().accept(token); }}>
+          <h2>Authorize test {request().purpose}</h2><p>Use your existing test actor ID or a fresh token for the same test identity and organization. Authorization stays in the current test environment.</p>
+          <pre>iam --test {testing()!.environment_id} login --app-id 'tos&gt;browser' --grant-org {shellQuote(auth()!.org.id)} -o json</pre>
+          <label>Test actor ID or short-lived token<input name="test_token" type="password" required maxlength={16384} autocomplete="off" spellcheck={false} placeholder="alice, worker:tos, or oac_…"/></label>
+          <div class="actions"><button class="primary">Authorize</button><button type="button" onClick={() => request().cancel()}>Cancel</button></div>
+        </form>}</Show>
+        <Show when={showTesting()}>
+          <section class="panel form-panel"><h1>Testing environment</h1><p>Open an isolated IAM testing workspace. Browser verifies the environment before switching; your production sign-in stays saved.</p>
+            <Show when={pendingLive?.testEnvironmentId}><p class="hint">This live invitation requires environment <span class="mono">{pendingLive?.testEnvironmentId}</span>. Enroll its app secret to continue.</p></Show>
+            <p class="fine">Use an existing test actor ID such as alice or worker:tos, or generate a short-lived token with <code>iam --test &lt;environment-id&gt; login --app-id 'tos&gt;browser' --grant-org &lt;org&gt; -o json</code>. Use the returned <code>slt</code>.</p>
+            <form autocomplete="off" onSubmit={event => { event.preventDefault(); const form = event.currentTarget; const data = new FormData(form); form.reset(); void perform(() => startTesting(data)); }}>
+              <label>Browser test app secret<input name="app_secret" type="password" required maxlength={16384} autocomplete="off" spellcheck={false}/></label>
+              <label>IAM test environment key (optional)<input name="iam_test_key" type="password" maxlength={16384} autocomplete="off" spellcheck={false}/><span class="fine">The test app secret selects the environment. Add its root key only when required by your setup.</span></label>
+              <label>Briefcase test environment key (optional)<input name="briefcase_test_environment_key" type="password" maxlength={16384} autocomplete="off" spellcheck={false}/><span class="fine">Required to create browser sessions and save recordings. Use the key paired with this IAM environment.</span></label>
+              <label>Organization<input name="org" required maxlength={255} placeholder="tos" autocomplete="off" spellcheck={false}/></label>
+              <label>Test actor ID or short-lived token<input name="token" type="password" required maxlength={16384} placeholder="alice, worker:tos, or oac_…" autocomplete="off" spellcheck={false}/></label>
+              <div class="actions"><button class="primary" disabled={busy()}>{busy() ? 'Verifying testing environment…' : 'Enter test mode'}</button><button type="button" disabled={busy()} onClick={() => setShowTesting(false)}>Cancel</button></div>
+              <p class="fine">Keys and test sign-ins are never saved in browser storage. Reloading returns to your production workspace.</p>
+            </form>
+          </section>
+        </Show>
+        <Show when={!showTesting()}>
         <Show when={auth()} fallback={<section class="welcome">
           <span class="eyebrow">YOUR BROWSER WORKSPACE</span><h1>A browser, ready<br/>when you are.</h1><p>Start a session. Keep your profiles. Work together across the web.</p>
-          <form class="login-panel" onSubmit={event => submit(event, login)}><h2>Sign in to Browser</h2><p class="muted">Use your Silicon IAM identity to continue.</p><button class="primary wide" disabled={busy()}>{busy() ? 'Waiting for sign-in…' : 'Continue with IAM'} <span aria-hidden="true">↗</span></button><p class="fine">Sign-in opens in a separate window. You’ll stay signed in when you refresh this tab.</p></form>
+          <Show when={!testing()} fallback={<div class="login-panel"><h2>Test sign-in has ended</h2><p>Open Testing environment to sign in again with a fresh IAM test token, or exit test mode to return to production.</p><button disabled={busy()} onClick={() => setShowTesting(true)}>Testing environment</button></div>}><form class="login-panel" onSubmit={event => submit(event, login)}><h2>Sign in to Browser</h2><p class="muted">Use your Silicon IAM identity to continue.</p><button class="primary wide" disabled={busy()}>{busy() ? 'Waiting for sign-in…' : 'Continue with IAM'} <span aria-hidden="true">↗</span></button><p class="fine">Sign-in opens in a separate window. You’ll stay signed in when you refresh this tab.</p><button type="button" class="quiet" disabled={busy()} onClick={() => setShowTesting(true)}>Testing environment</button></form></Show>
           <Show when={pendingLive}><p class="hint">You have a live browser invitation. Sign in to its organization to continue.</p></Show>
           <div class="welcome-features"><div><span class="mono">01 / PROFILES</span><p>Keep a consistent identity across sessions.</p></div><div><span class="mono">02 / TOGETHER</span><p>Bring people and agents into the same browser.</p></div><div><span class="mono">03 / RECORDED</span><p>Return to your work when a session ends.</p></div></div>
         </section>}>
@@ -281,8 +337,9 @@ function App() {
             }}</For></div></Show>
           </Show>
           <Show when={view() === 'usage'}><div class="page-heading"><div><span class="eyebrow">WORKSPACE ACTIVITY</span><h1>Usage</h1><p class="muted">Browser time and network usage across your organization.</p></div>{button('Refresh', () => navigate('usage'))}</div><Show when={total()}>{sum => <div class="stats"><div><span>Browser time</span><strong>{(sum().browser_seconds / 60).toFixed(1)} <small>min</small></strong></div><div><span>Proxy traffic</span><strong>{bytes(sum().proxy_bytes_in + sum().proxy_bytes_out + (sum().proxy_bytes_unclassified || 0))}</strong></div><div><span>Organization total</span><strong>{cost(sum())}</strong></div></div>}</Show><Show when={limits()} fallback={<p class="muted">Service capacity is temporarily unavailable.</p>}>{capacity => <p class="muted"><strong>{capacity().concurrent_browser_limit} concurrent browsers</strong> · Shared service limit · Checked {date(capacity().checked_at)}</p>}</Show><div class="table-wrap"><table><thead><tr><th>Session</th><th>Browser time</th><th>Usage</th></tr></thead><tbody><For each={usage()}>{item => <tr><td class="mono">{item.session_id}</td><td>{(item.browser_seconds / 60).toFixed(1)} min</td><td>{cost(item)}</td></tr>}</For></tbody></table><Show when={!usage().length}><Empty>No session usage yet.</Empty></Show></div></Show>
-          <Show when={view() === 'settings'}><div class="page-heading"><div><h1>Settings</h1><p class="muted">Your identity and recording access.</p></div></div><section class="panel form-panel"><h2>Signed in</h2><dl><dt>Identity</dt><dd>{auth()?.identity.name}</dd><dt>Organization</dt><dd>{auth()?.org.id}</dd></dl><p class="fine">You stay signed in when you refresh this tab. Sign out to clear this tab’s saved sign-in.</p></section><section class="panel form-panel"><div class="card-top"><h2>Recording access</h2><Show when={delivery()}><Badge state={delivery()!.state}/></Show></div><p>Browser saves recordings to your private Briefcase after sessions end, even when this tab is closed.</p><div class="actions"><Show when={ready()} fallback={button('Enable recording access', authorize, true)}>{button('Disable recording access', async () => { await api.call('/auth/delivery/end', 'POST'); await navigate('settings'); })}</Show>{button('Refresh status', () => navigate('settings'))}</div></section></Show>
+          <Show when={view() === 'settings'}><div class="page-heading"><div><h1>Settings</h1><p class="muted">Your identity and recording access.</p></div></div><section class="panel form-panel"><h2>Signed in</h2><dl><dt>Identity</dt><dd>{auth()?.identity.name}</dd><dt>Organization</dt><dd>{auth()?.org.id}</dd></dl><p class="fine">{testing() ? 'This test sign-in exists only in memory. Reload or exit test mode to clear it and return to production.' : 'You stay signed in when you refresh this tab. Sign out to clear this tab’s saved sign-in.'}</p></section><section class="panel form-panel"><div class="card-top"><h2>Recording access</h2><Show when={delivery()}><Badge state={delivery()!.state}/></Show></div><p>Browser saves recordings to your private Briefcase after sessions end, even when this tab is closed.</p><div class="actions"><Show when={ready()} fallback={button('Enable recording access', authorize, true)}>{button('Disable recording access', async () => { await api.call('/auth/delivery/end', 'POST'); await navigate('settings'); })}</Show>{button('Refresh status', () => navigate('settings'))}</div></section></Show>
           </Show>
+        </Show>
         </Show>
       </main><footer><span>Silicon Browser</span><span class="mono">BUILT FOR CARBONS & SILICONS</span></footer>
     </div>

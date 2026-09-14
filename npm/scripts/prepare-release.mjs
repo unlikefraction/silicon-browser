@@ -5,15 +5,15 @@ import { spawnSync } from 'node:child_process';
 
 const root = new URL('..', import.meta.url).pathname;
 const hashes = {
-  'bin/sb-darwin-arm64': 'a2f11031f84f21220fe0d5ee85b4aa4add8271a8b9ca43e36657374a9d212b80',
-  'bin/sb-darwin-x64': '3c0d8c84b4b3a19e8c04db24eb7c8340d493915ae4739ed65ade3b862dea4814',
-  'bin/sb-linux-arm64': '2729956f40b2ab47654e5279c607d13ee06224192419c55fe987203654249e6b',
-  'bin/sb-linux-x64': '3acfb7b425a0f8a460e1283289595c7f118adfc03188184d9ffb4b76738b1d35'
+  'bin/sb-darwin-arm64': 'f36d9aaccfd4da296b87e6250485eccc7088c94fbe1ffbe769aa369c9eba94cd',
+  'bin/sb-darwin-x64': '1d95b76f1ee94eabf0cfc47b132eb73611bb4e2ccc42307a3fb52411fed0483a',
+  'bin/sb-linux-arm64': '3956f15bbebe6023759840dae382333b43acae96e3876d1a72a339aaf137526e',
+  'bin/sb-linux-x64': '1e8cf30129212d5d333feaa91a2b2135ba1d4d309392b7bf2f310ae0b6c6c798'
 };
 
 for (const [file, expected] of Object.entries(hashes)) {
   const path = join(root, file);
-  if (!existsSync(path)) throw new Error(`missing ${file}; download managed-v0.2.0 assets first`);
+  if (!existsSync(path)) throw new Error(`missing ${file}; download managed-v0.2.1 assets first`);
   const actual = createHash('sha256').update(readFileSync(path)).digest('hex');
   if (actual !== expected) throw new Error(`checksum mismatch: ${file}`);
 }

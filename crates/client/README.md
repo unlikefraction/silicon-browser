@@ -38,3 +38,36 @@ browser.report_command("session-id", &report)?;
 ```
 
 `setup::ensure_runner` installs the pinned native controller into an explicit caller-owned directory and verifies its compiled-in release digest. It requires neither Node/npm nor local Chromium. The `setup_controller` example exercises this installation separately from authentication.
+
+
+## IAM testing environments
+
+The API verifies the test app secret with IAM; no root key is required. Select
+its returned environment UUID and keep that transport attached to every call:
+
+```rust,no_run
+use std::sync::Arc;
+use silicon_browser::{Auth, Client, HttpTransport};
+use silicon_browser::shared::{AuthExchangeRequest, TestingCredentials};
+
+let root = "https://backend.browser.teamofsilicons.com";
+let credentials = TestingCredentials {
+    app_secret: "ask_test_application_secret".into(),
+    iam_test_key: None,
+    briefcase_test_environment_key: None,
+};
+let environment = Client::testing_context(root, &credentials)?;
+let base = format!("{root}/testing/{}", environment.environment_id);
+let session = Client::exchange_testing(&base, &AuthExchangeRequest {
+    short_lived_token: "worker:tos".into(),
+    org_id: Some("tos".into()),
+}, credentials.clone())?;
+let transport = Arc::new(HttpTransport::default().with_testing(&base, credentials)?);
+let browser = Client::with_transport(base, Auth::new(session.access_token)?, transport)?.org(session.org.id)?;
+let profiles = browser.profiles(None)?;
+# Ok::<(), silicon_browser::Error>(())
+```
+
+Test actor IDs or test SLTs use the same authenticated APIs as production.
+Creating browser sessions additionally requires a paired Briefcase test key and
+recording authorization. See the [API and CLI guide](https://browser.teamofsilicons.com/docs).

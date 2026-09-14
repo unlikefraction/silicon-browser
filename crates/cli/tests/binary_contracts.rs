@@ -143,6 +143,116 @@ fn isolated_sb(home: &Path, backend: &str) -> assert_cmd::Command {
 }
 
 #[test]
+fn iam_testing_enrollment_login_status_refresh_and_state_stay_in_the_test_environment() {
+    let id = "11111111-1111-4111-8111-111111111111";
+    let other = "22222222-2222-4222-8222-222222222222";
+    let environment = json!({"data":{"environment_id":id,"app_id":"tos>browser","name":"Browser checks"}});
+    let credentials = json!({"app_secret":"ask_test_private","iam_test_key":"a".repeat(32),"briefcase_test_environment_key":"b".repeat(32)});
+    let server = StubServer::start(vec![
+        StubResponse::json(200, environment.clone()),
+        StubResponse::json(200, environment),
+        refreshed_session_response(),
+        StubResponse::json(200, json!({"data":{"id":"actor","name":"Actor","kind":"silicon"}})),
+        refreshed_session_response(),
+        StubResponse::json(200, json!({"data":[]})),
+        rejected_response(true),
+        refreshed_session_response(),
+        StubResponse::json(200, json!({"data":[]})),
+    ]);
+    let root = tempfile::tempdir().unwrap();
+    let home = root.path().join("state");
+    let command = || {
+        let mut command = isolated_sb(&home, &server.base_url);
+        command.env_remove("SB_AUTHTOKEN");
+        command
+    };
+    command()
+        .args(["--test", id, "testing", "status", "--json"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("\"configured\": false"));
+    command().args(["--test", id, "profile", "ls"]).assert().failure().stderr(predicate::str::contains("not enrolled"));
+    command()
+        .args(["testing", "login", "--credentials-stdin", "--json"])
+        .write_stdin(credentials.to_string())
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(id).and(predicate::str::contains("ask_test_private").not()));
+    command()
+        .args(["--test", id, "testing", "status", "--json"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("\"configured\": true"));
+    command().args(["--test", id, "login", "actor", "--json"]).assert().success();
+    command()
+        .args(["--test", id, "login", "status", "--json"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("\"authenticated\": true"));
+    command()
+        .args(["login", "status", "--json"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("\"authenticated\": false"));
+    command()
+        .args(["--test", other, "profile", "ls"])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("not enrolled"));
+    let test_backend = format!("{}/testing/{id}", server.base_url);
+    let state_file = partition_state(&home, &test_backend);
+    let mut state: Value = serde_json::from_slice(&fs::read(&state_file).unwrap()).unwrap();
+    assert_eq!(state["testing"], credentials);
+    state["token_expires_at"] = json!("2000-01-01T00:00:00Z");
+    fs::write(&state_file, serde_json::to_vec(&state).unwrap()).unwrap();
+    command().args(["--test", id, "profile", "ls"]).assert().success();
+    command().args(["--test", id, "profile", "ls"]).assert().success();
+    let prod: Value = serde_json::from_slice(&fs::read(partition_state(&home, &server.base_url)).unwrap()).unwrap();
+    assert!(prod.get("testing").is_none());
+    assert!(prod.get("access_token").is_none());
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        assert_eq!(fs::metadata(state_file).unwrap().permissions().mode() & 0o777, 0o600);
+    }
+    let requests = server.finish();
+    for request in &requests[..2] {
+        assert_eq!(request.path, "/api/v1/testing/context");
+        assert_eq!(request.json(), credentials);
+        assert!(!request.headers.contains_key("authorization"));
+    }
+    assert_eq!(requests[2].json()["short_lived_token"], "actor");
+    assert_eq!(requests[4].path, format!("/testing/{id}/api/v1/auth/refresh"));
+    assert_eq!(requests[7].path, format!("/testing/{id}/api/v1/auth/refresh"));
+    for request in &requests[2..] {
+        assert!(request.path.starts_with(&format!("/testing/{id}/api/v1/")));
+        assert_eq!(request.headers["x-sb-test-app-secret"], "ask_test_private");
+        assert_eq!(request.headers["x-testing-environment-key"], "a".repeat(32));
+        assert_eq!(request.headers["x-sb-test-briefcase-key"], "b".repeat(32));
+    }
+}
+
+#[test]
+fn testing_enrollment_accepts_secret_only_and_rejects_wrong_environment_without_saving() {
+    let id = "11111111-1111-4111-8111-111111111111";
+    let server = StubServer::start(vec![StubResponse::json(
+        200,
+        json!({"data":{"environment_id":id,"app_id":"tos>browser","name":"Test"}}),
+    )]);
+    let directory = tempfile::tempdir().unwrap();
+    let home = directory.path().join("state");
+    isolated_sb(&home, &server.base_url)
+        .env("SB_TEST_APP_SECRET", "ask_private")
+        .args(["--test", "22222222-2222-4222-8222-222222222222", "testing", "login"])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("does not match --test").and(predicate::str::contains("ask_private").not()));
+    assert!(!home.exists());
+    let requests = server.finish();
+    assert_eq!(requests[0].json(), json!({"app_secret":"ask_private"}));
+}
+
+#[test]
 fn silicon_home_contains_state_unless_sb_home_overrides_it() {
     for override_home in [false, true] {
         let directory = tempfile::tempdir().unwrap();
@@ -658,6 +768,42 @@ fn setup_reports_missing_delivery_authorization_without_claiming_ready() {
         .stderr(predicate::str::contains("SB_RECORDING_SLT"))
         .stdout(predicate::str::contains("ready:").not());
     assert_eq!(server.finish().len(), 3);
+}
+
+#[cfg(unix)]
+#[test]
+fn test_setup_enrolls_recording_delivery_with_its_authenticated_actor() {
+    let root = tempfile::tempdir().unwrap();
+    let home = root.path().join("state");
+    let runner = root.path().join("bin");
+    install_fake_runner(&runner);
+    let id = "11111111-1111-4111-8111-111111111111";
+    let secret = format!("ask_{}", "S".repeat(43));
+    let status = |state: &str, enabled: bool| json!({"data":{"configured":true,"enabled":enabled,"state":state,"actor_id":"worker:tos"}});
+    let server = StubServer::start(vec![
+        StubResponse::json(200, json!({"data":{"environment_id":id,"app_id":"tos>browser","name":"Recording checks"}})),
+        StubResponse::json(200, json!({"data":{"id":"worker:tos","name":"Worker","kind":"silicon"}})),
+        StubResponse::json(200, json!({"data":["recording_delivery"]})),
+        StubResponse::json(200, status("needs_auth", false)),
+        StubResponse::json(200, status("active", true)),
+    ]);
+    isolated_sb(&home, &server.base_url)
+        .args(["testing", "login", "--credentials-stdin"])
+        .write_stdin(json!({"app_secret":secret,"briefcase_test_environment_key":"B".repeat(32)}).to_string())
+        .assert()
+        .success();
+    isolated_sb(&home, &server.base_url)
+        .env("PATH", &runner)
+        .args(["--test", id, "--json", "setup"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("\"state\": \"active\"").and(predicate::str::contains(&secret).not()));
+    let requests = server.finish();
+    assert_eq!(requests[4].path, format!("/testing/{id}/api/v1/auth/delivery"));
+    assert_eq!(requests[4].json(), json!({"short_lived_token":"worker:tos"}));
+    assert_eq!(requests[4].headers["authorization"], "Bearer oat_binary_contract");
+    assert_eq!(requests[4].headers["x-sb-test-app-secret"], secret);
+    assert_eq!(requests[4].headers["x-sb-test-briefcase-key"], "B".repeat(32));
 }
 
 #[test]

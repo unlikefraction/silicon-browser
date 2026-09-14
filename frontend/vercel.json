@@ -5,6 +5,10 @@
   "outputDirectory": "dist",
   "rewrites": [
     {
+      "source": "/docs",
+      "destination": "/docs/index.html"
+    },
+    {
       "source": "/auth/callback",
       "destination": "/index.html"
     },

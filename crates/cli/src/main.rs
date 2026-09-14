@@ -1,7 +1,7 @@
 mod runtime;
 mod state;
 
-use std::io::{self, IsTerminal, Write};
+use std::io::{self, IsTerminal, Read, Write};
 use std::process::ExitCode;
 
 use chrono::NaiveDate;
@@ -56,7 +56,7 @@ Run `sb setup` to install the pinned runner and unlock its version-matched actio
     name = "sb",
     version,
     about = "Managed remote browsers and fast web discovery",
-    long_about = "Silicon Browser has two daily paths:\n  remote-browser   interaction-heavy work in an authenticated browser\n  search-and-fetch read-heavy research without a browser session\n\nRun `sb --help remote-browser` or `sb --help search-and-fetch` for the shortest useful flow.\n\nSource: https://github.com/unlikefraction/silicon-browser\nDocs: https://github.com/unlikefraction/silicon-browser/tree/main/docs\nRust crate: https://crates.io/crates/silicon-browser",
+    long_about = "Silicon Browser has two daily paths:\n  remote-browser   interaction-heavy work in an authenticated browser\n  search-and-fetch read-heavy research without a browser session\n\nRun `sb --help remote-browser` or `sb --help search-and-fetch` for the shortest useful flow.\n\nSource: https://github.com/unlikefraction/silicon-browser\nDocs: https://browser.teamofsilicons.com/docs\nRust crate: https://crates.io/crates/silicon-browser",
     disable_help_subcommand = true,
     arg_required_else_help = false
 )]
@@ -70,12 +70,20 @@ struct Cli {
     /// Override the backend URL; setup saves it with newly exchanged credentials.
     #[arg(long, global = true, env = "SB_BACKEND_URL", hide_env_values = true)]
     backend: Option<String>,
+    /// Use one enrolled IAM test environment. Enroll first with `sb testing login`.
+    #[arg(long, global = true, value_name = "ENVIRONMENT_UUID")]
+    test: Option<uuid::Uuid>,
     #[command(subcommand)]
     command: Option<Command>,
 }
 
 #[derive(Subcommand, Debug)]
 enum Command {
+    /// Enroll and verify IAM test environments, isolated from production credentials.
+    #[command(
+        long_about = "Enroll an IAM test environment using explicit developer credentials.\n\n  sb testing login --credentials-stdin < test-credentials.json\n  sb --test <environment-uuid> login worker:tos --org-id tos\n  sb --test <environment-uuid> testing status --json\n\nEvery ordinary command accepts --test. Production and each test environment keep separate credentials and browser state. Credentials JSON requires app_secret; iam_test_key and briefcase_test_environment_key are optional; keep this file private. Test keys are developer configuration; normal login still accepts only an IAM short-lived token."
+    )]
+    Testing(Service<TestingCommand>),
     /// Print this application's IAM identifier.
     #[command(
         long_about = "Print this application's canonical IAM identifier without authentication.\n\nUse it when minting a short-lived token with the official IAM CLI:\n  iam login --app-id '<app-id>' --grant-org <org>\n  sb login '<short-lived-token>'"
@@ -83,7 +91,7 @@ enum Command {
     Iam,
     /// Exchange an IAM short-lived token and store the resulting session.
     #[command(
-        long_about = "Exchange an IAM short-lived token and store the resulting session.\n\nTokens come from the official IAM CLI or its web consent flow; Browser never asks for an IAM password or credentials.\n\nTypical flow:\n  iam login --app-id '<app-id>' --grant-org <org>\n  sb login '<short-lived-token>'\n  sb login status --json"
+        long_about = "Exchange an IAM short-lived token and store the resulting session.\n\nTokens come from the official IAM CLI or its web consent flow; Browser never asks for an IAM password or credentials.\n\nTypical flow:\n  iam login --app-id '<app-id>' --grant-org <org>\n  sb login '<short-lived-token>'\n  sb login status --json\n\nIAM testing: sb testing --help; after enrollment, sb --test <environment-uuid> login <test-actor-id> --org-id <org>"
     )]
     Login {
         token: Option<String>,
@@ -105,7 +113,8 @@ enum Command {
     },
     /// Install/check the runner and authenticate with an IAM short-lived token.
     /// Recording delivery uses a separate fresh Browser oac_ token via SB_RECORDING_SLT
-    /// or a masked prompt. An active backend authorization is reused.
+    /// or a masked prompt. Test mode enrolls the authenticated test actor automatically.
+    /// An active backend authorization is reused.
     Setup {
         /// Select an organization already authorized by the short-lived token.
         #[arg(long)]
@@ -132,6 +141,21 @@ enum Command {
 #[derive(Subcommand, Debug)]
 enum LoginCommand {
     /// Report whether the stored session is authenticated.
+    Status,
+}
+
+#[derive(Subcommand, Debug)]
+enum TestingCommand {
+    /// Verify and securely store test configuration; reports the environment UUID.
+    #[command(
+        long_about = "Verify explicit developer credentials with IAM, then store them in an owner-only test partition.\n\n  sb testing login --credentials-stdin < test-credentials.json\n\nWithout --credentials-stdin, reads SB_TEST_APP_SECRET, plus optional SB_IAM_TEST_KEY and SB_BRIEFCASE_TEST_KEY. Then run sb --test <environment-uuid> login worker:tos --org-id tos, or use an IAM test short-lived token. Re-enrollment clears that environment's saved login."
+    )]
+    Login {
+        /// Read credentials JSON from standard input; never pass test secrets as arguments.
+        #[arg(long)]
+        credentials_stdin: bool,
+    },
+    /// Verify the selected environment's stored test credentials against IAM.
     Status,
 }
 
@@ -442,10 +466,21 @@ fn execute(cli: Cli, arguments: &[String]) -> Result<(), Box<dyn std::error::Err
     {
         return Ok(());
     }
-    let backend = cli.backend.as_deref().unwrap_or(silicon_browser::DEFAULT_BACKEND_URL);
+    let root_backend =
+        silicon_browser::normalize_backend_url(cli.backend.as_deref().unwrap_or(silicon_browser::DEFAULT_BACKEND_URL))?;
+    if let Some(Command::Testing(service)) = &cli.command {
+        return testing(&root_backend, cli.test, service.command.as_ref(), cli.json);
+    }
+    let backend = test_backend(&root_backend, cli.test);
+    let backend = backend.as_str();
     match &cli.command {
         Some(Command::Iam) => {
-            let info = Client::iam(backend)?;
+            let info = if cli.test.is_some() {
+                let (_, state) = load_selected_state(backend, cli.test)?;
+                Client::iam_with_transport(backend, std::sync::Arc::new(transport(&state)?))?
+            } else {
+                Client::iam(backend)?
+            };
             if cli.json {
                 print_json(&info)?;
             } else {
@@ -457,16 +492,15 @@ fn execute(cli: Cli, arguments: &[String]) -> Result<(), Box<dyn std::error::Err
             return report_bug(title, details, pr.as_deref(), cli.json);
         }
         Some(Command::Login { command: Some(LoginCommand::Status), .. }) => {
-            return login_status(backend, cli.json, cli.org_id.as_deref());
+            return login_status(backend, cli.test, cli.json, cli.org_id.as_deref());
         }
         Some(Command::Login { token: Some(token), command: None }) => {
-            let root = default_home();
-            let home = state::home_for_backend(&root, backend)?;
-            let mut state = State::load(&home)?;
-            let auth = Client::exchange(
-                backend,
-                &AuthExchangeRequest { short_lived_token: token.clone(), org_id: cli.org_id.clone() },
-            )?;
+            let (home, mut state) = load_selected_state(backend, cli.test)?;
+            let request = AuthExchangeRequest { short_lived_token: token.clone(), org_id: cli.org_id.clone() };
+            let auth = match &state.testing {
+                Some(credentials) => Client::exchange_testing(backend, &request, credentials.clone())?,
+                None => Client::exchange(backend, &request)?,
+            };
             apply_auth_session(&mut state, &home, auth)?;
             if cli.json {
                 print_json(
@@ -484,9 +518,7 @@ fn execute(cli: Cli, arguments: &[String]) -> Result<(), Box<dyn std::error::Err
         Some(Command::Login { token: None, command: None }) => return Err("usage: sb login <short-lived-token>".into()),
         _ => {}
     }
-    let root = default_home();
-    let home = state::home_for_backend(&root, backend)?;
-    let mut state = State::load(&home)?;
+    let (home, mut state) = load_selected_state(backend, cli.test)?;
     if state.stored_token().is_some() && state.credential_generation.is_none() {
         state = State::update(&home, |saved| {
             if saved.credential_generation.is_none() {
@@ -568,7 +600,7 @@ fn report_bug(title: &str, details: &str, pr: Option<&str>, json: bool) -> Resul
         return Err("--title and --details must both be non-empty".into());
     }
     let mut body = format!(
-        "## Reproduction and observed behavior\n\n{details}\n\n---\n\nCLI version: {}\nRepository: https://github.com/unlikefraction/silicon-browser\nDocumentation: https://github.com/unlikefraction/silicon-browser/tree/main/docs\nRust package: https://crates.io/crates/silicon-browser",
+        "## Reproduction and observed behavior\n\n{details}\n\n---\n\nCLI version: {}\nRepository: https://github.com/unlikefraction/silicon-browser\nDocumentation: https://browser.teamofsilicons.com/docs\nRust package: https://crates.io/crates/silicon-browser",
         env!("CARGO_PKG_VERSION")
     );
     if let Some(pr) = pr.filter(|value| !value.trim().is_empty()) {
@@ -608,10 +640,108 @@ fn report_bug(title: &str, details: &str, pr: Option<&str>, json: bool) -> Resul
     Ok(())
 }
 
-fn login_status(backend: &str, json: bool, org_override: Option<&str>) -> Result<(), Box<dyn std::error::Error>> {
-    let root = default_home();
-    let home = state::home_for_backend(&root, backend)?;
-    let mut state = State::load(&home)?;
+fn test_backend(root: &str, environment: Option<uuid::Uuid>) -> String {
+    environment.map_or_else(|| root.to_owned(), |id| format!("{root}/testing/{id}"))
+}
+
+fn load_selected_state(
+    backend: &str,
+    environment: Option<uuid::Uuid>,
+) -> Result<(std::path::PathBuf, State), Box<dyn std::error::Error>> {
+    let home = state::home_for_backend(&default_home(), backend)?;
+    let state = State::load(&home)?;
+    if let Some(environment) = environment
+        && state.testing.is_none()
+    {
+        return Err(format!("IAM test environment {environment} is not enrolled for this backend; run `sb testing login --credentials-stdin` with private credentials JSON, then retry with --test {environment}").into());
+    }
+    Ok((home, state))
+}
+
+fn testing(
+    root: &str,
+    selected: Option<uuid::Uuid>,
+    command: Option<&TestingCommand>,
+    json: bool,
+) -> Result<(), Box<dyn std::error::Error>> {
+    match command {
+        None => unreachable!("testing help is handled before state loading"),
+        Some(TestingCommand::Login { credentials_stdin }) => {
+            let credentials: TestingCredentials = if *credentials_stdin {
+                let mut bytes = Vec::new();
+                io::stdin().take(64 * 1024 + 1).read_to_end(&mut bytes)?;
+                if bytes.len() > 64 * 1024 {
+                    return Err("test credentials JSON exceeds 64 KiB".into());
+                }
+                serde_json::from_slice(&bytes).map_err(|error| format!("invalid test credentials JSON at line {}, column {}; expected app_secret, optional iam_test_key and briefcase_test_environment_key", error.line(), error.column()))?
+            } else {
+                TestingCredentials {
+                    app_secret: std::env::var("SB_TEST_APP_SECRET")
+                        .map_err(|_| "set SB_TEST_APP_SECRET, or use --credentials-stdin")?,
+                    iam_test_key: std::env::var("SB_IAM_TEST_KEY").ok(),
+                    briefcase_test_environment_key: std::env::var("SB_BRIEFCASE_TEST_KEY").ok(),
+                }
+            };
+            credentials.validate()?;
+            let environment = Client::testing_context(root, &credentials)?;
+            if selected.is_some_and(|id| id != environment.environment_id) {
+                return Err(format!("IAM credentials belong to environment {}, which does not match --test {}; no credentials were saved", environment.environment_id, selected.unwrap()).into());
+            }
+            let backend = test_backend(root, Some(environment.environment_id));
+            let home = state::home_for_backend(&default_home(), &backend)?;
+            State::update(&home, |state| {
+                *state = State::default();
+                state.backend_url = backend;
+                state.testing = Some(credentials);
+            })?;
+            if json {
+                print_json(
+                    &serde_json::json!({"configured": true, "authenticated": false, "environment": environment}),
+                )?;
+            } else {
+                println!(
+                    "enrolled {} ({}) for {}; next: sb --test {} login <test-actor-id> --org-id <org>",
+                    environment.name, environment.environment_id, environment.app_id, environment.environment_id
+                );
+            }
+        }
+        Some(TestingCommand::Status) => {
+            let id = selected.ok_or("select an environment: sb --test <environment-uuid> testing status --json; enroll with sb testing login")?;
+            let backend = test_backend(root, Some(id));
+            let home = state::home_for_backend(&default_home(), &backend)?;
+            let state = State::load(&home)?;
+            let Some(credentials) = state.testing else {
+                let guidance = "enroll with sb testing login --credentials-stdin, then retry with --test";
+                if json {
+                    print_json(&serde_json::json!({"configured": false, "environment_id": id, "guidance": guidance}))?;
+                } else {
+                    println!("environment {id} is not enrolled; {guidance}");
+                }
+                return Ok(());
+            };
+            let environment = Client::testing_context(root, &credentials)?;
+            if environment.environment_id != id {
+                return Err(
+                    "saved test credentials belong to a different IAM environment; run sb testing login again".into()
+                );
+            }
+            if json {
+                print_json(&serde_json::json!({"configured": true, "environment": environment}))?;
+            } else {
+                println!("verified {} ({}) for {}", environment.name, environment.environment_id, environment.app_id);
+            }
+        }
+    }
+    Ok(())
+}
+
+fn login_status(
+    backend: &str,
+    environment: Option<uuid::Uuid>,
+    json: bool,
+    org_override: Option<&str>,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let (_, mut state) = load_selected_state(backend, environment)?;
     if let Some(org) = org_override {
         state.org_id = Some(org.to_owned());
     }
@@ -668,7 +798,10 @@ fn resolve_org_if_missing(state: &mut State, home: &std::path::Path) -> Result<(
     let using_environment_access_token = State::has_environment_access_token();
     let expected_stored_token = state.stored_token().map(str::to_owned);
     let token = state.token().ok_or("not signed in: set SB_AUTHTOKEN or run `sb setup`")?;
-    let org_id = sole_bound_org(Client::new(state.backend_url.clone(), Auth::new(token)?)?.orgs()?)?;
+    let org_id = sole_bound_org(
+        Client::with_transport(state.backend_url.clone(), Auth::new(token)?, std::sync::Arc::new(transport(state)?))?
+            .orgs()?,
+    )?;
     state.org_id = Some(org_id.clone());
 
     // Persist only a selection derived from the same stored credential. An
@@ -693,6 +826,7 @@ fn sole_bound_org(orgs: Vec<Org>) -> Result<String, Box<dyn std::error::Error>> 
 
 fn print_service_verbs(command: &Command, json: bool) -> Result<bool, serde_json::Error> {
     let verbs: Option<&[&str]> = match command {
+        Command::Testing(Service { command: None }) => Some(&["login", "status"]),
         Command::Profile(Service { command: None }) => Some(&["ls", "show", "new", "set", "end"]),
         Command::Proxy(Service { command: None }) => Some(&["ls"]),
         Command::Session(Service { command: None }) => Some(&["new", "ls", "show", "live", "logs", "sync", "end"]),
@@ -752,7 +886,7 @@ fn setup(
 
     if state.org_id.is_none() {
         let auth = Auth::new(state.token().ok_or("no auth token")?)?;
-        let client = Client::new(state.backend_url.clone(), auth)?;
+        let client = Client::with_transport(state.backend_url.clone(), auth, std::sync::Arc::new(transport(state)?))?;
         match client.orgs() {
             Ok(orgs) => state.org_id = Some(select_org(orgs)?),
             Err(_) if can_replace_auth && !exchanged => {
@@ -776,7 +910,7 @@ fn setup(
         Err(error) => return Err(error.into()),
     };
     let services = setup_client.services()?;
-    let delivery = setup_delivery_authorization(&setup_client, &services)?;
+    let delivery = setup_delivery_authorization(&setup_client, &services, state.testing.as_ref())?;
     state.identity_id = Some(identity.id.clone());
     state.services.clone_from(&services);
     let selected_org = state.org_id.clone();
@@ -841,6 +975,7 @@ fn setup(
 fn setup_delivery_authorization(
     client: &Client,
     services: &[String],
+    testing: Option<&TestingCredentials>,
 ) -> Result<Option<DeliveryAuthorization>, Box<dyn std::error::Error>> {
     if !services.iter().any(|service| service == "recording_delivery") {
         return Ok(None);
@@ -859,18 +994,23 @@ fn setup_delivery_authorization(
     }
     let token = match std::env::var("SB_RECORDING_SLT").ok().filter(|value| !value.trim().is_empty()) {
         Some(token) => token,
+        None if testing.is_some() => current.actor_id,
         None if io::stdin().is_terminal() => rpassword::prompt_password(
             "Fresh IAM oac_ token for background recording delivery (separate from CLI login): ",
         )?,
         None => return Err("recording delivery needs a separate fresh Browser IAM oac_ token; set SB_RECORDING_SLT and rerun `sb setup`, or rerun interactively. Do not reuse the CLI login token.".into()),
     };
-    if !token.starts_with("oac_") {
+    if testing.is_none() && !token.starts_with("oac_") {
         return Err("SB_RECORDING_SLT must be a fresh IAM oac_ short-lived token for Browser".into());
     }
-    if environment_auth_token().as_deref() == Some(token.as_str()) {
+    if token.starts_with("oac_") && environment_auth_token().as_deref() == Some(token.as_str()) {
         return Err("recording delivery requires a different fresh oac_ token from SB_AUTHTOKEN; the CLI login token cannot be reused".into());
     }
-    let enrolled = client.authorize_delivery(&DeliveryAuthorizationRequest { short_lived_token: token })?;
+    let request = DeliveryAuthorizationRequest { short_lived_token: token };
+    let enrolled = match testing {
+        Some(credentials) => client.authorize_delivery_testing(&request, credentials.clone())?,
+        None => client.authorize_delivery(&request)?,
+    };
     if !enrolled.enabled
         || !matches!(enrolled.state, DeliveryAuthorizationState::Active | DeliveryAuthorizationState::Refreshing)
     {
@@ -920,7 +1060,11 @@ fn exchange_setup_token_value(
     short_lived_token: String,
     org_id: Option<String>,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let auth = Client::exchange(state.backend_url.clone(), &AuthExchangeRequest { short_lived_token, org_id })?;
+    let auth = Client::exchange_with_transport(
+        state.backend_url.clone(),
+        &AuthExchangeRequest { short_lived_token, org_id },
+        std::sync::Arc::new(transport(state)?),
+    )?;
     apply_auth_session(state, home, auth)
 }
 
@@ -968,7 +1112,7 @@ fn dispatch(
     home: &std::path::Path,
 ) -> Result<(), Box<dyn std::error::Error>> {
     match command {
-        Command::Iam | Command::Login { .. } | Command::ReportBug { .. } => unreachable!(),
+        Command::Iam | Command::Login { .. } | Command::ReportBug { .. } | Command::Testing(_) => unreachable!(),
         Command::Setup { .. } => unreachable!(),
         Command::Profile(service) => profile(client, service.command, json)?,
         Command::Proxy(service) => match service.command {
@@ -1215,9 +1359,17 @@ fn client(state: &State) -> Result<Client, Box<dyn std::error::Error>> {
     client_with_token(state, &token)
 }
 
+fn transport(state: &State) -> Result<silicon_browser::HttpTransport, silicon_browser::Error> {
+    let transport = silicon_browser::HttpTransport::default();
+    match &state.testing {
+        Some(credentials) => transport.with_testing(&state.backend_url, credentials.clone()),
+        None => Ok(transport),
+    }
+}
+
 fn client_with_token(state: &State, token: &str) -> Result<Client, Box<dyn std::error::Error>> {
     let org = state.org_id.clone().ok_or("no organization selected: run `sb setup` or pass --org-id")?;
-    let mut transport = silicon_browser::HttpTransport::default();
+    let mut transport = transport(state)?;
     if !State::has_environment_access_token() && state.stored_token() == Some(token) {
         let home = state::home_for_backend(&default_home(), &state.backend_url)?;
         let backend = state.backend_url.clone();
@@ -1263,7 +1415,11 @@ fn recover_rejected_access(
     }
     let refresh =
         current.refresh_token().ok_or("no owned refresh token; run `sb setup` with a fresh Browser token")?.to_owned();
-    let session = Client::refresh(backend, &AuthRefreshRequest { refresh_token: refresh.clone(), org_id: org.into() })?;
+    let session = Client::refresh_with_transport(
+        backend,
+        &AuthRefreshRequest { refresh_token: refresh.clone(), org_id: org.into() },
+        std::sync::Arc::new(transport(&current)?),
+    )?;
     if Some(session.identity.id.as_str()) != identity {
         return Err("refresh returned a different identity; sign in again".into());
     }
@@ -1298,9 +1454,10 @@ fn refresh_if_needed(state: &mut State, home: &std::path::Path) -> Result<(), Bo
     let org_id = current.org_id.clone().ok_or("the auth token expired without an organization; run `sb setup`")?;
     // Exactly one attempt while holding the process-wide refresh lock. An ambiguous transport
     // failure is deliberately not retried because IAM refresh tokens rotate on use.
-    let session = Client::refresh(
+    let session = Client::refresh_with_transport(
         current.backend_url.clone(),
         &AuthRefreshRequest { refresh_token: refresh_token.clone(), org_id },
+        std::sync::Arc::new(transport(&current)?),
     )?;
     let mut applied = false;
     let latest = State::update(home, |latest| {

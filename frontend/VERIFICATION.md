@@ -1,4 +1,18 @@
-# Frontend verification — 6 September 2026
+# Frontend verification
+
+## IAM testing additions — 14 September 2026
+
+The current frontend adds the visible Testing environment selector, memory-only
+test authentication, actor/token recording authorization, and environment-bound
+live invitations. API regressions cover secret-only enrollment, production
+session preservation, test refresh headers, cancellation by client closure,
+invalid contexts, and refusal to route test requests or grants to production.
+
+Validation uses the CLI: `npm test --prefix frontend` and
+`npm run build --prefix frontend`. Browser UI automation was not run for these
+changes. Deployment and live IAM/provider checks must be established separately.
+
+## Historical verification — 6 September 2026
 
 The standalone frontend is SolidJS + TypeScript with Vite. The workspace follows the deployed IAM interface's gray rail, white content area, blue controls and IBM Plex Sans/Mono typography. Browser provider names are absent from the normal user flows.
 

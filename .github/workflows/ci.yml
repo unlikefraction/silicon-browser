@@ -23,6 +23,7 @@ jobs:
         run: |
           sh -n scripts/install.sh
           python3 scripts/test_installer.py
+          python3 scripts/test_backup.py
 
   frontend:
     runs-on: ubuntu-latest

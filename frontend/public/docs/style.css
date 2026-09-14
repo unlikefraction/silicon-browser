@@ -1,0 +1,29 @@
+:root { color-scheme: light; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; color: #24272d; background: #fff; line-height: 1.65; }
+* { box-sizing: border-box; }
+body { margin: 0; }
+a { color: #145bdb; text-underline-offset: .18em; }
+a:hover { color: #003eab; }
+:focus-visible { outline: 3px solid #145bdb; outline-offset: 4px; }
+.skip { position: absolute; left: 1rem; top: -4rem; background: white; padding: .5rem; }
+.skip:focus { top: 1rem; }
+header { border-bottom: 1px solid #dfe2e7; padding: 1rem 2rem; display: flex; justify-content: space-between; gap: 1rem; }
+header a { color: inherit; text-decoration: none; }
+header strong { letter-spacing: -.03em; }
+.layout { max-width: 1200px; margin: auto; display: grid; grid-template-columns: 230px minmax(0, 1fr); }
+nav { padding: 3rem 2rem; position: sticky; top: 0; align-self: start; }
+nav a { display: block; color: #555d6b; padding: .35rem 0; text-decoration: none; }
+nav p, .eyebrow { font-size: .72rem; letter-spacing: .09em; text-transform: uppercase; color: #697181; font-weight: 650; }
+main { min-width: 0; max-width: 850px; padding: 3rem 3rem 5rem; border-left: 1px solid #e5e7eb; }
+h1 { font-size: clamp(2rem, 5vw, 3rem); line-height: 1.15; letter-spacing: -.045em; margin: .5rem 0 1.2rem; }
+h2 { margin-top: 3.2rem; padding-top: 1.6rem; border-top: 1px solid #e5e7eb; font-size: 1.55rem; letter-spacing: -.03em; scroll-margin-top: 2rem; }
+h3 { margin-top: 2rem; font-size: 1.05rem; }
+p, li { max-width: 70ch; }
+pre { padding: 1.2rem; background: #f5f6f8; border: 1px solid #e5e7eb; border-radius: 6px; overflow-x: auto; line-height: 1.55; font-size: .8rem; }
+code { font-family: ui-monospace, SFMono-Regular, Consolas, monospace; font-size: .86em; overflow-wrap: anywhere; }
+pre code { font-size: inherit; overflow-wrap: normal; }
+li { margin: .45rem 0; }
+.note { padding: .8rem 1rem; border-left: 3px solid #145bdb; background: #f3f7ff; }
+table { width: 100%; border-collapse: collapse; font-size: .9rem; }
+th, td { padding: .65rem .5rem; border-bottom: 1px solid #e5e7eb; text-align: left; vertical-align: top; overflow-wrap: anywhere; }
+footer { padding-top: 2rem; margin-top: 3rem; border-top: 1px solid #e5e7eb; color: #697181; font-size: .85rem; }
+@media (max-width: 720px) { header { padding: 1rem; } .layout { display: block; } nav { position: static; padding: 1rem 1.25rem; border-bottom: 1px solid #e5e7eb; display: flex; flex-wrap: wrap; gap: .4rem 1rem; } nav p { display: none; } nav a { font-size: .85rem; } main { padding: 2rem 1.25rem 3rem; border: 0; } }

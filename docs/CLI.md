@@ -58,6 +58,44 @@ Silicon applications; Browser keeps its private state in
 `SB_HOME` is an explicit test/isolated-run override. Set `SB_BACKEND_URL` or
 `--backend` before login to select a non-production backend.
 
+## IAM test environments
+
+Use the app secret from an IAM testing environment to enroll Browser:
+
+```sh
+# Reads SB_TEST_APP_SECRET; optional SB_IAM_TEST_KEY and SB_BRIEFCASE_TEST_KEY.
+sb testing login
+# Or read private JSON containing {"app_secret":"ask_..."} from stdin:
+sb testing login --credentials-stdin < test-credentials.json
+
+sb --test <environment-uuid> testing status --json
+sb --test <environment-uuid> login worker:tos --org-id tos
+sb --test <environment-uuid> login status --json
+sb --test <environment-uuid> setup
+sb --test <environment-uuid> profile ls
+```
+
+Enrollment verifies the secret with IAM and reports its environment UUID.
+JSON may also include `iam_test_key` and `briefcase_test_environment_key`;
+each optional key is exactly 32 ASCII letters or digits. The app secret is
+developer test configuration, never a production login credential. Test login
+accepts an actor ID in that environment or an IAM test `oac_` token.
+Production login continues to require a short-lived token.
+
+With test recording storage configured, `sb --test <environment-uuid> setup`
+authorizes background recording delivery as the authenticated test actor using
+its own IAM token family. `SB_RECORDING_SLT` can explicitly supply that actor ID
+or a fresh test SLT for the same actor. Production setup still requires a separate fresh SLT.
+
+Pass `--test` on every command. Test calls use the same API routes under
+`/testing/<environment-uuid>` and the same exchange/refresh flow. Credentials,
+organization selection, runtime connections, and queued command reports are
+isolated by backend URL and environment. Missing enrollment fails locally;
+test mode never falls back to production. Re-enrollment clears that test
+environment's saved login. Test configuration lives in Browser's existing
+owner-only state directory. Browser sessions still need configured provider
+credentials; the IAM test environment does not supply browser capacity.
+
 ## Command tree
 
 ```text
@@ -65,6 +103,7 @@ sb
 ├── iam --json
 ├── login <SLT>
 │   └── status --json
+├── testing {login [--credentials-stdin],status --json}
 ├── setup [--org <id>]
 ├── profile {ls,show,new,set,end}
 ├── proxy ls
@@ -122,32 +161,22 @@ variables, and must never be embedded in the CLI.
 
 ## Telemetry, updates, and compatibility
 
-Space Station telemetry is opt-in by default for IAM apps. Events should be
-self-contained (`source`, `step`, `progress`, correlation IDs, outcome, and
-timestamps); do not include credentials or browser output. Browser command
-reports are durable and idempotent. Deployments that add Space Station tables
-use the `tos` organization and these separate stores:
+Browser command reports are durable and idempotent. The four Space Station
+stores have been created in `tos`: `browserbackend`, `browsercli`,
+`browserfrontendanalytics`, and `browserfrontendevents`. This release does not
+yet send events to those stores or expose a telemetry opt-out setting. There is
+no frontend telemetry proxy or supported `SPACE_STATION_*` configuration yet.
 
-| Producer | Table | Server-side key variable |
-| --- | --- | --- |
-| Browser backend and daemon | `browserbackend` | `SPACE_STATION_BROWSER_BACKEND_KEY` |
-| Browser CLI | `browsercli` | `SPACE_STATION_BROWSER_CLI_KEY` |
-| Browser frontend analytics | `browserfrontendanalytics` | `SPACE_STATION_FRONTEND_ANALYTICS_KEY` |
-| Browser frontend events | `browserfrontendevents` | `SPACE_STATION_FRONTEND_EVENTS_KEY` |
-
-Set `SPACE_STATION_URL`, `SPACE_STATION_ORG=tos`, and the keys in the backend
-environment. Frontend keys stay behind its same-origin telemetry endpoint;
-never put a table key in browser JavaScript. Set `SPACE_STATION_TELEMETRY=0`
-to opt out. Missing keys disable that producer rather than breaking browser
-operations.
-
-Daemons check for CLI updates hourly and apply a verified release while
-preserving the current process. APIs negotiate a contract version during the
-handshake; keep a compatibility matrix and deprecation/sunset dates in the
-release notes. Breaking protocol changes require a new major version.
+The CLI installs a checksum-verified native controller. It does not yet run an
+hourly update service; rerun the installer to update `sb`. The backend negotiates
+its IAM v1 dependency contract. Browser's public API uses `/api/v1`; automatic
+Browser client/server protocol negotiation is not implemented. The testing
+routes in 0.2.1 are additive and preserve existing production API behavior.
 
 ## One-line setup
 
+Install the CLI without authentication; then use `sb login` and `sb setup` when ready.
+
 ```sh
-curl -fsSL https://raw.githubusercontent.com/unlikefraction/silicon-browser/v2/scripts/install.sh | sh && export PATH="$HOME/.local/bin:$PATH"
+curl -fsSL https://raw.githubusercontent.com/unlikefraction/silicon-browser/v2/scripts/install.sh | sh -s -- --no-setup && export PATH="$HOME/.local/bin:$PATH"
 ```

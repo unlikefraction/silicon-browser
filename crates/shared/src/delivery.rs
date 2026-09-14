@@ -26,6 +26,13 @@ pub enum DeliveryAuthorizationState {
 pub struct DeliveryAuthorizationRequest {
     pub short_lived_token: String,
 }
+impl DeliveryAuthorizationRequest {
+    /// Test actors are accepted only through an IAM-authenticated testing context.
+    pub fn validate_testing(&self) -> Result<(), crate::ValidationError> {
+        crate::AuthExchangeRequest { short_lived_token: self.short_lived_token.clone(), org_id: None }
+            .validate_testing()
+    }
+}
 impl std::fmt::Debug for DeliveryAuthorizationRequest {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("DeliveryAuthorizationRequest").field("short_lived_token", &"[REDACTED]").finish()

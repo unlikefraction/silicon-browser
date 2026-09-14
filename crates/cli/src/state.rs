@@ -16,6 +16,8 @@ pub struct State {
     #[serde(default = "default_backend")]
     pub backend_url: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub testing: Option<silicon_browser::shared::TestingCredentials>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     access_token: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     refresh_token: Option<String>,
@@ -184,6 +186,7 @@ impl std::fmt::Debug for State {
         formatter
             .debug_struct("State")
             .field("backend_url", &self.backend_url)
+            .field("testing", &self.testing)
             .field("access_token", &self.access_token.as_ref().map(|_| "[REDACTED]"))
             .field("refresh_token", &self.refresh_token.as_ref().map(|_| "[REDACTED]"))
             .field("token_expires_at", &self.token_expires_at)

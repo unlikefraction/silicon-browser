@@ -174,9 +174,13 @@ impl DeliveryAuth {
 
     pub async fn enroll(&self, org: &str, expected: &PrincipalIdentity, slt: &str) -> Result<DeliveryAuthorization> {
         use silicon_browser_shared::Validate;
-        silicon_browser_shared::DeliveryAuthorizationRequest { short_lived_token: slt.into() }
-            .validate()
-            .map_err(|_| IdentityError::InvalidInput { field: "short_lived_token", reason: "invalid IAM SLT" })?;
+        let request = silicon_browser_shared::DeliveryAuthorizationRequest { short_lived_token: slt.into() };
+        if self.identity.is_testing() { request.validate_testing() } else { request.validate() }.map_err(|_| {
+            IdentityError::InvalidInput {
+                field: "short_lived_token",
+                reason: "invalid IAM login input for the selected environment",
+            }
+        })?;
         let actor = expected.public_id.as_deref().filter(|v| !v.is_empty()).ok_or(IdentityError::Forbidden)?;
         if expected.org_id != org
             || expected.principal_id.is_nil()
@@ -185,16 +189,29 @@ impl DeliveryAuth {
         {
             return Err(IdentityError::Forbidden.into());
         }
-        let digest = hex::encode(Sha256::digest(slt.as_bytes()));
-        let existing: Option<String> = sqlx::query_scalar(
-            "SELECT id FROM delivery_credentials WHERE org_id=? AND actor_id=? AND enrollment_digest=?",
-        )
-        .bind(org)
-        .bind(actor)
-        .bind(&digest)
-        .fetch_optional(self.store.pool())
-        .await
-        .map_err(|_| DeliveryAuthError::Storage)?;
+        let test_actor = self.identity.is_testing() && !slt.starts_with("oac_");
+        if test_actor {
+            self.live_status_for_principal(org, expected).await?;
+        }
+        // Actor IDs are reusable. Retry their current enrollment, but create a new
+        // IAM family after disable/revocation; an SLT always retains its exact replay.
+        let digest =
+            hex::encode(Sha256::digest(if test_actor { Uuid::new_v4().to_string() } else { slt.into() }.as_bytes()));
+        let existing: Option<String> = if test_actor {
+            sqlx::query_scalar("SELECT id FROM delivery_credentials WHERE org_id=? AND actor_id=? AND principal_id=? AND membership_id=? AND enabled=1 AND state IN ('pending','active','refreshing')")
+                .bind(org).bind(actor).bind(expected.principal_id.to_string()).bind(expected.membership_id.to_string())
+                .fetch_optional(self.store.pool()).await.map_err(|_| DeliveryAuthError::Storage)?
+        } else {
+            sqlx::query_scalar(
+                "SELECT id FROM delivery_credentials WHERE org_id=? AND actor_id=? AND enrollment_digest=?",
+            )
+            .bind(org)
+            .bind(actor)
+            .bind(&digest)
+            .fetch_optional(self.store.pool())
+            .await
+            .map_err(|_| DeliveryAuthError::Storage)?
+        };
         let id = if let Some(id) = existing {
             id
         } else {
@@ -536,6 +553,7 @@ mod tests {
     };
     struct Mock {
         expected: PrincipalIdentity,
+        testing: AtomicBool,
         calls: Mutex<Vec<(String, String)>>,
         fail_exchange: AtomicBool,
         fail_refresh: AtomicBool,
@@ -562,6 +580,7 @@ mod tests {
                     expires_at: Utc::now() + chrono::TimeDelta::hours(1),
                 },
                 calls: Mutex::new(vec![]),
+                testing: AtomicBool::new(false),
                 fail_exchange: AtomicBool::new(false),
                 fail_refresh: AtomicBool::new(false),
                 wrong_actor: AtomicBool::new(false),
@@ -592,6 +611,9 @@ mod tests {
     }
     #[async_trait::async_trait]
     impl IdentityProvider for Mock {
+        fn is_testing(&self) -> bool {
+            self.testing.load(Ordering::SeqCst)
+        }
         async fn identify(&self, _: &str, _: &str) -> std::result::Result<PrincipalIdentity, IdentityError> {
             if self.revoked.load(Ordering::SeqCst) || self.access_revoked.load(Ordering::SeqCst) {
                 return Err(IdentityError::Unauthenticated);
@@ -713,6 +735,41 @@ mod tests {
         let mut other = request();
         other.expected_actor_id = "other".into();
         assert!(matches!(service.issue_recording_proof(other).await, Err(DeliveryAuthError::NeedsAuthorization)));
+    }
+    #[tokio::test]
+    async fn test_actor_delivery_replays_pending_enrollment_and_reenrolls_after_revocation() {
+        let (service, mock) = fixture().await;
+        assert!(matches!(
+            service.enroll("org", &mock.expected, "actor").await,
+            Err(DeliveryAuthError::Identity(IdentityError::InvalidInput { .. }))
+        ));
+        assert!(mock.calls.lock().unwrap().is_empty());
+        mock.testing.store(true, Ordering::SeqCst);
+        mock.fail_exchange.store(true, Ordering::SeqCst);
+        assert!(service.enroll("org", &mock.expected, "actor").await.is_err());
+        expire(&service).await;
+        assert_eq!(service.enroll("org", &mock.expected, "actor").await.unwrap().state, State::Active);
+        service.enroll("org", &mock.expected, "actor").await.unwrap();
+        {
+            let calls = mock.calls.lock().unwrap();
+            assert_eq!(calls.len(), 2);
+            assert_eq!(calls[0], calls[1], "an uncertain actor exchange must reuse its durable IAM mutation");
+        }
+        service.disable_for_principal("org", &mock.expected).await.unwrap();
+        service.recover_pending_once().await.unwrap();
+        assert_eq!(service.enroll("org", &mock.expected, "actor").await.unwrap().state, State::Active);
+        mock.revoked.store(true, Ordering::SeqCst);
+        assert_eq!(service.enroll("org", &mock.expected, "actor").await.unwrap().state, State::Active);
+        mock.revoked.store(false, Ordering::SeqCst);
+        let counts: (i64, i64) = sqlx::query_as("SELECT COUNT(*), SUM(enabled) FROM delivery_credentials")
+            .fetch_one(service.store.pool())
+            .await
+            .unwrap();
+        assert_eq!(counts, (3, 1), "each retired actor family must receive a fresh enrollment");
+        let calls = mock.calls.lock().unwrap();
+        let exchanges: Vec<_> = calls.iter().filter(|call| call.0 == "exchange").collect();
+        assert_ne!(exchanges[1].1, exchanges[2].1);
+        assert_ne!(exchanges[2].1, exchanges[3].1);
     }
     #[tokio::test]
     async fn uncertain_exchange_and_refresh_recover_exact_keys_after_restart() {

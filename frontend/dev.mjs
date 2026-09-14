@@ -11,12 +11,15 @@ const server = createServer(async (request, response) => {
   const pathname = new URL(request.url, 'http://localhost').pathname;
   const page = pathname === '/' || pathname === '/auth/callback' || /^\/sessions\/[^/]+\/live\/?$/.test(pathname);
   const asset = /^\/assets\/[A-Za-z0-9_.-]+$/.test(pathname) && types[path.extname(pathname)];
-  if (!['GET', 'HEAD'].includes(request.method) || (!page && !asset)) {
+  const docsPage = pathname === '/docs' || pathname === '/docs/';
+  const docsFile = /^\/docs\/[A-Za-z0-9_-]+\.(html|css|md)$/.test(pathname);
+  const docsType = docsPage ? 'text/html' : docsFile ? { '.html': 'text/html', '.css': 'text/css', '.md': 'text/markdown' }[path.extname(pathname)] : undefined;
+  if (!['GET', 'HEAD'].includes(request.method) || (!page && !asset && !docsType)) {
     response.writeHead(404, headers); response.end('Not found'); return;
   }
   try {
-    const body = await readFile(path.join(root, 'dist', page ? 'index.html' : pathname.slice(1)));
-    response.writeHead(200, { ...headers, ...(asset ? { 'Cache-Control': 'public, max-age=31536000, immutable' } : {}), 'Content-Type': page ? 'text/html; charset=utf-8' : asset });
+    const body = await readFile(path.join(root, 'dist', page ? 'index.html' : docsPage ? 'docs/index.html' : pathname.slice(1)));
+    response.writeHead(200, { ...headers, ...(asset ? { 'Cache-Control': 'public, max-age=31536000, immutable' } : {}), 'Content-Type': page ? 'text/html; charset=utf-8' : docsType ? `${docsType}; charset=utf-8` : asset });
     response.end(request.method === 'HEAD' ? undefined : body);
   } catch { response.writeHead(503, headers); response.end('Build the frontend first.'); }
 });

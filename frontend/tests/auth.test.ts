@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { loginUrl, readEntry, matchingCallback, IAM_AUTH_ORIGIN } from '../src/auth';
+import { loginUrl, readEntry, requireLiveEnvironment, matchingCallback, IAM_AUTH_ORIGIN } from '../src/auth';
 
 test('IAM popup uses canonical application without an organization, with a nonce in callback', () => {
   const url = new URL(loginUrl('https://browser.teamofsilicons.com', 'random-nonce'));
@@ -15,6 +15,20 @@ test('callback credentials and live grant are stripped from displayed entry URL'
 });
 test('unrelated and malformed routes cannot create a live handoff', () => {
   for (const path of ['/other#grant=x', '/sessions/%zz/live#grant=x', '/sessions/id/live']) assert.equal(readEntry(new URL(`https://browser.teamofsilicons.com${path}`)).pending, null);
+});
+test('test live invitations retain their environment and cannot cross production or another environment', () => {
+  const environment = '11111111-1111-4111-8111-111111111111';
+  const entry = readEntry(new URL(`https://browser.teamofsilicons.com/sessions/session-1/live#grant=private&test=${environment}`));
+  assert.deepEqual(entry.pending, { id: 'session-1', grant: 'private', testEnvironmentId: environment });
+  assert.equal(entry.cleanPath, '/sessions/session-1/live');
+  assert.throws(() => requireLiveEnvironment(entry.pending!), /requires testing environment/);
+  assert.throws(() => requireLiveEnvironment(entry.pending!, '22222222-2222-4222-8222-222222222222'), /requires testing environment/);
+  assert.doesNotThrow(() => requireLiveEnvironment(entry.pending!, environment));
+  assert.throws(() => requireLiveEnvironment({ id: 'session-1', grant: 'production' }, environment), /belongs to production/);
+  for (const selector of ['', '../production', `${environment}&test=${environment}`]) {
+    const invalid = readEntry(new URL(`https://browser.teamofsilicons.com/sessions/session-1/live#grant=private&test=${selector}`));
+    assert.equal(invalid.pending, null); assert.match(invalid.error, /invalid/);
+  }
 });
 test('popup handoff requires exact same origin, source window, nonce and token type', () => {
   const popup = {} as Window;

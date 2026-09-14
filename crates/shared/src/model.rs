@@ -52,6 +52,68 @@ pub struct IamInfo {
     pub app_id: String,
 }
 
+/// Explicit developer enrollment for one IAM test environment. Never used for production login.
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct TestingCredentials {
+    pub app_secret: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub iam_test_key: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub briefcase_test_environment_key: Option<String>,
+}
+
+impl fmt::Debug for TestingCredentials {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str("TestingCredentials([REDACTED])")
+    }
+}
+
+impl Validate for TestingCredentials {
+    fn validate(&self) -> Result<(), ValidationError> {
+        opaque_auth_token(&self.app_secret, "ask_", "app_secret")?;
+        for (field, value) in self.iam_test_key.as_deref().map(|value| ("iam_test_key", value)).into_iter().chain(
+            self.briefcase_test_environment_key.as_deref().map(|value| ("briefcase_test_environment_key", value)),
+        ) {
+            if value.len() != 32 || !value.bytes().all(|byte| byte.is_ascii_alphanumeric()) {
+                return Err(ValidationError::Invalid {
+                    field,
+                    reason: "expected exactly 32 ASCII letters or digits".into(),
+                });
+            }
+        }
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+#[test]
+fn test_credentials_validate_optional_keys_without_debugging_secrets() {
+    let mut credentials = TestingCredentials {
+        app_secret: "ask_private".into(),
+        iam_test_key: None,
+        briefcase_test_environment_key: None,
+    };
+    assert!(credentials.validate().is_ok());
+    credentials.iam_test_key = Some("a".repeat(32));
+    credentials.briefcase_test_environment_key = Some("B9".repeat(16));
+    assert!(credentials.validate().is_ok());
+    assert_eq!(format!("{credentials:?}"), "TestingCredentials([REDACTED])");
+    credentials.iam_test_key = Some("a".repeat(31));
+    assert!(credentials.validate().is_err());
+    credentials.iam_test_key = None;
+    credentials.app_secret = "ask_bad\nheader".into();
+    assert!(credentials.validate().is_err());
+    assert!(serde_json::from_str::<TestingCredentials>(r#"{"app_secret":"ask_private","unexpected":true}"#).is_err());
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TestingEnvironment {
+    pub environment_id: uuid::Uuid,
+    pub app_id: String,
+    pub name: String,
+}
+
 /// Exchanges an IAM short-lived token (SLT) for browser OAuth-style tokens.
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -81,6 +143,62 @@ impl Validate for AuthExchangeRequest {
             identifier(org, "org_id")?;
         }
         Ok(())
+    }
+}
+
+impl AuthExchangeRequest {
+    /// Test-only actor selection is valid only after the caller verifies developer enrollment.
+    /// Production callers must continue using `Validate::validate`.
+    pub fn validate_testing(&self) -> Result<(), ValidationError> {
+        if self.short_lived_token.starts_with("oac_") {
+            return self.validate();
+        }
+        let actor = &self.short_lived_token;
+        if actor.is_empty()
+            || actor.len() > 256
+            || ["ask_", "oat_", "ort_", "iat_", "irt_", "cat_", "sat_", "crt_", "srt_"]
+                .iter()
+                .any(|prefix| actor.starts_with(prefix))
+            || !actor.bytes().all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-' | b'.' | b':'))
+            || actor.split(':').count() > 2
+            || actor.split(':').any(str::is_empty)
+        {
+            return Err(ValidationError::Invalid { field: "short_lived_token", reason: "test login expects an IAM oac_ token or an actor ID (1-256 ASCII letters/digits/_/./-, optionally one nonempty :org suffix); other credential families are not actor IDs".into() });
+        }
+        if let Some(org) = &self.org_id {
+            identifier(org, "org_id")?;
+        }
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+#[test]
+fn actor_login_requires_testing_and_rejects_other_credentials() {
+    for actor in ["worker", "worker:tos", "worker-1.example", "oac_one_use"] {
+        let request = AuthExchangeRequest { short_lived_token: actor.into(), org_id: Some("tos".into()) };
+        assert!(request.validate_testing().is_ok(), "{actor}");
+        assert_eq!(request.validate().is_ok(), actor.starts_with("oac_"));
+    }
+    for actor in [
+        "",
+        ":tos",
+        "worker:",
+        "a:b:c",
+        "two words",
+        "worker\nheader",
+        "ask_private",
+        "oat_private",
+        "ort_private",
+        "iat_private",
+        "irt_private",
+        "cat_private",
+        "sat_private",
+        "crt_private",
+        "srt_private",
+    ] {
+        let request = AuthExchangeRequest { short_lived_token: actor.into(), org_id: None };
+        assert!(request.validate_testing().is_err(), "{actor}");
     }
 }
 

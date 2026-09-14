@@ -9,4 +9,4 @@ export interface Session { id: string; profile_id?: string; name: string; descri
 export interface Recording { session_id: string; owner_id: string; session_name: string; session_description: string; status: string; created_at: string; duration_seconds: number; size_bytes: number; briefcase_link?: string; command_log_link?: string; delivery_error?: string }
 export interface Delivery { configured: boolean; enabled: boolean; state: string; actor_id: string }
 export interface SessionLog { command: string; created_at?: string }
-export interface PendingLive { id: string; grant: string }
+export interface PendingLive { id: string; grant: string; testEnvironmentId?: string }
