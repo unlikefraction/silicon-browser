@@ -1,6 +1,6 @@
 # Silicon Browser npm package
 
-This package replaces the previous `silicon-browser` npm CLI with the managed Silicon Browser CLI (`sb`), currently version 0.2.1. Version 1.0.0 is an intentional breaking replacement.
+This package replaces the previous `silicon-browser` npm CLI with the managed Silicon Browser CLI (`sb`), currently version 0.2.2. Version 1.0.0 is an intentional breaking replacement.
 
 ```sh
 npx silicon-browser --version
