@@ -147,7 +147,7 @@ fn iam_testing_enrollment_login_status_refresh_and_state_stay_in_the_test_enviro
     let id = "11111111-1111-4111-8111-111111111111";
     let other = "22222222-2222-4222-8222-222222222222";
     let environment = json!({"data":{"environment_id":id,"app_id":"tos>browser","name":"Browser checks"}});
-    let credentials = json!({"app_secret":"ask_test_private","iam_test_key":"a".repeat(32),"briefcase_test_environment_key":"b".repeat(32)});
+    let credentials = json!({"app_secret":"ask_test_private","iam_test_key":"a".repeat(32),"briefcase_test_environment_key":format!("ask_{}", "b".repeat(43))});
     let server = StubServer::start(vec![
         StubResponse::json(200, environment.clone()),
         StubResponse::json(200, environment),
@@ -228,7 +228,7 @@ fn iam_testing_enrollment_login_status_refresh_and_state_stay_in_the_test_enviro
         assert!(request.path.starts_with(&format!("/testing/{id}/api/v1/")));
         assert_eq!(request.headers["x-sb-test-app-secret"], "ask_test_private");
         assert_eq!(request.headers["x-testing-environment-key"], "a".repeat(32));
-        assert_eq!(request.headers["x-sb-test-briefcase-key"], "b".repeat(32));
+        assert_eq!(request.headers["x-sb-test-briefcase-key"], format!("ask_{}", "b".repeat(43)));
     }
 }
 
@@ -789,7 +789,9 @@ fn test_setup_enrolls_recording_delivery_with_its_authenticated_actor() {
     ]);
     isolated_sb(&home, &server.base_url)
         .args(["testing", "login", "--credentials-stdin"])
-        .write_stdin(json!({"app_secret":secret,"briefcase_test_environment_key":"B".repeat(32)}).to_string())
+        .write_stdin(
+            json!({"app_secret":secret,"briefcase_test_environment_key":format!("ask_{}", "B".repeat(43))}).to_string(),
+        )
         .assert()
         .success();
     isolated_sb(&home, &server.base_url)
@@ -803,7 +805,7 @@ fn test_setup_enrolls_recording_delivery_with_its_authenticated_actor() {
     assert_eq!(requests[4].json(), json!({"short_lived_token":"worker:tos"}));
     assert_eq!(requests[4].headers["authorization"], "Bearer oat_binary_contract");
     assert_eq!(requests[4].headers["x-sb-test-app-secret"], secret);
-    assert_eq!(requests[4].headers["x-sb-test-briefcase-key"], "B".repeat(32));
+    assert_eq!(requests[4].headers["x-sb-test-briefcase-key"], format!("ask_{}", "B".repeat(43)));
 }
 
 #[test]

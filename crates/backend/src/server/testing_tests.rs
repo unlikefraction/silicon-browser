@@ -130,6 +130,7 @@ async fn test_routes_verify_before_storage_and_isolate_environments_cleaning_and
         sqlx::query_scalar("SELECT count(*) FROM testing_environments").fetch_one(fixture.store.pool()).await.unwrap();
     assert_eq!(registrations, 0);
 
+    let verified_before_legacy_secret = iam.verifications.load(Ordering::SeqCst);
     let response = app
         .clone()
         .oneshot(
@@ -137,6 +138,21 @@ async fn test_routes_verify_before_storage_and_isolate_environments_cleaning_and
                 .uri(format!("/testing/{}/api/v1/iam", Uuid::from_u128(10)))
                 .header("x-sb-test-app-secret", secret('A'))
                 .header("x-sb-test-briefcase-key", "K".repeat(32))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    assert_eq!(iam.verifications.load(Ordering::SeqCst), verified_before_legacy_secret);
+
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri(format!("/testing/{}/api/v1/iam", Uuid::from_u128(10)))
+                .header("x-sb-test-app-secret", secret('A'))
+                .header("x-sb-test-briefcase-key", format!("ask_{}", "K".repeat(43)))
                 .body(Body::empty())
                 .unwrap(),
         )
@@ -180,7 +196,7 @@ async fn test_routes_verify_before_storage_and_isolate_environments_cleaning_and
             .unwrap();
     assert_eq!(
         persisted["briefcase_test_environment_key"],
-        "K".repeat(32),
+        format!("ask_{}", "K".repeat(43)),
         "secret-only requests must preserve configured recording delivery"
     );
 

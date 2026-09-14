@@ -59,6 +59,8 @@ pub struct TestingCredentials {
     pub app_secret: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub iam_test_key: Option<String>,
+    /// The imported Briefcase IAM app secret (`ask_` plus 43 base64url characters)
+    /// from this same test environment. The field name is retained for wire compatibility.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub briefcase_test_environment_key: Option<String>,
 }
@@ -72,15 +74,23 @@ impl fmt::Debug for TestingCredentials {
 impl Validate for TestingCredentials {
     fn validate(&self) -> Result<(), ValidationError> {
         opaque_auth_token(&self.app_secret, "ask_", "app_secret")?;
-        for (field, value) in self.iam_test_key.as_deref().map(|value| ("iam_test_key", value)).into_iter().chain(
-            self.briefcase_test_environment_key.as_deref().map(|value| ("briefcase_test_environment_key", value)),
-        ) {
-            if value.len() != 32 || !value.bytes().all(|byte| byte.is_ascii_alphanumeric()) {
-                return Err(ValidationError::Invalid {
-                    field,
-                    reason: "expected exactly 32 ASCII letters or digits".into(),
-                });
-            }
+        if let Some(value) = &self.iam_test_key
+            && (value.len() != 32 || !value.bytes().all(|byte| byte.is_ascii_alphanumeric()))
+        {
+            return Err(ValidationError::Invalid {
+                field: "iam_test_key",
+                reason: "expected exactly 32 ASCII letters or digits".into(),
+            });
+        }
+        if let Some(value) = &self.briefcase_test_environment_key
+            && (value.len() != 47
+                || !value.starts_with("ask_")
+                || !value[4..].bytes().all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-')))
+        {
+            return Err(ValidationError::Invalid {
+                field: "briefcase_test_environment_key",
+                reason: "expected the imported Briefcase app secret: ask_ followed by 43 base64url characters".into(),
+            });
         }
         Ok(())
     }
@@ -96,9 +106,20 @@ fn test_credentials_validate_optional_keys_without_debugging_secrets() {
     };
     assert!(credentials.validate().is_ok());
     credentials.iam_test_key = Some("a".repeat(32));
-    credentials.briefcase_test_environment_key = Some("B9".repeat(16));
+    credentials.briefcase_test_environment_key = Some(format!("ask_{}_-9", "B".repeat(40)));
     assert!(credentials.validate().is_ok());
     assert_eq!(format!("{credentials:?}"), "TestingCredentials([REDACTED])");
+    for secret in [
+        "B".repeat(32),
+        format!("ask_{}", "B".repeat(42)),
+        format!("ask_{}", "B".repeat(44)),
+        format!("ort_{}", "B".repeat(43)),
+        format!("ask_{}+", "B".repeat(42)),
+    ] {
+        credentials.briefcase_test_environment_key = Some(secret);
+        assert!(credentials.validate().is_err());
+    }
+    credentials.briefcase_test_environment_key = Some(format!("ask_{}", "B".repeat(43)));
     credentials.iam_test_key = Some("a".repeat(31));
     assert!(credentials.validate().is_err());
     credentials.iam_test_key = None;

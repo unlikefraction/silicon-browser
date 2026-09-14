@@ -67,7 +67,10 @@ impl Config {
         if briefcase_url.is_some()
             && var("IAM_TEST_ENVIRONMENT_KEY").is_some() != var("BRIEFCASE_TEST_ENVIRONMENT_KEY").is_some()
         {
-            return Err("recording delivery requires both paired test keys or neither".into());
+            return Err(
+                "recording delivery requires both the IAM test root key and Briefcase test app secret, or neither"
+                    .into(),
+            );
         }
         let recording_max_bytes = var("SB_RECORDING_MAX_BYTES")
             .unwrap_or_else(|| (512 * 1024 * 1024).to_string())

@@ -10,7 +10,7 @@ provides CLI, website, and direct API instructions for IAM testing environments.
 1. Select **Testing environment** on the welcome screen or in the workspace header.
 2. Enter the Browser test app's `ask_` secret. IAM verifies it and supplies the environment UUID; its root key is optional.
 3. Enter an existing IAM test actor ID (`alice` or `worker:tos`), or a test `oac_` short-lived token, and select its organization by entering the organization ID.
-4. To create browser sessions or save recordings, enter the **Briefcase test environment key** paired with this IAM environment. It is optional for sign-in and metadata use, but required for browser sessions because Browser requires recording storage.
+4. To create browser sessions or save recordings, enter the **Briefcase test environment key** using the imported Briefcase IAM app secret from this same environment. It is optional for sign-in and metadata use, but required for browser sessions because Browser requires recording storage.
 5. Select **Enter test mode**. The badge shows the verified environment name and UUID. In **Settings**, enable recording access using the same test actor or a fresh test token. Test authorization uses a masked form in this page.
 6. Select **Exit test mode** to return to your production workspace. Reloading also clears the test sign-in and restores any saved production sign-in.
 
@@ -20,8 +20,9 @@ To obtain a short-lived token instead of using an existing actor ID:
 iam --test <environment-uuid> login --app-id 'tos>browser' --grant-org <org> -o json
 ```
 
-Use the returned `slt`. Root and Briefcase keys, when supplied, must each contain
-exactly 32 ASCII letters or digits. The app secret and all test credentials stay
+Use the returned `slt`. The optional IAM root key contains exactly 32 ASCII letters or digits. The
+Briefcase field instead contains its imported app secret (`ask_` plus 43 base64url
+characters) from the same IAM world. The app secret and all test credentials stay
 in memory in this tab; they never enter localStorage or sessionStorage. Inputs
 clear on submit, cancellation, or switching. Failed enrollment preserves the
 current workspace and production sign-in. Missing or rejected test credentials

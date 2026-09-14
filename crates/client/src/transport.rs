@@ -277,7 +277,7 @@ mod tests {
                 }
                 assert!(headers.contains("x-sb-test-app-secret: ask_private\r\n"));
                 assert!(headers.contains(&format!("x-testing-environment-key: {}\r\n", "a".repeat(32))));
-                assert!(headers.contains(&format!("x-sb-test-briefcase-key: {}\r\n", "b".repeat(32))));
+                assert!(headers.contains(&format!("x-sb-test-briefcase-key: ask_{}\r\n", "b".repeat(43))));
                 assert!(headers.contains("authorization: bearer oat_private\r\n"));
                 assert!(headers.contains("x-org-id: tos\r\n"));
                 let body_length = headers
@@ -296,7 +296,7 @@ mod tests {
                 TestingCredentials {
                     app_secret: "ask_private".into(),
                     iam_test_key: Some("a".repeat(32)),
-                    briefcase_test_environment_key: Some("b".repeat(32)),
+                    briefcase_test_environment_key: Some(format!("ask_{}", "b".repeat(43))),
                 },
             )
             .unwrap();

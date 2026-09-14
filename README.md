@@ -104,10 +104,11 @@ short-lived token. Production login still requires a short-lived token. See
 [`sb testing` configuration](docs/CLI.md#iam-test-environments) for optional keys
 and the full command flow.
 
-**Creating browser sessions requires a paired Briefcase test key and recording
+**Creating browser sessions requires a Briefcase test application secret and recording
 authorization.** Add `briefcase_test_environment_key` to the enrollment JSON, or
-set `SB_BRIEFCASE_TEST_KEY` when enrolling through environment variables. The
-key must select a Briefcase environment paired with the same IAM environment.
+set `SB_BRIEFCASE_TEST_KEY` when enrolling through environment variables. This is
+the `app_secret` returned when importing `tos>briefcase` into the same IAM test world:
+`ask_` followed by 43 base64url characters, not a 32-character root key.
 Run `sb --test <environment-uuid> setup` to install/check the local controller
 and authorize a separate recording token family using the signed-in test actor.
 `SB_RECORDING_SLT` can instead supply a fresh Browser test SLT. Missing
@@ -116,7 +117,7 @@ Briefcase storage.
 
 On the website, select **Testing environment** from the welcome screen or the
 workspace header. Enter the test app secret, an existing actor ID or test SLT,
-and the organization. Add the paired Briefcase key to create browser sessions,
+and the organization. Add the Briefcase test application secret to create browser sessions,
 then authorize recording access in Settings. The test badge identifies the
 environment; **Exit test mode** restores the production workspace. Web test keys
 and sign-ins stay in memory, and leaving or reloading clears them. Invalid
@@ -193,7 +194,7 @@ on the normal backend. No dedicated test backend or server-wide IAM root key is
 required. Tests that deliberately start an entire backend in a single test
 plane may still configure `IAM_TEST_ENVIRONMENT_KEY`, the secret root key rather
 than the public UUID. Leave that server-wide variable unset on a production
-backend. Briefcase requires its separate paired test key.
+backend. Briefcase requires its imported IAM application secret from that same world.
 
 `scripts/test_live_auth.py` checks exchange/refresh, identity and organization scoping, rejection behavior and optional CLI use without creating provider sessions. Supply `SB_TEST_BACKEND`, `SB_TEST_ORG`, a fresh `SB_TEST_SLT`, and optionally an absolute `SB_TEST_CLI`. It consumes and rotates the resulting test authorization without printing credentials.
 
