@@ -22,6 +22,22 @@ The ordinary curl installer remains pinned to its existing four-platform 0.2.2
 release. Honeycomb release 0.2.3 adds the portable package without changing that
 installation channel or publishing new crates/npm packages.
 
+## Current rollout status — 2026-09-16
+
+`tos>browser` is registered in TOS and active, with its IAM webhook approved.
+Its production backend is using the new app credential; live authentication
+checks passed. The application is still **private**, with no uploaded release.
+
+All six native builds and package checks passed in the
+[Honeycomb package workflow](https://github.com/unlikefraction/silicon-browser/actions/runs/35065262468).
+The [existing CI suite](https://github.com/unlikefraction/silicon-browser/actions/runs/35065262331)
+also passed. Honeycomb validated the assembled 0.2.3 archive successfully.
+
+Upload is blocked by IAM's proof-lifetime database constraint. Public release
+also needs Honeycomb's unfinished production review/activation integration.
+See [the bug notes](HONEYCOMB-BUGS.md) for evidence, repair requirements and exact
+retry details. Publication and installation have not yet been verified.
+
 ## Build a release
 
 Keep `Cargo.toml`, workspace versions in `Cargo.lock`, and `honeycomb.yaml` in
@@ -56,7 +72,7 @@ rotate its credentials as part of an ordinary package update.
 
 ```sh
 honeycomb apps get 'tos>browser' --json
-honeycomb --idempotency-key browser-release-0.2.3-upload \
+honeycomb --idempotency-key silicon-browser-honeycomb-0.2.3-upload-20260916 \
   releases upload 'tos>browser' target/honeycomb-browser-0.2.3.tar.gz --revision REVISION
 honeycomb releases list 'tos>browser'
 honeycomb install 'tos>browser' --version 0.2.3
