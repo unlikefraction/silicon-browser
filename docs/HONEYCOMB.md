@@ -34,6 +34,19 @@ and the [full CI suite](https://github.com/unlikefraction/silicon-browser/action
 passed. The Rust packages are published as 0.2.4. See
 [the bug notes](HONEYCOMB-BUGS.md) for historical platform findings and resolution.
 
+Release 0.2.4 was accepted as public and installed successfully without any
+Honeycomb login. Its archive SHA-256 is
+`fe207a514e74cdd6e0e9bf6232b48fa099b9093dc321248b3a9e0c4c27eb0f69`.
+The installed command reports `browser 0.2.4`; the standalone installer and
+crates.io installation provide the same command. Native GitHub downloads are in
+[managed-v0.2.4](https://github.com/unlikefraction/silicon-browser/releases/tag/managed-v0.2.4).
+
+Only the catalog description's command name changed in desired configuration
+revision 2. Honeycomb created request `c6b12204-fcf8-418e-af1e-f2fa81d85ff6`, which
+awaits validator approval. The accepted revision and 0.2.4 archive remain public
+while that wording change is reviewed.
+
+
 ## Build a release
 
 Keep `Cargo.toml`, workspace versions in `Cargo.lock`, and `honeycomb.yaml` in
