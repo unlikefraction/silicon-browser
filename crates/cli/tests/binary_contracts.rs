@@ -27,6 +27,20 @@ fn packaged_controller_is_found_beside_the_cli_and_keeps_the_version_pin() {
         .unwrap();
     assert!(output.status.success());
     assert!(String::from_utf8_lossy(&output.stderr).contains(&format!("found {}", env!("CARGO_PKG_VERSION"))));
+    #[cfg(unix)]
+    {
+        let aliases = tempfile::tempdir().unwrap();
+        let alias = aliases.path().join("sb");
+        std::os::unix::fs::symlink(&executable, &alias).unwrap();
+        let linked = Command::new(alias)
+            .env_remove("SB_CONTROLLER_BIN")
+            .env("SB_HOME", package.path().join("state"))
+            .args(["run", "--help"])
+            .output()
+            .unwrap();
+        assert!(linked.status.success());
+        assert!(String::from_utf8_lossy(&linked.stderr).contains(&format!("found {}", env!("CARGO_PKG_VERSION"))));
+    }
     let overridden = Command::new(executable)
         .env("SB_CONTROLLER_BIN", package.path().join("missing-controller"))
         .args(["run", "--help"])

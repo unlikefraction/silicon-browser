@@ -6,6 +6,7 @@ members = [
     "crates/cli",
     "crates/backend",
 ]
+exclude = ["target/controller-source/cli"]
 
 [workspace.package]
 version = "0.2.3"

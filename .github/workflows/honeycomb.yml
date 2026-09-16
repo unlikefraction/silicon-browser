@@ -6,6 +6,13 @@ on:
     paths:
       - honeycomb.yaml
       - .github/workflows/honeycomb.yml
+      - Cargo.toml
+      - Cargo.lock
+      - crates/cli/**
+      - crates/client/**
+      - crates/shared/**
+      - scripts/package_honeycomb.py
+      - scripts/test_honeycomb_package.py
 
 permissions:
   contents: read

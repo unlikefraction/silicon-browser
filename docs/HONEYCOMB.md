@@ -26,8 +26,8 @@ installation channel or publishing new crates/npm packages.
 
 Keep `Cargo.toml`, workspace versions in `Cargo.lock`, and `honeycomb.yaml` in
 sync. The **Honeycomb package** GitHub Actions workflow builds and checks every
-target on its native operating system and architecture. It runs when the manifest
-or workflow changes, and can also be dispatched manually. Download its final
+target on its native operating system and architecture. It runs when CLI source,
+package inputs or the workflow change, and can also be dispatched manually. Download its final
 `honeycomb-browser-0.2.3.tar.gz` artifact.
 
 For local assembly of the six native workflow artifacts:

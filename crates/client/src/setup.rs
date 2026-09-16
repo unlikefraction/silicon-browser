@@ -48,7 +48,7 @@ pub fn runner_file_name() -> &'static str {
 
 /// Honeycomb keeps each target's controller beside the CLI, inside its immutable package.
 pub fn bundled_runner() -> Option<PathBuf> {
-    let binary = std::env::current_exe().ok()?.with_file_name(runner_file_name());
+    let binary = std::env::current_exe().ok()?.canonicalize().ok()?.with_file_name(runner_file_name());
     binary.is_file().then_some(binary)
 }
 
