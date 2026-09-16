@@ -10,7 +10,7 @@ use silicon_browser::{
     shared::*,
 };
 use std::{
-    fs::{self, File, OpenOptions},
+    fs::{self, OpenOptions},
     io::{self, Read, Write},
     path::{Path, PathBuf},
 };
@@ -139,7 +139,7 @@ impl Runtime {
                 break;
             }
         }
-        state::secure_home(&self.directory, false)?.sync_all()?;
+        state::sync_directory(&self.directory)?;
         Ok(sent)
     }
     pub fn forget_connection(&self, session: &str) -> io::Result<()> {
@@ -190,7 +190,7 @@ fn write_json(path: &Path, value: &impl Serialize) -> io::Result<()> {
         file.sync_all()?;
         state::reject_symlink_or_special_target(path)?;
         fs::rename(&temporary, path)?;
-        File::open(path.parent().unwrap())?.sync_all()
+        state::sync_directory(path.parent().unwrap())
     })();
     if result.is_err() {
         let _ = fs::remove_file(temporary);
@@ -203,6 +203,26 @@ pub fn controller_binary() -> PathBuf {
     if let Some(binary) = std::env::var_os("SB_CONTROLLER_BIN") {
         return binary.into();
     }
+    if let Some(binary) = silicon_browser::setup::bundled_runner() {
+        return binary;
+    }
     let private = state::default_home().join("bin").join(silicon_browser::setup::runner_file_name());
     if private.is_file() { private } else { PathBuf::from("agent-browser") }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn runtime_records_replace_existing_values_and_flush_portably() {
+        let directory = tempfile::tempdir().unwrap();
+        let home = directory.path().join("runtime");
+        state::secure_home(&home, true).unwrap();
+        let path = home.join("connection.json");
+        write_json(&path, &"old").unwrap();
+        write_json(&path, &"new").unwrap();
+        assert_eq!(read_json::<String>(&path).unwrap().as_deref(), Some("new"));
+        assert_eq!(fs::read_dir(home).unwrap().count(), 1);
+    }
 }

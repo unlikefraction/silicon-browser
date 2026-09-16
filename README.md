@@ -6,6 +6,10 @@ Browser commands execute on the caller's machine and connect directly to the rem
 
 ## Try the CLI
 
+For the six-platform Honeycomb package (`tos>browser`), including Windows and
+bundled browser controllers, see [Honeycomb distribution](docs/HONEYCOMB.md).
+Private installation requires access to TOS until publication is approved.
+
 Run this in a macOS or Linux terminal:
 
 ```sh

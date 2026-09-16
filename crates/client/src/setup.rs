@@ -46,11 +46,25 @@ pub fn runner_file_name() -> &'static str {
     if cfg!(windows) { "sb-browser-engine.exe" } else { "sb-browser-engine" }
 }
 
+/// Honeycomb keeps each target's controller beside the CLI, inside its immutable package.
+pub fn bundled_runner() -> Option<PathBuf> {
+    let binary = std::env::current_exe().ok()?.with_file_name(runner_file_name());
+    binary.is_file().then_some(binary)
+}
+
 /// Install the native controller into an explicit caller-owned private directory. No package
 /// manager, Node runtime, or local Chromium is installed. Existing pinned PATH installations
 /// are reused. Downloads are bounded and verified against compiled-in release SHA-256 digests.
 pub fn ensure_runner(directory: &Path, mut on_event: impl FnMut(SetupEvent)) -> Result<RunnerStatus, Error> {
     on_event(SetupEvent::Checking);
+    if let Some(binary) = bundled_runner() {
+        let status = runner_status(binary);
+        if !status.ready {
+            return Err(Error::Local("bundled browser controller is invalid; reinstall Silicon Browser".into()));
+        }
+        on_event(SetupEvent::Ready(status.clone()));
+        return Ok(status);
+    }
     let target = directory.join(runner_file_name());
     let metadata =
         fs::symlink_metadata(directory).map_err(|_| Error::Local("controller directory is unavailable".into()))?;
@@ -91,7 +105,7 @@ pub fn ensure_runner(directory: &Path, mut on_event: impl FnMut(SetupEvent)) -> 
     if format!("{:x}", Sha256::digest(&bytes)) != digest {
         return Err(Error::Local("browser controller download failed its integrity check".into()));
     }
-    let temporary = directory.join(format!(".controller-{}", uuid::Uuid::new_v4()));
+    let temporary = directory.join(format!(".controller-{}-{}", uuid::Uuid::new_v4(), runner_file_name()));
     let result = (|| {
         let mut options = OpenOptions::new();
         options.create_new(true).write(true);
@@ -105,6 +119,7 @@ pub fn ensure_runner(directory: &Path, mut on_event: impl FnMut(SetupEvent)) -> 
         file.write_all(&bytes)
             .and_then(|()| file.sync_all())
             .map_err(|_| Error::Local("could not save the browser controller".into()))?;
+        drop(file);
         if !runner_status(&temporary).ready {
             return Err(Error::Local("downloaded browser controller could not run on this machine".into()));
         }

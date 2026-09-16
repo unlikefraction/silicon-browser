@@ -11,6 +11,30 @@ use assert_cmd::cargo::cargo_bin_cmd;
 use predicates::prelude::*;
 use serde_json::{Value, json};
 
+#[test]
+fn packaged_controller_is_found_beside_the_cli_and_keeps_the_version_pin() {
+    let package = tempfile::tempdir().unwrap();
+    let executable = package.path().join(if cfg!(windows) { "sb.exe" } else { "sb" });
+    let controller = package.path().join(silicon_browser::setup::runner_file_name());
+    // An sb copy is a real native executable with the wrong controller version on every OS.
+    fs::copy(env!("CARGO_BIN_EXE_sb"), &executable).unwrap();
+    fs::copy(env!("CARGO_BIN_EXE_sb"), &controller).unwrap();
+    let output = Command::new(&executable)
+        .env_remove("SB_CONTROLLER_BIN")
+        .env("SB_HOME", package.path().join("state"))
+        .args(["run", "--help"])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    assert!(String::from_utf8_lossy(&output.stderr).contains(&format!("found {}", env!("CARGO_PKG_VERSION"))));
+    let overridden = Command::new(executable)
+        .env("SB_CONTROLLER_BIN", package.path().join("missing-controller"))
+        .args(["run", "--help"])
+        .output()
+        .unwrap();
+    assert!(String::from_utf8_lossy(&overridden.stderr).contains("no runnable browser controller"));
+}
+
 #[derive(Debug)]
 struct CapturedRequest {
     method: String,

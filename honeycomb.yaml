@@ -1,0 +1,30 @@
+format_version: 1
+app_id: tos>browser
+version: 0.2.3
+bin:
+  sb: main
+targets:
+  linux-x86_64:
+    root: targets/linux-x86_64
+    executables:
+      main: sb
+  linux-aarch64:
+    root: targets/linux-aarch64
+    executables:
+      main: sb
+  windows-x86_64:
+    root: targets/windows-x86_64
+    executables:
+      main: sb.exe
+  windows-aarch64:
+    root: targets/windows-aarch64
+    executables:
+      main: sb.exe
+  macos-x86_64:
+    root: targets/macos-x86_64
+    executables:
+      main: sb
+  macos-aarch64:
+    root: targets/macos-aarch64
+    executables:
+      main: sb

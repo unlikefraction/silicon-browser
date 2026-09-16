@@ -28,6 +28,9 @@ uuid.workspace = true
 sha2 = "0.10"
 libc = "0.2"
 
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Security_Authorization", "Win32_Storage_FileSystem", "Win32_System_Threading"] }
+
 [dev-dependencies]
 assert_cmd = "2"
 predicates = "3"

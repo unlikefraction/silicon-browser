@@ -95,7 +95,7 @@ impl State {
             let target = home.join(STATE_FILE);
             reject_symlink_or_special_target(&target)?;
             fs::rename(&temporary, target)?;
-            secure_home(home, false)?.sync_all()
+            sync_directory(home)
         })();
         if result.is_err() {
             let _ = fs::remove_file(&temporary);
@@ -269,13 +269,19 @@ pub(crate) fn secure_home(path: &Path, create: bool) -> io::Result<File> {
         Err(error) if error.kind() != io::ErrorKind::NotFound || !create => return Err(error),
         Err(_) => {}
     }
-    let mut builder = fs::DirBuilder::new();
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::DirBuilderExt;
-        builder.mode(0o700);
-    }
-    match builder.create(path) {
+    #[cfg(windows)]
+    let created = windows::create_directory(path);
+    #[cfg(not(windows))]
+    let created = {
+        let mut builder = fs::DirBuilder::new();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::DirBuilderExt;
+            builder.mode(0o700);
+        }
+        builder.create(path)
+    };
+    match created {
         Ok(()) => {}
         Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {}
         Err(error) => return Err(error),
@@ -291,18 +297,36 @@ fn open_directory_no_follow(path: &Path) -> io::Result<File> {
         use std::os::unix::fs::OpenOptionsExt;
         options.custom_flags(libc::O_CLOEXEC | libc::O_DIRECTORY | libc::O_NOFOLLOW);
     }
-    #[cfg(not(unix))]
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::OpenOptionsExt;
+        // FILE_FLAG_BACKUP_SEMANTICS opens directories; OPEN_REPARSE_POINT avoids junctions.
+        options.custom_flags(0x02000000 | 0x00200000);
+    }
+    #[cfg(not(any(unix, windows)))]
     if fs::symlink_metadata(path)?.file_type().is_symlink() {
         return Err(io::Error::new(io::ErrorKind::PermissionDenied, "SB_HOME must not be a symlink"));
     }
     options.open(path)
 }
 
+pub(crate) fn sync_directory(path: &Path) -> io::Result<()> {
+    let _directory = secure_home(path, false)?;
+    // Windows does not support FlushFileBuffers on directory handles. File contents are
+    // flushed before atomic replacement on every platform.
+    #[cfg(unix)]
+    _directory.sync_all()?;
+    Ok(())
+}
+
 fn validate_home_directory(directory: File) -> io::Result<File> {
     let metadata = directory.metadata()?;
+    reject_reparse_point(&metadata)?;
     if !metadata.is_dir() {
         return Err(io::Error::new(io::ErrorKind::InvalidInput, "SB_HOME must be a directory"));
     }
+    #[cfg(windows)]
+    windows::validate_private(&directory)?;
     #[cfg(unix)]
     {
         use std::os::unix::fs::{MetadataExt, PermissionsExt};
@@ -382,13 +406,32 @@ pub(crate) fn add_no_follow_flags(options: &mut OpenOptions) {
         use std::os::unix::fs::OpenOptionsExt;
         options.custom_flags(libc::O_CLOEXEC | libc::O_NOFOLLOW | libc::O_NONBLOCK);
     }
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::OpenOptionsExt;
+        options.custom_flags(0x00200000); // FILE_FLAG_OPEN_REPARSE_POINT
+    }
+}
+
+fn reject_reparse_point(_metadata: &fs::Metadata) -> io::Result<()> {
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::MetadataExt;
+        if _metadata.file_attributes() & 0x400 != 0 {
+            return Err(io::Error::new(io::ErrorKind::PermissionDenied, "private state must not be a reparse point"));
+        }
+    }
+    Ok(())
 }
 
 pub(crate) fn validate_private_regular_file(file: &File, label: &str) -> io::Result<()> {
     let metadata = file.metadata()?;
+    reject_reparse_point(&metadata)?;
     if !metadata.is_file() {
         return Err(io::Error::new(io::ErrorKind::PermissionDenied, format!("{label} must be a regular file")));
     }
+    #[cfg(windows)]
+    windows::validate_private(file)?;
     #[cfg(unix)]
     {
         use std::os::unix::fs::{MetadataExt, PermissionsExt};
@@ -404,6 +447,10 @@ pub(crate) fn validate_private_regular_file(file: &File, label: &str) -> io::Res
     }
     Ok(())
 }
+
+#[cfg(windows)]
+#[path = "state_windows.rs"]
+mod windows;
 
 #[cfg(test)]
 mod tests {
@@ -444,6 +491,52 @@ mod tests {
         secure_home(&root, true).unwrap();
         std::os::unix::fs::symlink(directory.path(), root.join("backends")).unwrap();
         assert!(home_for_backend(&root, "https://one.example").is_err());
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn junction_home_is_rejected_without_touching_its_target() {
+        let directory = tempfile::tempdir().unwrap();
+        let target = directory.path().join("target");
+        let junction = directory.path().join("junction");
+        fs::create_dir(&target).unwrap();
+        assert!(
+            std::process::Command::new("cmd")
+                .args(["/C", "mklink", "/J"])
+                .arg(&junction)
+                .arg(&target)
+                .output()
+                .unwrap()
+                .status
+                .success()
+        );
+        assert!(State::load(&junction).is_err());
+        assert!(State::update(&junction, |_| {}).is_err());
+        assert_eq!(fs::read_dir(target).unwrap().count(), 0);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_state_rejects_broad_access_and_hard_links() {
+        let directory = tempfile::tempdir().unwrap();
+        let home = directory.path().join("sb");
+        State::update(&home, |_| {}).unwrap();
+        let state = home.join(STATE_FILE);
+        let link = directory.path().join("linked-state");
+        fs::hard_link(&state, &link).unwrap();
+        assert!(State::load(&home).is_err());
+        fs::remove_file(link).unwrap();
+        let icacls = PathBuf::from(std::env::var_os("SystemRoot").unwrap()).join("System32/icacls.exe");
+        assert!(
+            std::process::Command::new(icacls)
+                .arg(&state)
+                .args(["/grant", "*S-1-1-0:F"])
+                .output()
+                .unwrap()
+                .status
+                .success()
+        );
+        assert!(State::load(&home).is_err());
     }
 
     /// Test group: CLI state is atomic, reloadable, and owner-only.

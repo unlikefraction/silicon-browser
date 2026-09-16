@@ -1,0 +1,116 @@
+name: Honeycomb package
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - honeycomb.yaml
+      - .github/workflows/honeycomb.yml
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  native:
+    name: ${{ matrix.target }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: linux-x86_64
+            os: ubuntu-22.04
+            triple: x86_64-unknown-linux-gnu
+          - target: linux-aarch64
+            os: ubuntu-22.04-arm
+            triple: aarch64-unknown-linux-gnu
+          - target: macos-x86_64
+            os: macos-15-intel
+            triple: x86_64-apple-darwin
+          - target: macos-aarch64
+            os: macos-15
+            triple: aarch64-apple-darwin
+          - target: windows-x86_64
+            os: windows-2022
+            triple: x86_64-pc-windows-msvc
+            suffix: .exe
+          - target: windows-aarch64
+            os: windows-11-arm
+            triple: aarch64-pc-windows-msvc
+            suffix: .exe
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.98
+        with:
+          targets: ${{ matrix.triple }}
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: Swatinem/rust-cache@v2
+      - name: Native CLI build and offline runtime tests
+        run: |
+          cargo build --locked --release -p silicon-browser-cli --target ${{ matrix.triple }}
+          cargo test --locked -p silicon-browser-cli --bin sb --target ${{ matrix.triple }}
+          cargo test --locked -p silicon-browser-cli --test binary_contracts --target ${{ matrix.triple }} packaged_controller_is_found_beside_the_cli_and_keeps_the_version_pin
+      - name: Check out pinned controller for Windows ARM64
+        if: matrix.target == 'windows-aarch64'
+        uses: actions/checkout@v4
+        with:
+          repository: vercel-labs/agent-browser
+          ref: eb05921bad874cd2a1b4fa5d1149f1ed26576cae
+          path: target/controller-source
+      - name: Native Windows ARM64 controller build
+        if: matrix.target == 'windows-aarch64'
+        # sb does not expose the upstream dashboard; its development placeholder is sufficient.
+        run: cargo build --locked --release --manifest-path target/controller-source/cli/Cargo.toml --target ${{ matrix.triple }}
+      - name: Stage binaries, verify versions and run help natively
+        run: |
+          controller=()
+          if [[ '${{ matrix.target }}' == windows-aarch64 ]]; then
+            controller=(--controller target/controller-source/cli/target/${{ matrix.triple }}/release/agent-browser.exe)
+          fi
+          python scripts/package_honeycomb.py --stage '${{ matrix.target }}' \
+            --binary 'target/${{ matrix.triple }}/release/sb${{ matrix.suffix }}' "${controller[@]}"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: honeycomb-${{ matrix.target }}
+          path: target/honeycomb/targets/${{ matrix.target }}
+          if-no-files-found: error
+          retention-days: 14
+
+  package:
+    needs: native
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: honeycomb-*
+          path: target/honeycomb/artifacts
+      - name: Validate and pack all six targets
+        id: package
+        run: |
+          python scripts/test_honeycomb_package.py
+          mkdir -p target/honeycomb/targets
+          for artifact in target/honeycomb/artifacts/honeycomb-*; do
+            mv "$artifact" "target/honeycomb/targets/${artifact##*/honeycomb-}"
+          done
+          archive=$(python scripts/package_honeycomb.py)
+          echo "archive=$archive" >> "$GITHUB_OUTPUT"
+          echo "name=${archive##*/}" >> "$GITHUB_OUTPUT"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.package.outputs.name }}
+          path: ${{ steps.package.outputs.archive }}
+          if-no-files-found: error
+          retention-days: 14
