@@ -28,9 +28,11 @@ compatible. The curl installer and Honeycomb use the same native CLI builds.
 0.2.3 publication request `17dd5de1-49f7-4a3e-b45e-9a041ec5f3fa` is published at
 configuration revision 1. Its installation and IAM login were verified.
 
-The command rename is packaged as the new immutable 0.2.4 release. Native builds
-and publication are in progress. See [the bug notes](HONEYCOMB-BUGS.md) for the
-historical platform findings and their resolution.
+The command rename is packaged as the new immutable 0.2.4 release. All six
+[native builds and archive checks](https://github.com/unlikefraction/silicon-browser/actions/runs/35155065017)
+and the [full CI suite](https://github.com/unlikefraction/silicon-browser/actions/runs/35155065018)
+passed. The Rust packages are published as 0.2.4. See
+[the bug notes](HONEYCOMB-BUGS.md) for historical platform findings and resolution.
 
 ## Build a release
 
@@ -78,9 +80,13 @@ browser setup
 Use the current application revision, not the release version. Reuse the exact
 key, revision and archive after an uncertain upload response. If `browser` already
 exists on PATH, use `--alias browser=browser-honeycomb` when installing and run that alias.
+When upgrading an installation that had an `sb` alias, pass
+`--alias browser=browser` to replace the old command mapping.
 
-After verifying private installation, request publication with the latest revision
-and inspect its status. Uploading a release does not itself make the app public.
+For an application that is still private, verify installation, request publication
+with the latest revision, and inspect its status. Uploading a release does not
+itself make a private app public. New releases of an already public application
+receive public archive access during upload.
 Honeycomb reviewers control public approval. Webhook activation separately needs
 IAM's fresh verification for `application.webhook.approve` and the exact pending
 endpoint; a stored login is insufficient.

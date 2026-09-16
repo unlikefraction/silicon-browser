@@ -19,16 +19,16 @@ main() {
     case "$(uname -s):$(uname -m)" in
         Darwin:arm64|Darwin:aarch64)
             target=aarch64-apple-darwin
-            digest=83f513f441d0625c37b0165d4094fb3e0db98c42b8610a836c51f6248dacce7b ;;
+            digest=42bb1967e9886866387ff18832775ab8f49bd44a73de64a583100492eaba7678 ;;
         Darwin:x86_64)
             target=x86_64-apple-darwin
-            digest=4b8222ad728cb2e92e011e41cc6d064dbaec18c495039bee45006d802a988707 ;;
+            digest=c5b12bc81e7afc3d61e19e335253c6a5bbe796d0087235c8210dfb937985003a ;;
         Linux:aarch64|Linux:arm64)
             target=aarch64-unknown-linux-gnu
-            digest=ad9154e6e217b938b0307508f18af89ae11e947e1f81e81ed150b2472f984890 ;;
+            digest=6d166d937d49cc0bcb4f3e391d4a8e6544444629852917f2ca9101e13b646859 ;;
         Linux:x86_64)
             target=x86_64-unknown-linux-gnu
-            digest=5f98dcbb6b8780ccfc508fe9d691dfd4ec3fe06c8bd17e59fb7a37f37f44f14b ;;
+            digest=69612e80a88052530f20c7e87c9fb11b7617f45d0955b70126a3ba5e93e72890 ;;
         *) fail 'Supported platforms: macOS and Linux on x86-64 or ARM64.' ;;
     esac
     case "$target" in

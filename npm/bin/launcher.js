@@ -33,7 +33,7 @@ if (!existsSync(binary)) {
 }
 if (platform !== 'win32') chmodSync(binary, 0o755);
 
-const result = spawnSync(binary, process.argv.slice(2), { stdio: 'inherit' });
+const result = spawnSync(binary, process.argv.slice(2), { stdio: 'inherit', argv0: 'browser' });
 if (result.error) {
   console.error(`Could not start Silicon Browser: ${result.error.message}`);
   process.exit(1);

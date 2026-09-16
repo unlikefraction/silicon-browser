@@ -1,6 +1,6 @@
 # Silicon Browser npm package
 
-The next `silicon-browser` npm release exposes the managed Silicon Browser CLI as `browser`, version 0.2.4. Published npm version 1.0.2 still contains the legacy `sb` 0.2.2 payload; use the current native release or Honeycomb until a new npm version is published.
+The `silicon-browser` npm package exposes the managed Silicon Browser CLI as `browser`, version 0.2.4.
 
 ```sh
 browser --version
@@ -18,4 +18,4 @@ To prepare an npm release from the native-tested Honeycomb target artifacts:
 node npm/scripts/prepare-release.mjs /path/to/targets
 ```
 
-This verifies their version and SHA-256 receipts before copying the four native payloads. Old `sb-*` files are excluded from the package. Bump the npm package version before publishing; preparation does not publish anything.
+This verifies their version and SHA-256 receipts before copying the four native payloads. Preparation does not publish anything.

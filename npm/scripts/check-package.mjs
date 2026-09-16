@@ -11,4 +11,6 @@ const result = spawnSync(process.execPath, [join(root, 'bin/launcher.js'), '--ve
 if ((process.platform === 'darwin' || process.platform === 'linux') && result.status !== 0) throw new Error(result.stderr || 'native --version failed');
 const version = readFileSync(join(root, '../Cargo.toml'), 'utf8').match(/\[workspace\.package\][\s\S]*?\nversion = "([^"]+)"/)[1];
 if (result.stdout.trim() !== `browser ${version}`) throw new Error('native command name/version does not match this release');
+const help = spawnSync(process.execPath, [join(root, 'bin/launcher.js'), '--help'], { encoding: 'utf8' });
+if (help.status !== 0 || !help.stdout.includes('Usage: browser ') || /\bsb\s/.test(help.stdout)) throw new Error('native help does not use the browser command');
 console.log('package files and native launcher check passed');

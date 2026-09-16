@@ -1,6 +1,6 @@
 {
   "name": "silicon-browser",
-  "version": "1.0.2",
+  "version": "1.0.3",
   "description": "Silicon Browser managed CLI",
   "license": "MIT",
   "type": "module",

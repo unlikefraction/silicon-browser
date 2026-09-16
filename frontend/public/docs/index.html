@@ -9,7 +9,7 @@
 </head>
 <body>
 <a class="skip" href="#content">Skip to documentation</a>
-<header><a href="/"><strong>Browser</strong> / Documentation</a><a href="https://github.com/unlikefraction/silicon-browser/tree/v2">Source ↗</a></header>
+<header><a href="/"><strong>Browser</strong> / Documentation</a><a href="https://github.com/unlikefraction/silicon-browser/tree/main">Source ↗</a></header>
 <div class="layout">
 <nav aria-label="Documentation">
   <p>Start using Browser</p>
@@ -24,7 +24,7 @@
   <h2 id="install">1. Install</h2>
   <p>On macOS or Linux, run the <a href="#setup-command">one-line installer</a>. It selects your architecture, verifies the download, and installs <code>browser</code> into <code>~/.local/bin</code>. Linux requires glibc 2.34 or later; macOS and Linux support ARM64 and x86-64.</p>
   <p>The command below installs without authentication. Sign in separately with <code>browser login</code> and run <code>browser setup</code> when ready to configure browser control and recording delivery. Source installation needs Rust 1.98 or later:</p>
-  <pre><code>cargo install --git https://github.com/unlikefraction/silicon-browser --tag managed-v0.2.4 --locked silicon-browser-cli
+  <pre><code>cargo install silicon-browser-cli --version 0.2.4 --locked
 browser --help
 browser iam --json</code></pre>
 
@@ -103,7 +103,7 @@ x-sb-test-app-secret: ask_...</code></pre>
     </tbody>
   </table>
   <p>Refresh with <code>POST /testing/ENVIRONMENT_UUID/api/v1/auth/refresh</code>, JSON <code>{"refresh_token":"ort_...","org_id":"tos"}</code>, and the same test headers. Keep the test prefix and credentials on exchange, refresh, and subsequent calls. Never retry a rejected test request against production.</p>
-  <p><a href="/docs/CLI.md#iam-test-environments">Full test configuration reference (Markdown)</a> · <a href="https://github.com/unlikefraction/silicon-browser/blob/v2/crates/client/README.md">Rust client reference</a></p>
+  <p><a href="/docs/CLI.md#iam-test-environments">Full test configuration reference (Markdown)</a> · <a href="https://github.com/unlikefraction/silicon-browser/blob/main/crates/client/README.md">Rust client reference</a></p>
 
   <h2 id="commands">Explore the command tree</h2>
   <pre><code>browser
@@ -124,7 +124,7 @@ x-sb-test-app-secret: ask_...</code></pre>
 
   <h2 id="develop">Build on Browser</h2>
   <p>The stateless <a href="https://crates.io/crates/silicon-browser">silicon-browser Rust package</a> implements the API client. The <a href="https://crates.io/crates/silicon-browser-cli">silicon-browser-cli package</a> provides <code>browser</code>; <a href="https://crates.io/crates/silicon-browser-shared">silicon-browser-shared</a> contains the common contracts.</p>
-  <pre><code>cargo add silicon-browser@0.2.2
+  <pre><code>cargo add silicon-browser@0.2.4
 
 # In a source checkout:
 cargo test --workspace --all-targets
@@ -133,7 +133,7 @@ npm test --prefix frontend
 npm run build --prefix frontend</code></pre>
   <p>Test integrations through the IAM environment flow above. It runs the production handlers with separate authentication and storage. For architecture, deployment, recording requirements, and current limits, follow the informative references:</p>
   <ul>
-    <li><a href="https://github.com/unlikefraction/silicon-browser/tree/v2">Source and development README</a></li>
+    <li><a href="https://github.com/unlikefraction/silicon-browser/tree/main">Source and development README</a></li>
     <li><a href="/docs/DEPLOYMENT.md">Deployment layout (Markdown)</a></li>
     <li><a href="/docs/BRIEFCASE_INTEGRATION.md">Recording delivery (Markdown)</a></li>
     <li><a href="/docs/COMMAND_EXECUTION_GAPS.md">Command execution boundaries (Markdown)</a></li>
