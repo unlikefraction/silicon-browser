@@ -26,17 +26,22 @@ installation channel or publishing new crates/npm packages.
 
 `tos>browser` is registered in TOS and active, with its IAM webhook approved.
 Its production backend is using the new app credential; live authentication
-checks passed. The application is still **private**, with no uploaded release.
+checks passed. Release **0.2.3 is uploaded and installed successfully** through
+Honeycomb. The installed `sb-honeycomb` alias reports 0.2.3, its bundled controller
+reports 0.36.0, and a fresh IAM login passed. Full `sb setup` additionally requires
+the user's separate recording-delivery authorization.
 
 All six native builds and package checks passed in the
 [Honeycomb package workflow](https://github.com/unlikefraction/silicon-browser/actions/runs/35065262468).
 The [existing CI suite](https://github.com/unlikefraction/silicon-browser/actions/runs/35065262331)
 also passed. Honeycomb validated the assembled 0.2.3 archive successfully.
 
-Upload is blocked by IAM's proof-lifetime database constraint. Public release
-also needs Honeycomb's unfinished production review/activation integration.
-See [the bug notes](HONEYCOMB-BUGS.md) for evidence, repair requirements and exact
-retry details. Publication and installation have not yet been verified.
+The platform fixes now allow upload and publication planning. Public request
+`17dd5de1-49f7-4a3e-b45e-9a041ec5f3fa` is **awaiting_validator** at revision 1.
+The current account's review response is `can_decide: false`; a designated
+Honeycomb validator must approve it. Browser remains private until that review
+and activation complete. See [the bug notes](HONEYCOMB-BUGS.md) for the historical
+findings, verified fixes and continuation commands.
 
 ## Build a release
 

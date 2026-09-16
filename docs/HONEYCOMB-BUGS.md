@@ -1,9 +1,33 @@
-# Honeycomb publication blockers
+# Honeycomb publication findings
 
 Recorded on 2026-09-16 while publishing `tos>browser` version `0.2.3`.
-Browser is registered and active, with its IAM webhook approved, but remains
-private with no uploaded release. These are platform issues, not package
-validation failures. No production IAM or Honeycomb code was changed.
+The original findings below are retained as history. Following the platform
+repair, the same archive uploaded successfully, installation passed, and the
+public request reached validator review. No production IAM or Honeycomb code
+was changed by this Browser task.
+
+## Verification after the platform repair
+
+- **IAM-1 resolved for this upload:** accepted release
+  `25fe4dc9-90bc-46c0-bdc9-f3ca33a039ae`, version 0.2.3, 45,672,881 bytes,
+  with the original SHA-256 and idempotency key.
+- **HC-1 planning fixed:** public request
+  `17dd5de1-49f7-4a3e-b45e-9a041ec5f3fa`, plan
+  `cef53f28-4bb0-47f3-adf7-ecf80c635eca`, revision 1, reached
+  `awaiting_validator`. Current upstream implements review and activation;
+  Browser's own activation is still untested pending approval.
+- **HC-2 source fixed:** [Honeycomb 3912ec0 storage mapping](https://github.com/teamofsilicons/silicon-honeycomb/blob/3912ec0/crates/server/src/storage.rs)
+  distinguishes authentication, authorization, rate-limit and service failures,
+  preserving allowlisted diagnostic codes and request IDs. No production failure
+  was induced to retest the error path.
+- **Installation verified:** Honeycomb installed the archive under alias
+  `sb-honeycomb`; CLI 0.2.3, help, bundled controller 0.36.0 and fresh IAM login
+  passed. Full setup still requires separate user recording-delivery consent.
+
+The current account is a TOS administrator, but the review endpoint returns
+`can_decide: false` for the Honeycomb gate. This is an approval requirement,
+not a remaining reproduction of the old platform bug. IAM's designated
+`honeycomb.applications.review` capability is separate from organization admin.
 
 ## HC-1: Public review and activation are not implemented in the production adapter
 
@@ -95,7 +119,7 @@ Sources:
 - [Configured expiry in exchange](https://github.com/teamofsilicons/silicon-iam/blob/72767708d9ac2e7bf11873aee9bc8800da3c4835/src/features/applications/obo.rs#L350)
 - [Stale 60-second constraint](https://github.com/teamofsilicons/silicon-iam/blob/72767708d9ac2e7bf11873aee9bc8800da3c4835/migrations/0005_governance_sso_and_obo.sql#L968)
 
-## Resolved prerequisite and retry details
+## Resolved prerequisite and continuation
 
 Honeycomb originally lacked `briefcase.uploads.reserve`,
 `briefcase.uploads.commit`, `briefcase.files.read`, and
@@ -103,7 +127,7 @@ Honeycomb originally lacked `briefcase.uploads.reserve`,
 completed; all four became effective, and login consent was renewed. Missing
 grants are no longer the diagnosed upload blocker.
 
-After IAM storage is repaired, retry the same Browser archive and mutation:
+The original upload completed using this mutation:
 
 ```sh
 honeycomb --idempotency-key silicon-browser-honeycomb-0.2.3-upload-20260916 \
@@ -113,7 +137,21 @@ honeycomb --idempotency-key silicon-browser-honeycomb-0.2.3-upload-20260916 \
 
 Archive SHA-256:
 `6360c55926b41351585ff6041e78d1dae7166f9f030d93b456ce997b4a10195a`.
-Reconcile the existing operation before changing its key, revision or archive.
-Then verify private installation and complete the normal publication review
-after HC-1 is repaired. Do not recreate Browser or rotate its credentials to
-retry this release.
+Do not upload a replacement or recreate the application. A designated validator
+can inspect the request using:
+
+```sh
+honeycomb publication review 17dd5de1-49f7-4a3e-b45e-9a041ec5f3fa honeycomb --json
+```
+
+After reviewing, that validator can use `publication decide` for provider
+`honeycomb`, decision `approve`, revision `1`, with their review reason. Once the
+request reaches `awaiting_activation`, the application administrator can finish:
+
+```sh
+honeycomb --idempotency-key silicon-browser-honeycomb-activation-20260916-01 \
+  publication activate 17dd5de1-49f7-4a3e-b45e-9a041ec5f3fa --revision 1 --json
+honeycomb apps get 'tos>browser' --json
+```
+
+Verify public catalog visibility and anonymous installation after activation.
