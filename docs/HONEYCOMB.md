@@ -1,14 +1,14 @@
 # Honeycomb distribution
 
-Honeycomb distributes the `sb` CLI as `tos>browser`. It does not host the API or
+Honeycomb distributes the `browser` CLI as `tos>browser`. It does not host the API or
 website: the existing AWS backend, Vercel frontend, SQLite storage, IAM login,
 and Briefcase recording delivery retain their current architecture.
 
 ## Changes from the previous release
 
-- One `honeycomb.yaml` maps `sb` to six native builds: Linux, macOS and Windows,
+- One `honeycomb.yaml` maps `browser` to six native builds: Linux, macOS and Windows,
   each on x86-64 and ARM64.
-- Each payload includes the pinned browser controller beside `sb`. Setup and
+- Each payload includes the pinned browser controller beside `browser`. Setup and
   browser commands reuse that controller; no package installation hook is needed.
   The explicit `SB_CONTROLLER_BIN` override still takes precedence at runtime.
 - The Windows CLI opens directory handles correctly and flushes file writes
@@ -18,30 +18,19 @@ and Briefcase recording delivery retain their current architecture.
   upstream 0.36.0 provides only a Windows x86-64 binary. No architecture is
   represented by a shell wrapper or another architecture's executable.
 
-The ordinary curl installer remains pinned to its existing four-platform 0.2.2
-release. Honeycomb release 0.2.3 adds the portable package without changing that
-installation channel or publishing new crates/npm packages.
+Release 0.2.4 renames the public command from `sb` to `browser`. Existing
+`SB_*` variables, authentication, state paths and the private controller remain
+compatible. The curl installer and Honeycomb use the same native CLI builds.
 
-## Current rollout status — 2026-09-16
+## Current rollout status — 2026-09-17
 
-`tos>browser` is registered in TOS and active, with its IAM webhook approved.
-Its production backend is using the new app credential; live authentication
-checks passed. Release **0.2.3 is uploaded and installed successfully** through
-Honeycomb. The installed `sb-honeycomb` alias reports 0.2.3, its bundled controller
-reports 0.36.0, and a fresh IAM login passed. Full `sb setup` additionally requires
-the user's separate recording-delivery authorization.
+`tos>browser` is public and active, with its IAM webhook approved. The original
+0.2.3 publication request `17dd5de1-49f7-4a3e-b45e-9a041ec5f3fa` is published at
+configuration revision 1. Its installation and IAM login were verified.
 
-All six native builds and package checks passed in the
-[Honeycomb package workflow](https://github.com/unlikefraction/silicon-browser/actions/runs/35065262468).
-The [existing CI suite](https://github.com/unlikefraction/silicon-browser/actions/runs/35065262331)
-also passed. Honeycomb validated the assembled 0.2.3 archive successfully.
-
-The platform fixes now allow upload and publication planning. Public request
-`17dd5de1-49f7-4a3e-b45e-9a041ec5f3fa` is **awaiting_validator** at revision 1.
-The current account's review response is `can_decide: false`; a designated
-Honeycomb validator must approve it. Browser remains private until that review
-and activation complete. See [the bug notes](HONEYCOMB-BUGS.md) for the historical
-findings, verified fixes and continuation commands.
+The command rename is packaged as the new immutable 0.2.4 release. Native builds
+and publication are in progress. See [the bug notes](HONEYCOMB-BUGS.md) for the
+historical platform findings and their resolution.
 
 ## Build a release
 
@@ -49,14 +38,14 @@ Keep `Cargo.toml`, workspace versions in `Cargo.lock`, and `honeycomb.yaml` in
 sync. The **Honeycomb package** GitHub Actions workflow builds and checks every
 target on its native operating system and architecture. It runs when CLI source,
 package inputs or the workflow change, and can also be dispatched manually. Download its final
-`honeycomb-browser-0.2.3.tar.gz` artifact.
+`honeycomb-browser-0.2.4.tar.gz` artifact.
 
 For local assembly of the six native workflow artifacts:
 
 ```sh
 python3 scripts/test_honeycomb_package.py
 python3 scripts/package_honeycomb.py --targets target/honeycomb/targets
-honeycomb validate target/honeycomb-browser-0.2.3.tar.gz
+honeycomb validate target/honeycomb-browser-0.2.4.tar.gz
 ```
 
 The packer checks native executable headers and hashes against the versions
@@ -77,18 +66,18 @@ rotate its credentials as part of an ordinary package update.
 
 ```sh
 honeycomb apps get 'tos>browser' --json
-honeycomb --idempotency-key silicon-browser-honeycomb-0.2.3-upload-20260916 \
-  releases upload 'tos>browser' target/honeycomb-browser-0.2.3.tar.gz --revision REVISION
+honeycomb --idempotency-key silicon-browser-honeycomb-0.2.4-upload-20260917 \
+  releases upload 'tos>browser' target/honeycomb-browser-0.2.4.tar.gz --revision REVISION
 honeycomb releases list 'tos>browser'
-honeycomb install 'tos>browser' --version 0.2.3
-sb --version
-sb --help
-sb setup
+honeycomb install 'tos>browser' --version 0.2.4
+browser --version
+browser --help
+browser setup
 ```
 
 Use the current application revision, not the release version. Reuse the exact
-key, revision and archive after an uncertain upload response. If `sb` already
-exists on PATH, use `--alias sb=sb-honeycomb` when installing and run that alias.
+key, revision and archive after an uncertain upload response. If `browser` already
+exists on PATH, use `--alias browser=browser-honeycomb` when installing and run that alias.
 
 After verifying private installation, request publication with the latest revision
 and inspect its status. Uploading a release does not itself make the app public.

@@ -3,7 +3,7 @@
 # Keep the entry point last so a truncated download cannot start installation.
 set -eu
 
-fail() { printf 'sb installer: %s\n' "$*" >&2; exit 1; }
+fail() { printf 'browser installer: %s\n' "$*" >&2; exit 1; }
 
 add_path() {
     profile=$1
@@ -58,15 +58,15 @@ main() {
     : "${HOME:?HOME must be set}"
     bin_dir="$HOME/.local/bin"
     mkdir -p "$bin_dir"
-    work=$(mktemp -d "$bin_dir/.sb-install.XXXXXX")
+    work=$(mktemp -d "$bin_dir/.browser-install.XXXXXX")
     trap 'rm -rf "$work"' EXIT
     trap 'exit 130' INT
     trap 'exit 143' TERM
-    asset="sb-v0.2.2-$target"
-    printf 'Installing sb 0.2.2 for %s…\n' "$target"
+    asset="browser-v0.2.4-$target"
+    printf 'Installing browser 0.2.4 for %s…\n' "$target"
     curl --fail --show-error --silent --location --proto '=https' --tlsv1.2 \
         --retry 3 --connect-timeout 20 --max-time 300 \
-        "https://github.com/unlikefraction/silicon-browser/releases/download/managed-v0.2.2/$asset.tar.gz" \
+        "https://github.com/unlikefraction/silicon-browser/releases/download/managed-v0.2.4/$asset.tar.gz" \
         --output "$work/archive.tar.gz"
     if [ "$checksum" = sha256sum ]; then
         actual=$(sha256sum "$work/archive.tar.gz")
@@ -74,11 +74,12 @@ main() {
         actual=$(shasum -a 256 "$work/archive.tar.gz")
     fi
     [ "${actual%% *}" = "$digest" ] || fail 'Download checksum mismatch; existing installation was not changed.'
-    tar -xzf "$work/archive.tar.gz" -C "$work" "$asset/sb"
-    chmod 755 "$work/$asset/sb"
-    "$work/$asset/sb" --version || fail 'The release cannot run on this system; existing installation was not changed.'
-    [ ! -d "$bin_dir/sb" ] || fail "$bin_dir/sb is a directory."
-    mv -f "$work/$asset/sb" "$bin_dir/sb"
+    tar -xzf "$work/archive.tar.gz" -C "$work" "$asset/browser"
+    chmod 755 "$work/$asset/browser"
+    installed_version=$("$work/$asset/browser" --version) || fail 'The release cannot run on this system; existing installation was not changed.'
+    [ "$installed_version" = 'browser 0.2.4' ] || fail 'The release has an unexpected command name or version; existing installation was not changed.'
+    [ ! -d "$bin_dir/browser" ] || fail "$bin_dir/browser is a directory."
+    mv -f "$work/$asset/browser" "$bin_dir/browser"
     add_path "$HOME/.profile"
     add_path "$HOME/.bashrc"
     if [ -f "$HOME/.bash_profile" ]; then
@@ -96,14 +97,14 @@ main() {
     esac
     PATH="$bin_dir:$PATH"
     export PATH
-    printf 'Installed %s/sb. New terminals will have sb on PATH.\n' "$bin_dir"
+    printf 'Installed %s/browser. New terminals will have browser on PATH.\n' "$bin_dir"
     if [ "$skip_setup" -eq 0 ]; then
         if [ -t 0 ]; then
-            "$bin_dir/sb" setup "$@"
+            "$bin_dir/browser" setup "$@"
         elif ( : < /dev/tty ) 2>/dev/null; then
-            "$bin_dir/sb" setup "$@" < /dev/tty
+            "$bin_dir/browser" setup "$@" < /dev/tty
         else
-            fail 'CLI installed. Open a terminal and run ~/.local/bin/sb setup to finish authentication and controller setup.'
+            fail 'CLI installed. Open a terminal and run ~/.local/bin/browser setup to finish authentication and controller setup.'
         fi
     fi
 }

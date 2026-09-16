@@ -53,17 +53,28 @@ class PackageTests(unittest.TestCase):
                            "sha256": {name: hashlib.sha256(data).hexdigest() for name in names}}
                 (directory / "build.json").write_text(json.dumps(receipt))
             with patch.object(package, "ROOT", root):
-                package.pack(root, output)
+                standalone = root / "standalone"
+                package.pack(root, output, standalone)
                 with tarfile.open(output) as archive:
                     self.assertEqual(len(archive.getnames()), 1 + 6 * 6)
                     self.assertEqual(archive.getnames()[0], "honeycomb.yaml")
                     for entry in archive:
                         self.assertTrue(entry.isfile())
                         self.assertNotIn(entry.name.split("/")[-1], [".env", "state.json", "build.json"])
-                        if entry.name.endswith(("/sb", "/sb.exe", "/sb-browser-engine", "/sb-browser-engine.exe")):
+                        if entry.name.endswith(("/browser", "/browser.exe", "/sb-browser-engine", "/sb-browser-engine.exe")):
                             self.assertEqual(entry.mode, 0o755)
+                self.assertEqual(len(list(standalone.glob("*.tar.gz"))), 4)
+                for target, triple in package.STANDALONE_TARGETS.items():
+                    stem = f"browser-v{version}-{triple}"
+                    path = standalone / f"{stem}.tar.gz"
+                    self.assertEqual(path.with_name(path.name + ".sha256").read_text(),
+                                     f"{hashlib.sha256(path.read_bytes()).hexdigest()}  {path.name}\n")
+                    with tarfile.open(path) as archive:
+                        self.assertEqual(archive.getnames(), [f"{stem}/browser", f"{stem}/LICENSE"])
+                        self.assertEqual(archive.extractfile(f"{stem}/browser").read(), executable(target))
+                        self.assertEqual(archive.getmember(f"{stem}/browser").mode, 0o755)
                 directory = root / "windows-aarch64"
-                path = directory / "sb.exe"
+                path = directory / "browser.exe"
                 original = path.read_bytes()
                 for invalid in [b"#!/bin/sh\nexit 0\n", executable("windows-x86_64")]:
                     path.write_bytes(invalid)

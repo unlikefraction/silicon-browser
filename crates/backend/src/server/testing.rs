@@ -382,7 +382,7 @@ fn credentials(headers: &HeaderMap) -> Result<TestingCredentials, ApiFailure> {
             ApiFailure::new(
                 StatusCode::UNAUTHORIZED,
                 "test_credentials_required",
-                "test route requires x-sb-test-app-secret; run sb testing login",
+                "test route requires x-sb-test-app-secret; run browser testing login",
             )
         })?,
         iam_test_key: header(IAM_KEY)?,

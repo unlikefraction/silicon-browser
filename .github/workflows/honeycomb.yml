@@ -64,7 +64,7 @@ jobs:
       - name: Native CLI build and offline runtime tests
         run: |
           cargo build --locked --release -p silicon-browser-cli --target ${{ matrix.triple }}
-          cargo test --locked -p silicon-browser-cli --bin sb --target ${{ matrix.triple }}
+          cargo test --locked -p silicon-browser-cli --bin browser --target ${{ matrix.triple }}
           cargo test --locked -p silicon-browser-cli --test binary_contracts --target ${{ matrix.triple }} packaged_controller_is_found_beside_the_cli_and_keeps_the_version_pin
       - name: Check out pinned controller for Windows ARM64
         if: matrix.target == 'windows-aarch64'
@@ -75,7 +75,7 @@ jobs:
           path: target/controller-source
       - name: Native Windows ARM64 controller build
         if: matrix.target == 'windows-aarch64'
-        # sb does not expose the upstream dashboard; its development placeholder is sufficient.
+        # browser does not expose the upstream dashboard; its development placeholder is sufficient.
         run: cargo build --locked --release --manifest-path target/controller-source/cli/Cargo.toml --target ${{ matrix.triple }}
       - name: Stage binaries, verify versions and run help natively
         run: |
@@ -84,7 +84,7 @@ jobs:
             controller=(--controller target/controller-source/cli/target/${{ matrix.triple }}/release/agent-browser.exe)
           fi
           python scripts/package_honeycomb.py --stage '${{ matrix.target }}' \
-            --binary 'target/${{ matrix.triple }}/release/sb${{ matrix.suffix }}' "${controller[@]}"
+            --binary 'target/${{ matrix.triple }}/release/browser${{ matrix.suffix }}' "${controller[@]}"
       - uses: actions/upload-artifact@v4
         with:
           name: honeycomb-${{ matrix.target }}
@@ -112,12 +112,18 @@ jobs:
           for artifact in target/honeycomb/artifacts/honeycomb-*; do
             mv "$artifact" "target/honeycomb/targets/${artifact##*/honeycomb-}"
           done
-          archive=$(python scripts/package_honeycomb.py)
+          archive=$(python scripts/package_honeycomb.py --standalone-output target/browser-standalone)
           echo "archive=$archive" >> "$GITHUB_OUTPUT"
           echo "name=${archive##*/}" >> "$GITHUB_OUTPUT"
       - uses: actions/upload-artifact@v4
         with:
           name: ${{ steps.package.outputs.name }}
           path: ${{ steps.package.outputs.archive }}
+          if-no-files-found: error
+          retention-days: 14
+      - uses: actions/upload-artifact@v4
+        with:
+          name: browser-standalone
+          path: target/browser-standalone/*
           if-no-files-found: error
           retention-days: 14

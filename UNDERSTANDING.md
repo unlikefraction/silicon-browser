@@ -1,13 +1,13 @@
 Silicon Browser:
-We're building a managed auth & access layer on top of browser-use; a cli that runs agent-browser underneath to run browser. it wraps it with other commands like `sb ...`. and a setup command that sets up everything.
+We're building a managed auth & access layer on top of browser-use; a cli that runs agent-browser underneath to run browser. it wraps it with other commands like `browser ...`. and a setup command that sets up everything.
 
-Architecture clarification (2026-09-06): `sb` is a local usability wrapper. The Rust client obtains auth, profile/session metadata, the CDP capability and live links from our backend. The CLI runs the native controller locally and connects directly to the remote browser over CDP. Browser actions and their outputs never run on, or pass through, our backend. The frontend also connects its live iframe directly to the returned viewer. Completed command metadata is reported separately to our backend; stdout/stderr remain local. Reports are cooperative and cannot prove all direct browser activity.
+Architecture clarification (2026-09-06): `browser` is a local usability wrapper. The Rust client obtains auth, profile/session metadata, the CDP capability and live links from our backend. The CLI runs the native controller locally and connects directly to the remote browser over CDP. Browser actions and their outputs never run on, or pass through, our backend. The frontend also connects its live iframe directly to the returned viewer. Completed command metadata is reported separately to our backend; stdout/stderr remain local. Reports are cooperative and cannot prove all direct browser activity.
 
 The dedicated AWS daemon owns the auth/access and lifecycle control plane, usage metadata, command-log storage, and completed-recording delivery to Briefcase. Existing search/fetch requests still use its shared provider-key pool and fair queue as described below. It needs no local browser or controller runtime. The frontend is a minimal SolidJS/TypeScript app in IAM's visual style, hosted on Vercel. User-facing commands and screens use Silicon Browser branding; provider integrations remain internal.
 
 Target scale: 500 simultaneous users, with browser action and live-view bandwidth going directly to the remote provider. Local credentials and remembered state are partitioned by normalized backend URL so simultaneous users and environments cannot borrow one another's auth. A direct CDP/live capability remains valid until its remote session ends; changing API authorization cannot retract an already-issued provider URL.
 
-we'll use silicon iam to authenticate carbons & silicons. primary users of sb will be silicons and occasionally carbons to authenticate or pass captchas.
+we'll use silicon iam to authenticate carbons & silicons. primary users of browser will be silicons and occasionally carbons to authenticate or pass captchas.
 
 user flow:
 login -> (after this, everything they see will be scoped to what they can see) choose org to enter
@@ -17,7 +17,7 @@ login -> (after this, everything they see will be scoped to what they can see) c
 			-> on the UI, there will be a button to start a live session with that profile. (this can be used to authenticate into and save)
 			-> store the session once it expired / ends.
 			-> a recording tab where all the recordings in decending chronological order is kept. and filters of profile, name, description, or incognito, or even by silicons & carbons who ran that session.
-			-> when a silicon shares a sb live session link and it is opened by a carbon, the carbon opening that page is also tagged as associated with that sesion.
+			-> when a silicon shares a browser live session link and it is opened by a carbon, the carbon opening that page is also tagged as associated with that sesion.
 
 api flow:
 login -> (scoped access) -> list profiles available or use incognito (no profile, no proxy)
@@ -25,14 +25,14 @@ login -> (scoped access) -> list profiles available or use incognito (no profile
 			-> get a live link to this profile to view/interact.
 			-> create a new profile with this silicon as a default user (can add others or tags) + fix location
 			-> start a new session with name + description + ttl
-			-> list previous runs & get the recording + sb commands run in that session.
+			-> list previous runs & get the recording + browser commands run in that session.
 
 login:
 carbons & silicons can login using `silicon-iam`. both the UI and CLI support auth.
 
 recordings:
 we should have a visual recording (stored in private briefcase of the silicon / carbon that initiated that session)
-if a silicon started it, then also a replayable log of sb commands run in that session.
+if a silicon started it, then also a replayable log of browser commands run in that session.
 do a trusted handshake with briefcase to store files on behalf of silicon/carbon.
 
 proxy:
@@ -45,64 +45,64 @@ each browser run + proxy usage is priced per minute & per GB. we store that per 
 profiles:
 profiles have a unique fingerprint, a set proxy location and always uses proxy.
 
-sb command:
-it is a superset of agent-browser cli command. any agent-browser cli command is a valid sb command.
-sb provides a reveal as needed documentation.
+browser command:
+it is a superset of agent-browser cli command. any agent-browser cli command is a valid browser command.
+browser provides a reveal as needed documentation.
 it reads an env variable (SB_AUTHTOKEN) for authenticated backend metadata requests. Browser commands use the authorized direct CDP connection locally; they do not send the IAM token to the browser provider.
 
 commands:
-same grammar as si - `sb {service} {verb} [{target}] [{content}] [--flags]`, verb always second.
+same grammar as si - `browser {service} {verb} [{target}] [{content}] [--flags]`, verb always second.
 same seven verbs: ls, show, new, set, send, end, rm. nothing is deleted, only ended.
 same `--filter "stage -> stage"`, each service listing its own is: and has: below.
-`sb` on its own prints who you are, the org you are in, and the services you can reach.
-`sb {service}` prints that service's verbs. `--help` on anything prints the long form.
+`browser` on its own prints who you are, the org you are in, and the services you can reach.
+`browser {service}` prints that service's verbs. `--help` on anything prints the long form.
 
-`sb setup` the only command with no service. installs the native local controller (no local Chromium), reads or prompts for SB_AUTHTOKEN, picks the org, and prints whatever is still missing. safe to run twice.
+`browser setup` the only command with no service. installs the native local controller (no local Chromium), reads or prompts for SB_AUTHTOKEN, picks the org, and prints whatever is still missing. safe to run twice.
 
 
 [profile]
 
 setup a persistent browser identity: one fingerprint, one proxy location, access list. always on proxy. the location is fixed at creation and can never be changed - make a new profile instead.
 
-`sb profile ls` prints name, id & location for all profiles.
-`sb profile show {profileid}` name, fingerprint, location, access, owner, sessions run, created.
-`sb profile new --name "..." --location "..." --access [@carbon,@ceo:tos,growth]` @carbon, @silicon, or tag (with no @) prints the id it made. whoever runs it is the default user; access and tags union on top of that. this creates a new browser profile, not a new session.
-`sb profile set {profileid} --name "..."` / `--access [...]`
+`browser profile ls` prints name, id & location for all profiles.
+`browser profile show {profileid}` name, fingerprint, location, access, owner, sessions run, created.
+`browser profile new --name "..." --location "..." --access [@carbon,@ceo:tos,growth]` @carbon, @silicon, or tag (with no @) prints the id it made. whoever runs it is the default user; access and tags union on top of that. this creates a new browser profile, not a new session.
+`browser profile set {profileid} --name "..."` / `--access [...]`
 name and access are all that is editable. fingerprint and location are not.
-`sb profile end {profileid} --note "..."` retires it. its recordings and usage stay. no one will be able to use this profile later.
+`browser profile end {profileid} --note "..."` retires it. its recordings and usage stay. no one will be able to use this profile later.
 
-`sb proxy ls` the locations a profile can be pinned to.
+`browser proxy ls` the locations a profile can be pinned to.
 
 
 [session]
 
 use browser. name and description exist so the recording is findable later.
 
-`sb session new {profileid} --name "..." --description "..." --ttl 30m` start a new session and print the session id. ttl: 15m,30m,45m,60m,120m,240m. only one session can be run of a given profile. if another is asked to run, display who is running this session and when is the ttl ending.
-`sb session new --incognito --name "..." --description "..."` no profile, no proxy. its still recorded and kept.
+`browser session new {profileid} --name "..." --description "..." --ttl 30m` start a new session and print the session id. ttl: 15m,30m,45m,60m,120m,240m. only one session can be run of a given profile. if another is asked to run, display who is running this session and when is the ttl ending.
+`browser session new --incognito --name "..." --description "..."` no profile, no proxy. its still recorded and kept.
 
-`sb session ls --filter "..."` prints ids.
-`sb session show {sessionid}` profile, location, name, description, status, started, ttl left, cost so far.
-`sb session live {sessionid}` a link to watch or take over a session already running. this link is on silicon browser itself. `browser.teamofsilicons.com/...`
-`sb session logs {sessionid} --date DD-MM-YYYY` every sb command that ran in it, in order. kept as `{sessionid}-{DD-MM-YYYY}`. defaults to today.
-`sb session end {sessionid} --note "..."` stops and stores it. one that hits its ttl ends itself with
+`browser session ls --filter "..."` prints ids.
+`browser session show {sessionid}` profile, location, name, description, status, started, ttl left, cost so far.
+`browser session live {sessionid}` a link to watch or take over a session already running. this link is on silicon browser itself. `browser.teamofsilicons.com/...`
+`browser session logs {sessionid} --date DD-MM-YYYY` every browser command that ran in it, in order. kept as `{sessionid}-{DD-MM-YYYY}`. defaults to today.
+`browser session end {sessionid} --note "..."` stops and stores it. one that hits its ttl ends itself with
 the note `ttl reached`.
 is: active, ended, expired, incognito, mine | for: @{} | name:market* | description: ^research
 
 
 [use session]
 
-`sb run {sessionid} "{any agent-browser command}" [--flags]` the whole of agent-browser, one command. everything inside the quotes is passed through untouched, which is what makes sb a superset of it. `sb run --help` reveals agent-browser's own documentation, as needed. a session id is needed to use run. it informs when a `sb run` command is run and less than 1min is left to ttl.
+`browser run {sessionid} "{any agent-browser command}" [--flags]` the whole of agent-browser, one command. everything inside the quotes is passed through untouched, which is what makes browser a superset of it. `browser run --help` reveals agent-browser's own documentation, as needed. a session id is needed to use run. it informs when a `browser run` command is run and less than 1min is left to ttl.
 
-for documentation, replace "agent-browser" with "sb run {sessionid}"
+for documentation, replace "agent-browser" with "browser run {sessionid}"
 
 [recording]
 
-a visual recording per session, written to the private briefcase of whoever started it. the file stored directory is automatically handled by briefcase and not changeable. if a silicon started it, the sb command log sits beside it. this is done by connecting with briefcase over an OBO.
+a visual recording per session, written to the private briefcase of whoever started it. the file stored directory is automatically handled by briefcase and not changeable. if a silicon started it, the browser command log sits beside it. this is done by connecting with briefcase over an OBO.
 
-`sb recording ls --filter "..."` prints session names & ids. contains: matches name and description.
-`sb recording show {sessionid}` briefcase link, duration, size.
-`sb recording rm {sessionid}` hides the Browser recording and cancels pending delivery. Briefcase owns its directory and retention; OBO cannot delete files, so this does not delete the remote recording or promise a 45-day purge.
+`browser recording ls --filter "..."` prints session names & ids. contains: matches name and description.
+`browser recording show {sessionid}` briefcase link, duration, size.
+`browser recording rm {sessionid}` hides the Browser recording and cancels pending delivery. Briefcase owns its directory and retention; OBO cannot delete files, so this does not delete the remote recording or promise a 45-day purge.
 is: mine, shared
 
 
@@ -110,9 +110,9 @@ is: mine, shared
 
 browser minutes and proxy GB, stored per session, for analytics and for billing.
 
-`sb usage show {sessionid}` minutes, GB in and out, and what each costs.
-`sb usage ls --filter "between:01-08-2026=30-08-2026 -> for:@ceo:tos"` a line per session with its total.
-`sb usage show --org` the org's total for that window.
+`browser usage show {sessionid}` minutes, GB in and out, and what each costs.
+`browser usage ls --filter "between:01-08-2026=30-08-2026 -> for:@ceo:tos"` a line per session with its total.
+`browser usage show --org` the org's total for that window.
 
 [search & fetch]
 this uses tiny fish's search & fetch to quickly get things instead of using a browser.
@@ -124,7 +124,7 @@ and both cost $0
 
 tiny fish has their own cli as well. but we'll not use that. we'll route all the traffic via silicon browser backend. this will help us log & manage rate limits.
 
-`sb search "{query}" --purpose "..." [--flags]`
+`browser search "{query}" --purpose "..." [--flags]`
 finds the urls worth reading. returns ranked results, not pages.
   --purpose "..."                 what you are actually after, up to 2000 chars. results rank on it.
   --type web/news/research        defaults to web.
@@ -134,7 +134,7 @@ finds the urls worth reading. returns ranked results, not pages.
   --pub-year-min / --pub-year-max research only
   --page 0-10
 
-`sb fetch [url,url,...] --purpose "..." [--flags]`
+`browser fetch [url,url,...] --purpose "..." [--flags]`
 reads them. 10 urls a call upstream, so we batch and queue anything larger rather than erroring.
   --purpose "..."                 what to keep from the page
   --format markdown/html/json     defaults to markdown
@@ -150,35 +150,35 @@ queues per silicon: a burst waits its turn instead of failing. this is the main 
 through the backend at all, alongside logging.
 
 
-[sb cli]
+[browser cli]
 for cli, there will be 2 major paths:
 1. Remote Browser: Interaction heavy work. for handling a real browser and doing things.
 2. Search & Fetch: Read heavy work. also supports JS rendering, and is significantly faster & optimised for research and reading webpages. This is text only. Images are not supported here.
 
-so, say the first command always run is `sb --help`
+so, say the first command always run is `browser --help`
 then it says prints the 2 things possible and what they are good for. then the silicon picks the branch to go into.
-`sb --help {remote-browser/search-and-fetch}`
+`browser --help {remote-browser/search-and-fetch}`
 and then we show all the possible things they can do in each with the most common flow mentioned by default.
 
 for remote-browser:
 """
-`sb profile ls` <- to list all browser profiles available to use
-`sb session new {profileid} --name "..." --description "..." --ttl 30m` OR `sb session new --incognito --name "..." --description "..." --ttl 15m` <- which will start a new browser session with the specified profile or incognito. it outputs the session id you can use.
-then `sb run --help` to see how to use the session.
+`browser profile ls` <- to list all browser profiles available to use
+`browser session new {profileid} --name "..." --description "..." --ttl 30m` OR `browser session new --incognito --name "..." --description "..." --ttl 15m` <- which will start a new browser session with the specified profile or incognito. it outputs the session id you can use.
+then `browser run --help` to see how to use the session.
 """
-^ this will make it such that the silicon will get information as needed. we'll bunch up sb run commands into categories as well so its easy to find information & doesn't fill the context.
+^ this will make it such that the silicon will get information as needed. we'll bunch up browser run commands into categories as well so its easy to find information & doesn't fill the context.
 
 
 for search-and-fetch:
 """
-`sb search "{query}" --purpose "..."` <- find the urls worth reading. returns results, not pages.
-`sb fetch [url,url,...] --purpose "..."` <- read them as text, in one call.
-then `sb search --help` / `sb fetch --help` for filters, formats, dates and selectors.
+`browser search "{query}" --purpose "..."` <- find the urls worth reading. returns results, not pages.
+`browser fetch [url,url,...] --purpose "..."` <- read them as text, in one call.
+then `browser search --help` / `browser fetch --help` for filters, formats, dates and selectors.
 """
 no profile, no session, no setup. this is the default branch for anything read-only. remote-browser
 is for interaction.
 
-note on grammar: `sb run`, `sb search` and `sb fetch` are top level verbs with no service in front of
+note on grammar: `browser run`, `browser search` and `browser fetch` are top level verbs with no service in front of
 them, because they are the three things a silicon actually does all day. everything else stays
 `{service} {verb}`.
 

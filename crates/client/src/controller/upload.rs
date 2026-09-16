@@ -166,8 +166,9 @@ impl LocalController {
         let mut process = self.process(connection, namespace, config);
         process.args(options).arg("--json").args(command).stdout(Stdio::piped()).stderr(Stdio::null());
         process.stdin(if script.is_some() { Stdio::piped() } else { Stdio::null() });
-        let mut child =
-            process.spawn().map_err(|_| Error::Local("could not start local file transfer; run `sb setup`".into()))?;
+        let mut child = process
+            .spawn()
+            .map_err(|_| Error::Local("could not start local file transfer; run `browser setup`".into()))?;
         let mut stdin = child.stdin.take();
         let owned_script = script.map(str::to_owned);
         let writer = std::thread::spawn(move || {

@@ -3,6 +3,7 @@
 
 Stage on each native host: --stage TARGET --binary PATH [--controller PATH]
 Pack downloaded target artifacts: --targets DIRECTORY --output ARCHIVE.tar.gz
+Also build the curl installer archives: --standalone-output DIRECTORY
 """
 import argparse
 import hashlib
@@ -28,6 +29,12 @@ TARGETS = {
     "macos-x86_64": "agent-browser-darwin-x64",
     "macos-aarch64": "agent-browser-darwin-arm64",
 }
+STANDALONE_TARGETS = {
+    "linux-x86_64": "x86_64-unknown-linux-gnu",
+    "linux-aarch64": "aarch64-unknown-linux-gnu",
+    "macos-x86_64": "x86_64-apple-darwin",
+    "macos-aarch64": "aarch64-apple-darwin",
+}
 LICENSES = {
     "LICENSE-agent-browser": "LICENSE",
     "LICENSE-axe-core.txt": "cli/src/native/a11y/LICENSE-axe-core.txt",
@@ -41,7 +48,7 @@ def version():
 
 def binaries(target):
     suffix = ".exe" if target.startswith("windows-") else ""
-    return ["sb" + suffix, "sb-browser-engine" + suffix]
+    return ["browser" + suffix, "sb-browser-engine" + suffix]
 
 
 def native_target(data):
@@ -97,7 +104,7 @@ def stage(target, binary, controller, directory):
             raise ValueError(f"wrong native architecture: {path}")
         path.chmod(0o755)
         output = subprocess.check_output([str(path.resolve()), "--version"], text=True).strip()
-        if output.split()[-1:] != [expected]:
+        if output.split()[-1:] != [expected] or (name == names[0] and output != f"browser {expected}"):
             raise ValueError(f"wrong version for {path}: {output}")
         subprocess.run([str(path.resolve()), "--help"], check=True, stdout=subprocess.DEVNULL)
     shutil.copyfile(ROOT / "LICENSE", directory / "LICENSE-silicon-browser")
@@ -110,7 +117,16 @@ def stage(target, binary, controller, directory):
     (directory / "build.json").write_text(json.dumps(receipt, indent=2) + "\n")
 
 
-def pack(targets, output):
+def write_archive(output, files):
+    output.parent.mkdir(parents=True, exist_ok=True)
+    with tarfile.open(output, "w:gz", format=tarfile.USTAR_FORMAT) as archive:
+        for name, data, mode in files:
+            entry = tarfile.TarInfo(name)
+            entry.size, entry.mode = len(data), mode
+            archive.addfile(entry, io.BytesIO(data))
+
+
+def pack(targets, output, standalone_output=None):
     manifest = regular_bytes(ROOT / "honeycomb.yaml")
     if re.findall(rb"^version: (.+)$", manifest, re.MULTILINE) != [version().encode()]:
         raise ValueError("honeycomb.yaml version does not match Cargo.toml")
@@ -134,15 +150,21 @@ def pack(targets, output):
             files.append((f"targets/{target}/{name}", data, 0o755 if name in names else 0o644))
     if sum(len(data) for _, data, _ in files) > 2 * 1024**3:
         raise ValueError("expanded package exceeds Honeycomb's 2 GiB limit")
-    output.parent.mkdir(parents=True, exist_ok=True)
-    with tarfile.open(output, "w:gz", format=tarfile.USTAR_FORMAT) as archive:
-        for name, data, mode in files:
-            entry = tarfile.TarInfo(name)
-            entry.size, entry.mode = len(data), mode
-            archive.addfile(entry, io.BytesIO(data))
+    write_archive(output, files)
     if output.stat().st_size > 512 * 1024**2:
         output.unlink()
         raise ValueError("compressed package exceeds Honeycomb's 512 MiB limit")
+    if standalone_output:
+        payloads = {name: (data, mode) for name, data, mode in files}
+        for target, triple in STANDALONE_TARGETS.items():
+            stem = f"browser-v{version()}-{triple}"
+            archive = standalone_output / f"{stem}.tar.gz"
+            write_archive(archive, [
+                (f"{stem}/browser", *payloads[f"targets/{target}/browser"]),
+                (f"{stem}/LICENSE", *payloads[f"targets/{target}/LICENSE-silicon-browser"]),
+            ])
+            digest = hashlib.sha256(archive.read_bytes()).hexdigest()
+            archive.with_name(archive.name + ".sha256").write_text(f"{digest}  {archive.name}\n")
     print(output)
 
 
@@ -150,6 +172,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--targets", type=Path, default=ROOT / "target/honeycomb/targets")
     parser.add_argument("--output", type=Path)
+    parser.add_argument("--standalone-output", type=Path)
     parser.add_argument("--stage", choices=TARGETS)
     parser.add_argument("--binary", type=Path)
     parser.add_argument("--controller", type=Path)
@@ -159,4 +182,4 @@ if __name__ == "__main__":
             parser.error("--stage requires --binary")
         stage(args.stage, args.binary, args.controller, args.targets / args.stage)
     else:
-        pack(args.targets, args.output or ROOT / f"target/honeycomb-browser-{version()}.tar.gz")
+        pack(args.targets, args.output or ROOT / f"target/honeycomb-browser-{version()}.tar.gz", args.standalone_output)

@@ -6,6 +6,13 @@ repair, the same archive uploaded successfully, installation passed, and the
 public request reached validator review. No production IAM or Honeycomb code
 was changed by this Browser task.
 
+## Publication completed — 2026-09-17
+
+The original 0.2.3 request `17dd5de1-49f7-4a3e-b45e-9a041ec5f3fa` is now
+`published`, with an approved Honeycomb gate and accepted activation
+`f0e33eea-abdb-4eff-8669-f2575fc13287`. The archive is ready for public access.
+This supersedes the pending-review status recorded below.
+
 ## Verification after the platform repair
 
 - **IAM-1 resolved for this upload:** accepted release

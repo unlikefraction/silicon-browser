@@ -75,7 +75,7 @@ impl Runtime {
         } else if self.sync(client, Some(session), 8).is_err() {
             emit(&RunEvent::Warning {
                 message: format!(
-                    "command logs are queued locally; `sb session sync {session}` retries delivery without repeating browser actions"
+                    "command logs are queued locally; `browser session sync {session}` retries delivery without repeating browser actions"
                 ),
             });
         }

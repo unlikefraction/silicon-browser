@@ -1,6 +1,6 @@
 # Architecture and readiness evidence — 2026-09-06
 
-The current architecture is a local usability wrapper: `sb` runs its native controller on the caller's machine and connects directly to the remote browser. AWS supplies IAM-backed access, profile/session management, sensitive connection capabilities, usage and cooperative command-log storage. It never executes browser commands or relays their output. Vercel hosts a minimal SolidJS/TypeScript frontend whose live iframe connects directly to the remote viewer.
+The current architecture is a local usability wrapper: `browser` runs its native controller on the caller's machine and connects directly to the remote browser. AWS supplies IAM-backed access, profile/session management, sensitive connection capabilities, usage and cooperative command-log storage. It never executes browser commands or relays their output. Vercel hosts a minimal SolidJS/TypeScript frontend whose live iframe connects directly to the remote viewer.
 
 The native AWS daemon also performs completed-recording delivery and shared-key search/fetch scheduling. These separate integrations remain server-side. Neither Docker nor an AWS browser-controller installation is required. See [deployment layout](DEPLOYMENT.md) for configuration and traffic paths.
 
@@ -38,8 +38,8 @@ The earlier 306-Rust/19-frontend totals belong to the September 5 architecture a
 ## Security and operational boundaries
 
 - An issued CDP/live URL is a direct provider capability. IAM/webhook invalidation controls later API access and renewal; it cannot revoke that already-issued URL. Closing/expiring the remote browser ends it. The CLI's connection cache is at most 60 seconds; it does not extend provider session expiry.
-- Logs are cooperative, ordered by server receipt and timestamped by clients. Separate machines can act concurrently. Direct actions, client crashes before report persistence and offline reports after archive closure can be absent. `sb session sync` retries delivery only; `409 report_window_closed` preserves an unsent report locally.
-- Connection replacement and managed lifecycle commands remain reserved to `sb`; local file operations are supported by the controller. The literal all-command superset is therefore not claimed. [Execution scope](COMMAND_EXECUTION_GAPS.md).
+- Logs are cooperative, ordered by server receipt and timestamped by clients. Separate machines can act concurrently. Direct actions, client crashes before report persistence and offline reports after archive closure can be absent. `browser session sync` retries delivery only; `409 report_window_closed` preserves an unsent report locally.
+- Connection replacement and managed lifecycle commands remain reserved to `browser`; local file operations are supported by the controller. The literal all-command superset is therefore not claimed. [Execution scope](COMMAND_EXECUTION_GAPS.md).
 - Browser Use's explicit-null incognito requests still produced nonzero reported proxy traffic/cost. Actual proxy-free routing remains unverified. Aggregate telemetry is preserved as unclassified rather than invented ingress/egress values. [Provider finding](BROWSER_PROVIDER_FINDINGS.md).
 - Briefcase upload bodies must arrive within the proof's at-most-60-second lifetime. The 512 MiB staging default and configurable cap do not extend it. Lost success responses can produce an identical extra file version; exactly-once publication is not claimed.
 - IAM normal family revocation also invalidated sibling OATs for the same parent login/application in the recorded test. Independent ORTs remain refreshable; bounded recovery uses each owner's credential and only repeats API mutations after an explicit pre-handler rejection. [IAM finding](IAM_1_2_2_EXTERNAL_BUGS.md).

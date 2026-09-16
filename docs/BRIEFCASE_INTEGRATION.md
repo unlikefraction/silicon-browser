@@ -58,7 +58,7 @@ These authorization fixes have local HTTP/SQLite regression coverage. A hosted
 provider start, stop and recording receipt after this release require a separate
 manual verification.
 
-`sb setup` first establishes the CLI login. Recording delivery needs a **second,
+`browser setup` first establishes the CLI login. Recording delivery needs a **second,
 fresh Browser-targeted IAM `oac_` token**, supplied through the masked prompt or
 `SB_RECORDING_SLT`. An already active delivery authorization is reused. Never reuse
 the consumed login SLT or share the CLI's refresh token with the worker.
@@ -110,7 +110,7 @@ can be reclaimed. Before another upload, newly staged bytes must match the alrea
 persisted digest and size; changed content is rejected.
 
 After correcting an eligible exhausted outage, proof, timeout, or size-limit
-failure, the original initiator can run `sb recording send SESSION_ID`, or use
+failure, the original initiator can run `browser recording send SESSION_ID`, or use
 the Rust client/UI retry action. An active delivery authorization and the same
 original IAM principal/membership are required. Retry preserves completed receipts
 and bound bytes. Permanent source failures and locally hidden recordings are not
@@ -132,7 +132,7 @@ verification, so upload must finish within the remaining proof lifetime. A
 120-second HTTP deadline does not extend it. Slow transfer rejection was reproduced;
 see [the slow-upload report](BRIEFCASE_SLOW_UPLOAD_RETEST.md).
 
-`sb recording rm` hides the recording locally and cancels new pending delivery.
+`browser recording rm` hides the recording locally and cancels new pending delivery.
 It does not call OBO deletion, delete the remote Briefcase file, or assert a remote
 45-day trash guarantee. A late upload receipt is retained without making a hidden
 recording visible again. Briefcase owns remote retention and directory layout.

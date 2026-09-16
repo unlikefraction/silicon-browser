@@ -1,7 +1,7 @@
 //! Stateless primary interface to Silicon Browser.
 //!
 //! The [`Client`] owns only explicit configuration and an [`Auth`] value. It never reads CLI
-//! state, environment variables, or credentials from disk. The `sb` binary is built entirely on
+//! state, environment variables, or credentials from disk. The `browser` binary is built entirely on
 //! these public methods.
 
 mod api;

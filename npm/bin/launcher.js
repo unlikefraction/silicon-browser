@@ -10,8 +10,8 @@ const platform = process.platform;
 const arch = process.arch;
 let name;
 
-if (platform === 'darwin' && (arch === 'arm64' || arch === 'x64')) name = `sb-darwin-${arch}`;
-else if (platform === 'linux' && (arch === 'arm64' || arch === 'x64')) name = `sb-linux-${arch}`;
+if (platform === 'darwin' && (arch === 'arm64' || arch === 'x64')) name = `browser-darwin-${arch}`;
+else if (platform === 'linux' && (arch === 'arm64' || arch === 'x64')) name = `browser-linux-${arch}`;
 else {
   console.error(`Silicon Browser does not support ${platform}-${arch}; supported targets are macOS and Linux on x64 or arm64.`);
   process.exit(1);

@@ -96,7 +96,7 @@ pub fn ensure_runner(directory: &Path, mut on_event: impl FnMut(SetupEvent)) -> 
     let bytes = agent
         .get(&url)
         .call()
-        .map_err(|_| Error::Local("could not download the browser controller; retry `sb setup`".into()))?
+        .map_err(|_| Error::Local("could not download the browser controller; retry `browser setup`".into()))?
         .body_mut()
         .with_config()
         .limit(32 * 1024 * 1024)
@@ -173,7 +173,7 @@ pub fn runner_help(binary: impl AsRef<Path>, session_id: &str) -> Result<String,
     let status = runner_status(binary);
     if !status.ready {
         return Err(Error::Local(format!(
-            "run help requires browser controller {AGENT_BROWSER_VERSION}; found {}. Run `sb setup` first",
+            "run help requires browser controller {AGENT_BROWSER_VERSION}; found {}. Run `browser setup` first",
             status.version.as_deref().unwrap_or("no runnable browser controller")
         )));
     }
@@ -186,13 +186,13 @@ pub fn runner_help(binary: impl AsRef<Path>, session_id: &str) -> Result<String,
     }
     let upstream = managed_help(&String::from_utf8_lossy(&output.stdout), session_id);
     Ok(format!(
-        "Managed-session note: connection and session lifecycle are managed by Silicon Browser. File paths resolve on your machine; screenshots, PDF, upload, download, and local recording commands are available. Use `sb session end {session_id} --note \"...\"` instead of `close`.\n\n{upstream}"
+        "Managed-session note: connection and session lifecycle are managed by Silicon Browser. File paths resolve on your machine; screenshots, PDF, upload, download, and local recording commands are available. Use `browser session end {session_id} --note \"...\"` instead of `close`.\n\n{upstream}"
     ))
 }
 
 fn managed_help(upstream: &str, session: &str) -> String {
     // The native release embeds command help; bundled npm skill files are not required.
-    // Drop upstream installation/configuration/provider surfaces owned by sb, retaining the
+    // Drop upstream installation/configuration/provider surfaces owned by browser, retaining the
     // complete browser action reference and local-file arguments from the installed version.
     let mut lines = Vec::new();
     let mut keep = false;
@@ -259,11 +259,11 @@ fn managed_help(upstream: &str, session: &str) -> String {
             // These ambient controller variables are intentionally overridden by the wrapper.
             let line = line.split_once("(or AGENT_BROWSER_").map_or(line, |(prefix, _)| prefix.trim_end());
             if !line.is_empty() {
-                lines.push(line.replace("agent-browser", &format!("sb run {session}")));
+                lines.push(line.replace("agent-browser", &format!("browser run {session}")));
             }
         }
     }
-    lines.push("\nLocal file transfers:\n  upload transfers local file bytes to file inputs in the current page or same-origin frames.\n  download copies ordinary same-origin HTTP link targets or blob/data link bytes to a local file.\n  Button/script/POST downloads, cross-origin frames, wait --download and --download-path are unsupported.\n  Local controller daemons exit after five idle minutes; use sb session end for managed lifecycle.".into());
+    lines.push("\nLocal file transfers:\n  upload transfers local file bytes to file inputs in the current page or same-origin frames.\n  download copies ordinary same-origin HTTP link targets or blob/data link bytes to a local file.\n  Button/script/POST downloads, cross-origin frames, wait --download and --download-path are unsupported.\n  Local controller daemons exit after five idle minutes; use browser session end for managed lifecycle.".into());
     lines.join("\n")
 }
 
@@ -301,7 +301,7 @@ mod tests {
     fn native_help_keeps_actions_and_local_paths_without_upstream_setup() {
         let text = "Start here (for AI agents):\n  agent-browser skills get core --full\nCore Commands:\n  screenshot [path]          Take screenshot\n  connect <url>              Connect\n  upload <sel> <files>        Upload local files\nSetup:\n  install                    Install Chromium\nOptions:\n  -p, --provider <name> Browser provider browseruse\n  --cdp <url>                Override connection\n                             private continuation\n  --download-path <path>     Local output\nEnvironment:\n  AGENT_BROWSER_PROVIDER browseruse\nExamples:\n  agent-browser screenshot ./file.png\n  agent-browser --cdp 9222 snapshot\n";
         let help = managed_help(text, "session");
-        assert!(help.contains("sb run session screenshot ./file.png"));
+        assert!(help.contains("browser run session screenshot ./file.png"));
         assert!(help.contains("upload <sel>"));
         assert!(help.contains("--download-path"));
         for hidden in ["agent-browser", "browseruse", "Chromium", "skills get", "--cdp", "private continuation"] {

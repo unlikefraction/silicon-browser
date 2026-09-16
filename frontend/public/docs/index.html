@@ -16,51 +16,51 @@
   <a href="#install">Install</a><a href="#authenticate">Authenticate</a><a href="#browser">Run a browser</a><a href="#testing">IAM testing environments</a><a href="#api">Testing API</a><a href="#commands">Command tree</a><a href="#develop">Build on Browser</a><a href="#setup-command">One-line setup</a>
 </nav>
 <main id="content">
-  <p class="eyebrow">For Carbons &amp; Silicons · CLI 0.2.2 · API v1</p>
+  <p class="eyebrow">For Carbons &amp; Silicons · CLI 0.2.4 · API v1</p>
   <h1>Use Browser.<br>Build on Browser.</h1>
   <p>Managed browser profiles, shared sessions, live handoff, recordings, search, and fetch. Start with the CLI; use the website for interactive work and the stateless Rust client for applications.</p>
   <p>These instructions are the starting point. <a href="/docs/CLI.md">Read the full CLI guide as Markdown</a> or explore any command with <code>--help</code>.</p>
 
   <h2 id="install">1. Install</h2>
-  <p>On macOS or Linux, run the <a href="#setup-command">one-line installer</a>. It selects your architecture, verifies the download, and installs <code>sb</code> into <code>~/.local/bin</code>. Linux requires glibc 2.34 or later; macOS and Linux support ARM64 and x86-64.</p>
-  <p>The command below installs without authentication. Sign in separately with <code>sb login</code> and run <code>sb setup</code> when ready to configure browser control and recording delivery. Source installation needs Rust 1.98 or later:</p>
-  <pre><code>cargo install silicon-browser-cli --version 0.2.2 --locked
-sb --help
-sb iam --json</code></pre>
+  <p>On macOS or Linux, run the <a href="#setup-command">one-line installer</a>. It selects your architecture, verifies the download, and installs <code>browser</code> into <code>~/.local/bin</code>. Linux requires glibc 2.34 or later; macOS and Linux support ARM64 and x86-64.</p>
+  <p>The command below installs without authentication. Sign in separately with <code>browser login</code> and run <code>browser setup</code> when ready to configure browser control and recording delivery. Source installation needs Rust 1.98 or later:</p>
+  <pre><code>cargo install --git https://github.com/unlikefraction/silicon-browser --tag managed-v0.2.4 --locked silicon-browser-cli
+browser --help
+browser iam --json</code></pre>
 
   <h2 id="authenticate">2. Authenticate with IAM</h2>
   <p>Browser uses short-lived authorization tokens from the official IAM CLI or IAM's web consent screen. It never asks for your IAM password. Replace <code>tos</code> with your organization:</p>
   <pre><code>slt=$(iam login --app-id 'tos&gt;browser' --grant-org tos -o json | jq -r .slt)
-sb --org-id tos login "$slt"
-sb login status --json
-sb setup</code></pre>
-  <p>Setup installs the pinned native browser controller and requests a separate fresh IAM token for background recording authorization. Browser can then deliver completed recordings after your terminal closes. <code>sb iam --json</code> identifies the application as <code>tos&gt;browser</code>.</p>
+browser --org-id tos login "$slt"
+browser login status --json
+browser setup</code></pre>
+  <p>Setup installs the pinned native browser controller and requests a separate fresh IAM token for background recording authorization. Browser can then deliver completed recordings after your terminal closes. <code>browser iam --json</code> identifies the application as <code>tos&gt;browser</code>.</p>
   <p>Private state lives in <code>$SILICON_HOME/.silicon-browser</code>, or <code>~/.silicon-browser</code> when <code>SILICON_HOME</code> is absent. State is partitioned by backend URL and testing environment. <code>SB_HOME</code> explicitly selects a different private home.</p>
 
   <h2 id="browser">3. Run a browser</h2>
-  <pre><code>sb profile ls
-sb session new PROFILE_ID --name "Research" --description "Compare vendors" --ttl 30m
-sb run SESSION_ID "open https://example.com"
-sb run SESSION_ID "snapshot -i"
-sb run SESSION_ID "screenshot ./research.png"
-sb session end SESSION_ID --note "done"</code></pre>
-  <p>Use <code>sb profile new --help</code> to create a reusable profile, or <code>sb session new --incognito</code> for a one-off session. Browser actions execute on your machine through a direct remote-browser connection. Screenshots and downloads write locally; completed session recordings go to your authorized Briefcase.</p>
+  <pre><code>browser profile ls
+browser session new PROFILE_ID --name "Research" --description "Compare vendors" --ttl 30m
+browser run SESSION_ID "open https://example.com"
+browser run SESSION_ID "snapshot -i"
+browser run SESSION_ID "screenshot ./research.png"
+browser session end SESSION_ID --note "done"</code></pre>
+  <p>Use <code>browser profile new --help</code> to create a reusable profile, or <code>browser session new --incognito</code> for a one-off session. Browser actions execute on your machine through a direct remote-browser connection. Screenshots and downloads write locally; completed session recordings go to your authorized Briefcase.</p>
   <p>Search and fetch do not require a browser session:</p>
-  <pre><code>sb search "browser automation" --purpose "Find primary sources"
-sb fetch https://example.com --purpose "Extract relevant claims"</code></pre>
+  <pre><code>browser search "browser automation" --purpose "Find primary sources"
+browser fetch https://example.com --purpose "Extract relevant claims"</code></pre>
 
   <h2 id="testing">Use an IAM testing environment</h2>
   <p>Create a Browser test application and actors in IAM. Browser accepts that application's <code>ask_</code> secret and asks IAM to identify and verify the environment. <strong>An IAM root key is optional.</strong> The app secret is test configuration; production login still requires a short-lived token.</p>
   <h3>CLI</h3>
   <p>Keep the secret in a private JSON file containing <code>{"app_secret":"ask_..."}</code>, then enroll it:</p>
-  <pre><code>sb testing login --credentials-stdin &lt; test-credentials.json
+  <pre><code>browser testing login --credentials-stdin &lt; test-credentials.json
 # Use the environment UUID returned above on every test command.
-sb --test ENVIRONMENT_UUID --org-id tos login worker:tos
-sb --test ENVIRONMENT_UUID testing status --json
-sb --test ENVIRONMENT_UUID login status --json
-sb --test ENVIRONMENT_UUID profile ls</code></pre>
-  <p><code>sb testing login</code> also reads <code>SB_TEST_APP_SECRET</code>. Test login accepts an existing test actor ID such as <code>alice</code> or <code>worker:tos</code>, or an IAM test <code>oac_</code> token. Mint a short-lived test token with <code>iam --test ENVIRONMENT_UUID login --app-id 'tos&gt;browser' --grant-org tos -o json</code>.</p>
-  <p class="note"><strong>Browser sessions require test recording storage.</strong> Add <code>briefcase_test_environment_key</code> to the enrollment JSON (or set <code>SB_BRIEFCASE_TEST_KEY</code>) using the Briefcase app secret imported into this same IAM environment. Run <code>sb --test ENVIRONMENT_UUID setup</code> to authorize recording delivery as the signed-in actor. Missing storage or authorization fails explicitly.</p>
+browser --test ENVIRONMENT_UUID --org-id tos login worker:tos
+browser --test ENVIRONMENT_UUID testing status --json
+browser --test ENVIRONMENT_UUID login status --json
+browser --test ENVIRONMENT_UUID profile ls</code></pre>
+  <p><code>browser testing login</code> also reads <code>SB_TEST_APP_SECRET</code>. Test login accepts an existing test actor ID such as <code>alice</code> or <code>worker:tos</code>, or an IAM test <code>oac_</code> token. Mint a short-lived test token with <code>iam --test ENVIRONMENT_UUID login --app-id 'tos&gt;browser' --grant-org tos -o json</code>.</p>
+  <p class="note"><strong>Browser sessions require test recording storage.</strong> Add <code>briefcase_test_environment_key</code> to the enrollment JSON (or set <code>SB_BRIEFCASE_TEST_KEY</code>) using the Briefcase app secret imported into this same IAM environment. Run <code>browser --test ENVIRONMENT_UUID setup</code> to authorize recording delivery as the signed-in actor. Missing storage or authorization fails explicitly.</p>
   <h3>Website</h3>
   <ol>
     <li>Open <a href="/">Browser</a> and select <strong>Testing environment</strong> on the welcome screen or workspace header.</li>
@@ -106,7 +106,7 @@ x-sb-test-app-secret: ask_...</code></pre>
   <p><a href="/docs/CLI.md#iam-test-environments">Full test configuration reference (Markdown)</a> · <a href="https://github.com/unlikefraction/silicon-browser/blob/v2/crates/client/README.md">Rust client reference</a></p>
 
   <h2 id="commands">Explore the command tree</h2>
-  <pre><code>sb
+  <pre><code>browser
 ├── iam --json
 ├── login &lt;SLT&gt; / login status --json
 ├── testing login / testing status --json
@@ -119,11 +119,11 @@ x-sb-test-app-secret: ask_...</code></pre>
 ├── usage {limits,ls,show}
 ├── search / fetch
 └── report-bug --title &lt;text&gt; --details &lt;text&gt; [--pr &lt;ref&gt;]</code></pre>
-  <p>Use <code>sb session --help</code>, <code>sb run --help</code>, or <code>sb --help search-and-fetch</code> to go deeper. Use <code>--json</code> for structured agent output. Command reports retry without repeating the browser action; <code>sb session sync SESSION_ID</code> flushes queued reports.</p>
-  <p>To report a reproducible defect, use <code>sb report-bug</code>. Include the failing command, expected and actual behavior, and relevant redacted diagnostics. If you have already patched it, attach the pull request with <code>--pr</code>.</p>
+  <p>Use <code>browser session --help</code>, <code>browser run --help</code>, or <code>browser --help search-and-fetch</code> to go deeper. Use <code>--json</code> for structured agent output. Command reports retry without repeating the browser action; <code>browser session sync SESSION_ID</code> flushes queued reports.</p>
+  <p>To report a reproducible defect, use <code>browser report-bug</code>. Include the failing command, expected and actual behavior, and relevant redacted diagnostics. If you have already patched it, attach the pull request with <code>--pr</code>.</p>
 
   <h2 id="develop">Build on Browser</h2>
-  <p>The stateless <a href="https://crates.io/crates/silicon-browser">silicon-browser Rust package</a> implements the API client. The <a href="https://crates.io/crates/silicon-browser-cli">silicon-browser-cli package</a> provides <code>sb</code>; <a href="https://crates.io/crates/silicon-browser-shared">silicon-browser-shared</a> contains the common contracts.</p>
+  <p>The stateless <a href="https://crates.io/crates/silicon-browser">silicon-browser Rust package</a> implements the API client. The <a href="https://crates.io/crates/silicon-browser-cli">silicon-browser-cli package</a> provides <code>browser</code>; <a href="https://crates.io/crates/silicon-browser-shared">silicon-browser-shared</a> contains the common contracts.</p>
   <pre><code>cargo add silicon-browser@0.2.2
 
 # In a source checkout:
@@ -138,12 +138,12 @@ npm run build --prefix frontend</code></pre>
     <li><a href="/docs/BRIEFCASE_INTEGRATION.md">Recording delivery (Markdown)</a></li>
     <li><a href="/docs/COMMAND_EXECUTION_GAPS.md">Command execution boundaries (Markdown)</a></li>
     <li><a href="/docs/CLI.md">Full CLI guide and current capability status (Markdown)</a></li>
-    <li><a href="https://github.com/unlikefraction/silicon-browser/releases/tag/managed-v0.2.2">Release binaries and checksums</a></li>
+    <li><a href="https://github.com/unlikefraction/silicon-browser/releases/tag/managed-v0.2.4">Release binaries and checksums</a></li>
   </ul>
 
   <h2 id="setup-command">One-line setup</h2>
   <p>Install the CLI without authentication. Then follow the separate sign-in and setup instructions above.</p>
-  <pre><code>curl -fsSL https://raw.githubusercontent.com/unlikefraction/silicon-browser/v2/scripts/install.sh | sh -s -- --no-setup &amp;&amp; export PATH="$HOME/.local/bin:$PATH"</code></pre>
+  <pre><code>curl -fsSL https://raw.githubusercontent.com/unlikefraction/silicon-browser/managed-v0.2.4/scripts/install.sh | sh -s -- --no-setup &amp;&amp; export PATH="$HOME/.local/bin:$PATH"</code></pre>
   <footer>Silicon Browser · <a href="/">Open Browser</a> · <a href="https://github.com/unlikefraction/silicon-browser/issues">Report an issue</a></footer>
 </main>
 </div>

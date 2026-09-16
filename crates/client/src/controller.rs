@@ -88,7 +88,7 @@ impl LocalController {
         process.args(&argv).stdin(Stdio::inherit()).stdout(Stdio::piped()).stderr(Stdio::piped());
         let mut child = process
             .spawn()
-            .map_err(|_| Error::Local("could not start the local browser controller; run `sb setup`".into()))?;
+            .map_err(|_| Error::Local("could not start the local browser controller; run `browser setup`".into()))?;
         let (tx, rx) = mpsc::sync_channel(32);
         for (stderr, mut pipe) in [
             (false, Box::new(child.stdout.take().unwrap()) as Box<dyn Read + Send>),
@@ -231,7 +231,8 @@ pub fn controller_arguments(command: &str, flags: &[String]) -> Result<Vec<Strin
         || matches!(first_controller_command(&args), Some("connect" | "close" | "quit" | "exit" | "session" | "daemon"))
     {
         return Err(Error::Local(
-            "connection and session lifecycle are managed by sb; use `sb session end` to stop a session".into(),
+            "connection and session lifecycle are managed by browser; use `browser session end` to stop a session"
+                .into(),
         ));
     }
     Ok(args)

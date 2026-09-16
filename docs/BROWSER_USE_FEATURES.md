@@ -31,7 +31,7 @@ that we independently tested the advertised behavior on every website.
 | Capability | Browser Use contract | Silicon Browser today |
 | --- | --- | --- |
 | Persistent profiles | Profile CRUD; browser sessions load a profile's saved state. | Creates/renames profiles and recovers creation by `userId`; profile sessions pass `profileId`. Incognito omits it. Provider deletion is not wired. |
-| Remote control and live view | CDP WebSocket and interactive live URL. | `sb run` controls remote CDP directly through its local controller; the backend only issues the authorized connection and accepts command metadata. The frontend loads its authorized live viewer directly. |
+| Remote control and live view | CDP WebSocket and interactive live URL. | `browser run` controls remote CDP directly through its local controller; the backend only issues the authorized connection and accepts command metadata. The frontend loads its authorized live viewer directly. |
 | Recording | Optional native MP4; detail GET exposes URL/readiness after stop. | Always enables recording; tracks readiness and automatically delivers native bytes through the Briefcase worker. |
 | Stealth | Managed hardened Chromium; session fingerprints randomized by provider. | Inherited; no custom fingerprint controls. Our profile fingerprint is a logical identifier, not a pinned browser fingerprint. |
 | CAPTCHA solving | `solveCaptchas` defaults true. | Provider default; no creation flag exposed by our CLI. |
@@ -90,7 +90,7 @@ copied-description inconsistency, not a reason to switch this adapter's API vers
 V4 additionally offers hosted natural-language agent runs, conversation follow-ups,
 structured outputs, persistent workspace files, and ordered run-event polling.
 Those features orchestrate an agent's work; they are not a drop-in replacement for
-`sb run` forwarding commands to our managed remote browser. They are not currently
+`browser run` forwarding commands to our managed remote browser. They are not currently
 called by Silicon Browser's provider adapter.
 [Agent quickstart](https://docs.browser-use.com/cloud/agent/quickstart),
 [structured output](https://docs.browser-use.com/cloud/agent/structured-output),

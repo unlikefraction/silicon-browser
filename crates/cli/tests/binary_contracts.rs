@@ -14,11 +14,11 @@ use serde_json::{Value, json};
 #[test]
 fn packaged_controller_is_found_beside_the_cli_and_keeps_the_version_pin() {
     let package = tempfile::tempdir().unwrap();
-    let executable = package.path().join(if cfg!(windows) { "sb.exe" } else { "sb" });
+    let executable = package.path().join(if cfg!(windows) { "browser.exe" } else { "browser" });
     let controller = package.path().join(silicon_browser::setup::runner_file_name());
-    // An sb copy is a real native executable with the wrong controller version on every OS.
-    fs::copy(env!("CARGO_BIN_EXE_sb"), &executable).unwrap();
-    fs::copy(env!("CARGO_BIN_EXE_sb"), &controller).unwrap();
+    // A browser copy is a real native executable with the wrong controller version on every OS.
+    fs::copy(env!("CARGO_BIN_EXE_browser"), &executable).unwrap();
+    fs::copy(env!("CARGO_BIN_EXE_browser"), &controller).unwrap();
     let output = Command::new(&executable)
         .env_remove("SB_CONTROLLER_BIN")
         .env("SB_HOME", package.path().join("state"))
@@ -30,7 +30,7 @@ fn packaged_controller_is_found_beside_the_cli_and_keeps_the_version_pin() {
     #[cfg(unix)]
     {
         let aliases = tempfile::tempdir().unwrap();
-        let alias = aliases.path().join("sb");
+        let alias = aliases.path().join("browser");
         std::os::unix::fs::symlink(&executable, &alias).unwrap();
         let linked = Command::new(alias)
             .env_remove("SB_CONTROLLER_BIN")
@@ -170,7 +170,7 @@ fn write_response(stream: &mut TcpStream, response: StubResponse) {
 }
 
 fn isolated_sb(home: &Path, backend: &str) -> assert_cmd::Command {
-    let mut command = cargo_bin_cmd!("sb");
+    let mut command = cargo_bin_cmd!("browser");
     command
         .env_clear()
         .env("SB_HOME", home)
@@ -445,7 +445,7 @@ fn run_executes_locally_and_sends_only_completed_telemetry() {
             .assert()
             .code(23)
             .stdout(predicate::str::contains("local output"))
-            .stderr("sb: browser command exited with 23\n");
+            .stderr("browser: browser command exited with 23\n");
     }
     let requests = server.finish();
     assert_eq!(requests.len(), 3);
@@ -690,7 +690,7 @@ fn run_help_falls_back_offline_and_still_succeeds() {
     let empty_path = state_root.path().join("empty-bin");
     fs::create_dir(&empty_path).unwrap();
 
-    let mut command = cargo_bin_cmd!("sb");
+    let mut command = cargo_bin_cmd!("browser");
     command
         .env_clear()
         .env("SB_HOME", state_root.path())
@@ -698,8 +698,8 @@ fn run_help_falls_back_offline_and_still_succeeds() {
         .args(["run", "--help"])
         .assert()
         .success()
-        .stdout(predicate::str::contains("Useful categories:").and(predicate::str::contains("sb run {sessionid}")))
-        .stderr(predicate::str::contains("warning:").and(predicate::str::contains("Run `sb setup` first")));
+        .stdout(predicate::str::contains("Useful categories:").and(predicate::str::contains("browser run {sessionid}")))
+        .stderr(predicate::str::contains("warning:").and(predicate::str::contains("Run `browser setup` first")));
 }
 
 #[test]
@@ -719,7 +719,7 @@ fn session_logs_emit_shell_replayable_commands_and_keep_json_metadata() {
         .stdout
         .clone();
     let script =
-        format!("sb() {{ printf '%s\\n' \"$#\" \"$1\" \"$2\" \"$3\"; }}\n{}", String::from_utf8(output).unwrap());
+        format!("browser() {{ printf '%s\\n' \"$#\" \"$1\" \"$2\" \"$3\"; }}\n{}", String::from_utf8(output).unwrap());
     let replay = Command::new("sh").args(["-c", &script]).output().unwrap();
     assert!(replay.status.success());
     assert_eq!(String::from_utf8(replay.stdout).unwrap(), format!("3\nrun\nsession-one\n{command}\n"));

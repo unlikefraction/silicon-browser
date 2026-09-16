@@ -1,6 +1,6 @@
 [package]
 name = "silicon-browser-cli"
-description = "The `sb` command for managed browser sessions and fast web discovery."
+description = "The `browser` command for managed browser sessions and fast web discovery."
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -11,7 +11,7 @@ keywords = ["browser", "automation", "cli", "silicon"]
 categories = ["command-line-utilities", "web-programming::http-client"]
 
 [[bin]]
-name = "sb"
+name = "browser"
 path = "src/main.rs"
 
 [dependencies]

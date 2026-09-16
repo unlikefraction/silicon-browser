@@ -1,19 +1,19 @@
 # CLI guide
 
-`sb` is the reference IAM application CLI. It is designed for Carbon and
+`browser` is the reference IAM application CLI. It is designed for Carbon and
 Silicon callers, and its help output is the primary documentation:
 
 ```sh
-sb --help
-sb --help remote-browser
-sb --help search-and-fetch
-sb session --help
-sb run --help
+browser --help
+browser --help remote-browser
+browser --help search-and-fetch
+browser session --help
+browser run --help
 ```
 
 Each command explains what it is for, a normal next step, accepted flags, and
 the exact error code returned on failure. JSON output is intended for agents;
-the standard form places `--json` after the command (`sb iam --json`).
+the standard form places `--json` after the command (`browser iam --json`).
 The web dashboard is a convenience subset of these API capabilities; automation
 should use the CLI or the stateless Rust client.
 
@@ -25,15 +25,15 @@ the setup flow. It never asks for a password or stores the one-shot IAM token.
 Use the one-line setup command at the end of this guide.
 
 For a non-interactive install, append `-s -- --no-setup`, then run
-`~/.local/bin/sb setup` when an IAM token is available. The installer verifies
+`~/.local/bin/browser setup` when an IAM token is available. The installer verifies
 the release checksum and supports x86-64 and ARM64 (Linux requires glibc 2.34+).
 
 ## Authentication and state
 
 ```sh
-sb iam --json
-sb login "<short-lived IAM token>"
-sb login status --json
+browser iam --json
+browser login "<short-lived IAM token>"
+browser login status --json
 ```
 
 The official IAM CLI can mint Browser's token directly. Pass the selected
@@ -41,7 +41,7 @@ organization when a Carbon has access to more than one workspace:
 
 ```sh
 slt=$(iam login --app-id 'tos>browser' --grant-org tos -o json | jq -r .slt)
-sb --org-id tos login "$slt"
+browser --org-id tos login "$slt"
 ```
 
 The SLT is single-use and expires quickly; Browser never receives an IAM
@@ -64,15 +64,15 @@ Use the app secret from an IAM testing environment to enroll Browser:
 
 ```sh
 # Reads SB_TEST_APP_SECRET; optional SB_IAM_TEST_KEY and SB_BRIEFCASE_TEST_KEY.
-sb testing login
+browser testing login
 # Or read private JSON containing {"app_secret":"ask_..."} from stdin:
-sb testing login --credentials-stdin < test-credentials.json
+browser testing login --credentials-stdin < test-credentials.json
 
-sb --test <environment-uuid> testing status --json
-sb --test <environment-uuid> login worker:tos --org-id tos
-sb --test <environment-uuid> login status --json
-sb --test <environment-uuid> setup
-sb --test <environment-uuid> profile ls
+browser --test <environment-uuid> testing status --json
+browser --test <environment-uuid> login worker:tos --org-id tos
+browser --test <environment-uuid> login status --json
+browser --test <environment-uuid> setup
+browser --test <environment-uuid> profile ls
 ```
 
 Enrollment verifies the secret with IAM and reports its environment UUID.
@@ -85,7 +85,7 @@ developer test configuration, never a production login credential. Test login
 accepts an actor ID in that environment or an IAM test `oac_` token.
 Production login continues to require a short-lived token.
 
-With test recording storage configured, `sb --test <environment-uuid> setup`
+With test recording storage configured, `browser --test <environment-uuid> setup`
 authorizes background recording delivery as the authenticated test actor using
 its own IAM token family. `SB_RECORDING_SLT` can explicitly supply that actor ID
 or a fresh test SLT for the same actor. Production setup still requires a separate fresh SLT.
@@ -102,7 +102,7 @@ credentials; the IAM test environment does not supply browser capacity.
 ## Command tree
 
 ```text
-sb
+browser
 ├── iam --json
 ├── login <SLT>
 │   └── status --json
@@ -136,7 +136,7 @@ The daemon owns one server WebSocket per machine and multiplexes all registered
 Silicons. Webhook deliveries use `{type, data, metadata}`.
 
 All IAM app CLIs should expose a bug-report command with a reproducible
-description, diagnostics, and an optional `--pr <ref>`. In `sb`, use
+description, diagnostics, and an optional `--pr <ref>`. In `browser`, use
 `report-bug` (aliases: `bug`, `bug-report`). The command submits a report only;
 agents can inspect the linked repository, patch it, and attach a pull request
 themselves.
@@ -144,7 +144,7 @@ themselves.
 ## Build and develop
 
 The stateless Rust library is published as
-[`silicon-browser`](https://crates.io/crates/silicon-browser). The `sb` binary
+[`silicon-browser`](https://crates.io/crates/silicon-browser). The `browser` binary
 owns local state and talks to the backend; a long-running daemon may reuse the
 same library without sharing mutable process state.
 
@@ -171,15 +171,15 @@ yet send events to those stores or expose a telemetry opt-out setting. There is
 no frontend telemetry proxy or supported `SPACE_STATION_*` configuration yet.
 
 The CLI installs a checksum-verified native controller. It does not yet run an
-hourly update service; rerun the installer to update `sb`. The backend negotiates
+hourly update service; rerun the installer to update `browser`. The backend negotiates
 its IAM v1 dependency contract. Browser's public API uses `/api/v1`; automatic
 Browser client/server protocol negotiation is not implemented. The testing
 routes in 0.2.1 are additive and preserve existing production API behavior.
 
 ## One-line setup
 
-Install the CLI without authentication; then use `sb login` and `sb setup` when ready.
+Install the CLI without authentication; then use `browser login` and `browser setup` when ready.
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/unlikefraction/silicon-browser/v2/scripts/install.sh | sh -s -- --no-setup && export PATH="$HOME/.local/bin:$PATH"
+curl -fsSL https://raw.githubusercontent.com/unlikefraction/silicon-browser/managed-v0.2.4/scripts/install.sh | sh -s -- --no-setup && export PATH="$HOME/.local/bin:$PATH"
 ```

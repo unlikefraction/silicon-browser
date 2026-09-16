@@ -1,7 +1,7 @@
 # silicon-browser
 
 The stateless, primary interface to Silicon Browser. Construct an explicit [`Auth`] and [`Client`],
-select an organization, then call the same operations exposed by the `sb` command.
+select an organization, then call the same operations exposed by the `browser` command.
 
 ```rust,no_run
 use silicon_browser::{Auth, Client};

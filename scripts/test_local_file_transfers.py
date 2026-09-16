@@ -3,7 +3,7 @@
 
 No cloud/provider session or real credential is used. Example:
   python3 scripts/test_local_file_transfers.py --controller /path/to/sb-browser-engine
-Optional --chrome and --cli select installed Chrome and the sb binary.
+Optional --chrome and --cli select installed Chrome and the browser binary.
 """
 
 import argparse
@@ -24,7 +24,7 @@ import time
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--controller", required=True, type=Path)
-    parser.add_argument("--cli", type=Path, default=Path("target/debug/sb"))
+    parser.add_argument("--cli", type=Path, default=Path("target/debug/browser"))
     parser.add_argument("--chrome", default=(
         shutil.which("google-chrome") or shutil.which("chromium")
         or "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"

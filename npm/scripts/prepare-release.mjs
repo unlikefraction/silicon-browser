@@ -1,23 +1,35 @@
-import { readFileSync, existsSync } from 'node:fs';
+import { readFileSync, writeFileSync, chmodSync } from 'node:fs';
 import { createHash } from 'node:crypto';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
 import { spawnSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
 
-const root = new URL('..', import.meta.url).pathname;
-const hashes = {
-  'bin/sb-darwin-arm64': 'a10d374e3a9e84eeee6c5935a0904d2859d396d2ba53362fc2b5f4d523bf1c5f',
-  'bin/sb-darwin-x64': '4e179b3b28359512ada58f962373e1be729a0eabbb5f4f3649a4a0fbbcd0a15e',
-  'bin/sb-linux-arm64': 'ec87b407775ffe12e9cbd0cf60bfe8049414181b7bfa011a4ffaa0ff22bf45b6',
-  'bin/sb-linux-x64': '8a447b974f3b8e324c3a0b3a166199b7ab7a52b2084e97596971ff03f5b262f4'
+const root = fileURLToPath(new URL('..', import.meta.url));
+const targets = resolve(process.argv[2] || join(root, '../target/honeycomb/targets'));
+const version = readFileSync(join(root, '../Cargo.toml'), 'utf8').match(/\[workspace\.package\][\s\S]*?\nversion = "([^"]+)"/)[1];
+const platforms = {
+  'darwin-arm64': 'macos-aarch64',
+  'darwin-x64': 'macos-x86_64',
+  'linux-arm64': 'linux-aarch64',
+  'linux-x64': 'linux-x86_64'
 };
 
-for (const [file, expected] of Object.entries(hashes)) {
-  const path = join(root, file);
-  if (!existsSync(path)) throw new Error(`missing ${file}; download managed-v0.2.2 assets first`);
-  const actual = createHash('sha256').update(readFileSync(path)).digest('hex');
-  if (actual !== expected) throw new Error(`checksum mismatch: ${file}`);
+// Reuse the release workflow's native-tested payloads and their version/hash receipts.
+const payloads = Object.entries(platforms).map(([platform, target]) => {
+  const directory = join(targets, target);
+  const receipt = JSON.parse(readFileSync(join(directory, 'build.json'), 'utf8'));
+  const bytes = readFileSync(join(directory, 'browser'));
+  if (receipt.version !== version) throw new Error(`wrong CLI version: ${target}`);
+  if (createHash('sha256').update(bytes).digest('hex') !== receipt.sha256.browser) throw new Error(`checksum mismatch: ${target}`);
+  return [join(root, `bin/browser-${platform}`), bytes];
+});
+for (const [path, bytes] of payloads) {
+  writeFileSync(path, bytes);
+  chmodSync(path, 0o755);
 }
 
+const check = spawnSync(process.execPath, [join(root, 'scripts/check-package.mjs')], { encoding: 'utf8' });
+if (check.status !== 0) throw new Error(check.stderr || 'native package check failed');
 const pack = spawnSync('npm', ['pack', '--dry-run', '--json'], { cwd: root, encoding: 'utf8' });
 if (pack.status !== 0) throw new Error(pack.stderr || 'npm pack failed');
 console.log(`release package ready: ${JSON.parse(pack.stdout)[0].filename}`);

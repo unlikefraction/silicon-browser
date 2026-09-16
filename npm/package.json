@@ -5,12 +5,13 @@
   "license": "MIT",
   "type": "module",
   "files": [
-    "bin",
+    "bin/launcher.js",
+    "bin/browser-*",
     "README.md",
     "LICENSE"
   ],
   "bin": {
-    "sb": "bin/launcher.js",
+    "browser": "bin/launcher.js",
     "silicon-browser": "bin/launcher.js"
   },
   "scripts": {

@@ -28,7 +28,7 @@ remote deletion are intentionally outside Browser's delegated scope.
 - **Pending path representation corrected:** the public `briefcase_path` remains
   a string for compatibility but is empty until a verified video receipt exists.
   Legacy invented pending paths are masked; actual paths come from Briefcase.
-- **Explicit terminal recovery implemented:** `sb recording send SESSION_ID`
+- **Explicit terminal recovery implemented:** `browser recording send SESSION_ID`
   (also Rust client/UI and POST `/api/v1/recordings/{id}/retry`) retries eligible
   exhausted outage/proof/timeout failures or a corrected size limit. It requires
   the original initiating principal/membership and active delivery authorization.

@@ -18,7 +18,7 @@ SOURCE = Path(__file__).with_name('install.sh').read_text()
 
 class InstallerTests(unittest.TestCase):
     def setUp(self):
-        self.directory = tempfile.TemporaryDirectory(prefix='sb-installer-test-')
+        self.directory = tempfile.TemporaryDirectory(prefix='browser-installer-test-')
         self.addCleanup(self.directory.cleanup)
         self.root = Path(self.directory.name)
         self.home = self.root / 'home with spaces'
@@ -27,7 +27,7 @@ class InstallerTests(unittest.TestCase):
         self.mock.mkdir()
         self.env = dict(os.environ, HOME=str(self.home), ZDOTDIR=str(self.home),
                         SHELL='/bin/zsh', PATH=str(self.mock) + ':' + os.environ['PATH'])
-        self.binary = self.home / '.local/bin/sb'
+        self.binary = self.home / '.local/bin/browser'
         self.stub('uname', 'case "$1" in -s) echo "$TEST_OS";; -m) echo "$TEST_ARCH";; esac')
         self.stub('getconf', 'echo "${TEST_LIBC:-glibc 2.34}"')
         self.stub('curl', '''
@@ -53,14 +53,14 @@ if [ "${TEST_CORRUPT:-0}" = 1 ]; then printf bad >> "$destination"; fi
         payload = b'''#!/bin/sh
 if [ "$1" = --version ]; then
   [ "${TEST_EXEC_FAIL:-0}" = 0 ] || exit 1
-  echo 'sb 0.2.2'
+  echo "${TEST_CLI_VERSION:-browser 0.2.4}"
 elif [ "$1" = setup ]; then
   [ -t 0 ] || exit 42
   printf '%s\\n' "$@" > "$HOME/setup-arguments"
 fi
 '''
         with tarfile.open(archive, 'w:gz') as output:
-            entry = tarfile.TarInfo(f'sb-v0.2.2-{target}/sb')
+            entry = tarfile.TarInfo(f'browser-v0.2.4-{target}/browser')
             entry.size = len(payload)
             entry.mode = 0o755
             output.addfile(entry, io.BytesIO(payload))
@@ -87,10 +87,13 @@ fi
                 result = self.run_installer('--no-setup')
                 self.assertEqual(result.returncode, 0, result.stderr)
                 self.assertTrue(os.access(self.binary, os.X_OK))
+                self.assertEqual(subprocess.check_output([self.binary, '--version'], env=self.env, text=True).strip(),
+                                 'browser 0.2.4')
                 self.assertIn(target + '.tar.gz', (self.root / 'url').read_text())
                 self.assertEqual((self.home / '.zshrc').read_text().count('export PATH='), 1)
-                self.assertEqual(list(self.binary.parent.glob('.sb-install.*')), [])
-        command = '. "$HOME/.profile"; command -v sb'
+                self.assertEqual(list(self.binary.parent.glob('.browser-install.*')), [])
+        self.assertIn('/managed-v0.2.4/browser-v0.2.4-', (self.root / 'url').read_text())
+        command = '. "$HOME/.profile"; command -v browser'
         result = subprocess.run(['sh', '-c', command], env=self.env, capture_output=True, text=True)
         self.assertEqual(result.stdout.strip(), str(self.binary))
 
@@ -106,7 +109,7 @@ fi
                 self.assertNotEqual(result.returncode, 0)
                 self.assertEqual(self.binary.read_text(), 'existing installation')
                 self.assertFalse((self.home / '.zshrc').exists())
-                self.assertEqual(list(self.binary.parent.glob('.sb-install.*')), [])
+                self.assertEqual(list(self.binary.parent.glob('.browser-install.*')), [])
 
     def test_unsupported_platforms_fail_before_download(self):
         for system, arch, libc in [('Linux', 'x86_64', 'musl'),
@@ -119,6 +122,16 @@ fi
                 result = self.run_installer('--no-setup')
                 self.assertNotEqual(result.returncode, 0)
                 self.assertFalse((self.root / 'url').exists())
+
+    def test_legacy_command_or_wrong_version_preserves_existing_install(self):
+        self.prepare()
+        self.binary.parent.mkdir(parents=True)
+        self.binary.write_text('existing installation')
+        for version in ['sb 0.2.4', 'browser 0.2.2']:
+            self.env['TEST_CLI_VERSION'] = version
+            result = self.run_installer('--no-setup')
+            self.assertNotEqual(result.returncode, 0)
+            self.assertEqual(self.binary.read_text(), 'existing installation')
 
     def test_no_terminal_reports_unfinished_setup(self):
         self.prepare()

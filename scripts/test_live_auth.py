@@ -4,7 +4,7 @@
 Run against a backend configured with IAM_TEST_ENVIRONMENT_KEY. Supply a fresh
 IAM SLT authorized for the test organization in SB_TEST_SLT, its org in
 SB_TEST_ORG, and the backend URL in
-SB_TEST_BACKEND. Optional SB_TEST_CLI points to an sb binary. Credentials remain
+SB_TEST_BACKEND. Optional SB_TEST_CLI points to a browser binary. Credentials remain
 in memory; the CLI uses a temporary home and an invocation-only bearer override.
 """
 

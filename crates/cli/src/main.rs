@@ -13,30 +13,30 @@ use crate::state::{State, default_home, refresh_lock};
 
 const REMOTE_HELP: &str = r#"Remote browser — use this for interaction-heavy work.
 
-  sb profile ls
-  sb session new {profileid} --name "..." --description "..." --ttl 30m
-  # or: sb session new --incognito --name "..." --description "..." --ttl 15m
-  sb run --help
+  browser profile ls
+  browser session new {profileid} --name "..." --description "..." --ttl 30m
+  # or: browser session new --incognito --name "..." --description "..." --ttl 15m
+  browser run --help
 
 Profiles keep one identity and one fixed proxy location. Incognito sessions have neither."#;
 
 const DISCOVERY_HELP: &str = r#"Search & fetch — use this for read-heavy work. It needs no profile or session.
 
-  sb search "{query}" --purpose "..."
-  sb fetch https://one.example,https://two.example --purpose "..."
-  sb search --help
-  sb fetch --help
+  browser search "{query}" --purpose "..."
+  browser fetch https://one.example,https://two.example --purpose "..."
+  browser search --help
+  browser fetch --help
 
 Search returns ranked URLs. Fetch renders pages and returns text; images are not fetched."#;
 
 const MANAGED_RUN_HELP: &str = r#"Run browser commands in an active managed session.
 
-  sb run {sessionid} "open https://example.com"
-  sb run {sessionid} "snapshot -i"
-  sb run {sessionid} "click @e1"
-  sb run {sessionid} "fill @e2 'hello world'"
-  sb run {sessionid} "get text @e3"
-  sb run {sessionid} "wait --text 'Complete'"
+  browser run {sessionid} "open https://example.com"
+  browser run {sessionid} "snapshot -i"
+  browser run {sessionid} "click @e1"
+  browser run {sessionid} "fill @e2 'hello world'"
+  browser run {sessionid} "get text @e3"
+  browser run {sessionid} "wait --text 'Complete'"
 
 Useful categories:
   navigate       open, back, forward, reload
@@ -48,15 +48,15 @@ Connection and session lifecycle are managed by Silicon Browser.
 Screenshots, PDFs and local recordings write to your machine. Uploads transfer local file bytes.
 Downloads support same-origin HTTP links and blob/data links. Button/script/POST downloads,
 cross-origin frames, `wait --download` and `--download-path` are unsupported.
-Use `sb session end {sessionid} --note "..."` instead of `close`.
-Run `sb setup` to install the pinned runner and unlock its version-matched action help."#;
+Use `browser session end {sessionid} --note "..."` instead of `close`.
+Run `browser setup` to install the pinned runner and unlock its version-matched action help."#;
 
 #[derive(Parser, Debug)]
 #[command(
-    name = "sb",
+    name = "browser",
     version,
     about = "Managed remote browsers and fast web discovery",
-    long_about = "Silicon Browser has two daily paths:\n  remote-browser   interaction-heavy work in an authenticated browser\n  search-and-fetch read-heavy research without a browser session\n\nRun `sb --help remote-browser` or `sb --help search-and-fetch` for the shortest useful flow.\n\nSource: https://github.com/unlikefraction/silicon-browser\nDocs: https://browser.teamofsilicons.com/docs\nRust crate: https://crates.io/crates/silicon-browser",
+    long_about = "Silicon Browser has two daily paths:\n  remote-browser   interaction-heavy work in an authenticated browser\n  search-and-fetch read-heavy research without a browser session\n\nRun `browser --help remote-browser` or `browser --help search-and-fetch` for the shortest useful flow.\n\nSource: https://github.com/unlikefraction/silicon-browser\nDocs: https://browser.teamofsilicons.com/docs\nRust crate: https://crates.io/crates/silicon-browser",
     disable_help_subcommand = true,
     arg_required_else_help = false
 )]
@@ -70,7 +70,7 @@ struct Cli {
     /// Override the backend URL; setup saves it with newly exchanged credentials.
     #[arg(long, global = true, env = "SB_BACKEND_URL", hide_env_values = true)]
     backend: Option<String>,
-    /// Use one enrolled IAM test environment. Enroll first with `sb testing login`.
+    /// Use one enrolled IAM test environment. Enroll first with `browser testing login`.
     #[arg(long, global = true, value_name = "ENVIRONMENT_UUID")]
     test: Option<uuid::Uuid>,
     #[command(subcommand)]
@@ -81,17 +81,17 @@ struct Cli {
 enum Command {
     /// Enroll and verify IAM test environments, isolated from production credentials.
     #[command(
-        long_about = "Enroll an IAM test environment using explicit developer credentials.\n\n  sb testing login --credentials-stdin < test-credentials.json\n  sb --test <environment-uuid> login worker:tos --org-id tos\n  sb --test <environment-uuid> testing status --json\n\nEvery ordinary command accepts --test. Production and each test environment keep separate credentials and browser state. Credentials JSON requires app_secret; iam_test_key and briefcase_test_environment_key are optional; keep this file private. Test keys are developer configuration; normal login still accepts only an IAM short-lived token."
+        long_about = "Enroll an IAM test environment using explicit developer credentials.\n\n  browser testing login --credentials-stdin < test-credentials.json\n  browser --test <environment-uuid> login worker:tos --org-id tos\n  browser --test <environment-uuid> testing status --json\n\nEvery ordinary command accepts --test. Production and each test environment keep separate credentials and browser state. Credentials JSON requires app_secret; iam_test_key and briefcase_test_environment_key are optional; keep this file private. Test keys are developer configuration; normal login still accepts only an IAM short-lived token."
     )]
     Testing(Service<TestingCommand>),
     /// Print this application's IAM identifier.
     #[command(
-        long_about = "Print this application's canonical IAM identifier without authentication.\n\nUse it when minting a short-lived token with the official IAM CLI:\n  iam login --app-id '<app-id>' --grant-org <org>\n  sb login '<short-lived-token>'"
+        long_about = "Print this application's canonical IAM identifier without authentication.\n\nUse it when minting a short-lived token with the official IAM CLI:\n  iam login --app-id '<app-id>' --grant-org <org>\n  browser login '<short-lived-token>'"
     )]
     Iam,
     /// Exchange an IAM short-lived token and store the resulting session.
     #[command(
-        long_about = "Exchange an IAM short-lived token and store the resulting session.\n\nTokens come from the official IAM CLI or its web consent flow; Browser never asks for an IAM password or credentials.\n\nTypical flow:\n  iam login --app-id '<app-id>' --grant-org <org>\n  sb login '<short-lived-token>'\n  sb login status --json\n\nIAM testing: sb testing --help; after enrollment, sb --test <environment-uuid> login <test-actor-id> --org-id <org>"
+        long_about = "Exchange an IAM short-lived token and store the resulting session.\n\nTokens come from the official IAM CLI or its web consent flow; Browser never asks for an IAM password or credentials.\n\nTypical flow:\n  iam login --app-id '<app-id>' --grant-org <org>\n  browser login '<short-lived-token>'\n  browser login status --json\n\nIAM testing: browser testing --help; after enrollment, browser --test <environment-uuid> login <test-actor-id> --org-id <org>"
     )]
     Login {
         token: Option<String>,
@@ -148,7 +148,7 @@ enum LoginCommand {
 enum TestingCommand {
     /// Verify and securely store test configuration; reports the environment UUID.
     #[command(
-        long_about = "Verify explicit developer credentials with IAM, then store them in an owner-only test partition.\n\n  sb testing login --credentials-stdin < test-credentials.json\n\nWithout --credentials-stdin, reads SB_TEST_APP_SECRET, plus optional SB_IAM_TEST_KEY and SB_BRIEFCASE_TEST_KEY. Then run sb --test <environment-uuid> login worker:tos --org-id tos, or use an IAM test short-lived token. Re-enrollment clears that environment's saved login."
+        long_about = "Verify explicit developer credentials with IAM, then store them in an owner-only test partition.\n\n  browser testing login --credentials-stdin < test-credentials.json\n\nWithout --credentials-stdin, reads SB_TEST_APP_SECRET, plus optional SB_IAM_TEST_KEY and SB_BRIEFCASE_TEST_KEY. Then run browser --test <environment-uuid> login worker:tos --org-id tos, or use an IAM test short-lived token. Re-enrollment clears that environment's saved login."
     )]
     Login {
         /// Read credentials JSON from standard input; never pass test secrets as arguments.
@@ -226,7 +226,7 @@ enum SessionCommand {
     Show { session_id: String },
     /// Return a Silicon Browser link for a running session.
     Live { session_id: String },
-    /// Show replayable sb commands for one day.
+    /// Show replayable browser commands for one day.
     Logs {
         session_id: String,
         #[arg(long)]
@@ -399,7 +399,7 @@ fn main() -> ExitCode {
     match execute(cli, &raw[1..]) {
         Ok(()) => ExitCode::SUCCESS,
         Err(error) => {
-            eprintln!("sb: {error}");
+            eprintln!("browser: {error}");
             ExitCode::from(error_exit_code(error.as_ref()))
         }
     }
@@ -515,7 +515,9 @@ fn execute(cli: Cli, arguments: &[String]) -> Result<(), Box<dyn std::error::Err
             }
             return Ok(());
         }
-        Some(Command::Login { token: None, command: None }) => return Err("usage: sb login <short-lived-token>".into()),
+        Some(Command::Login { token: None, command: None }) => {
+            return Err("usage: browser login <short-lived-token>".into());
+        }
         _ => {}
     }
     let (home, mut state) = load_selected_state(backend, cli.test)?;
@@ -653,7 +655,7 @@ fn load_selected_state(
     if let Some(environment) = environment
         && state.testing.is_none()
     {
-        return Err(format!("IAM test environment {environment} is not enrolled for this backend; run `sb testing login --credentials-stdin` with private credentials JSON, then retry with --test {environment}").into());
+        return Err(format!("IAM test environment {environment} is not enrolled for this backend; run `browser testing login --credentials-stdin` with private credentials JSON, then retry with --test {environment}").into());
     }
     Ok((home, state))
 }
@@ -700,18 +702,18 @@ fn testing(
                 )?;
             } else {
                 println!(
-                    "enrolled {} ({}) for {}; next: sb --test {} login <test-actor-id> --org-id <org>",
+                    "enrolled {} ({}) for {}; next: browser --test {} login <test-actor-id> --org-id <org>",
                     environment.name, environment.environment_id, environment.app_id, environment.environment_id
                 );
             }
         }
         Some(TestingCommand::Status) => {
-            let id = selected.ok_or("select an environment: sb --test <environment-uuid> testing status --json; enroll with sb testing login")?;
+            let id = selected.ok_or("select an environment: browser --test <environment-uuid> testing status --json; enroll with browser testing login")?;
             let backend = test_backend(root, Some(id));
             let home = state::home_for_backend(&default_home(), &backend)?;
             let state = State::load(&home)?;
             let Some(credentials) = state.testing else {
-                let guidance = "enroll with sb testing login --credentials-stdin, then retry with --test";
+                let guidance = "enroll with browser testing login --credentials-stdin, then retry with --test";
                 if json {
                     print_json(&serde_json::json!({"configured": false, "environment_id": id, "guidance": guidance}))?;
                 } else {
@@ -722,7 +724,8 @@ fn testing(
             let environment = Client::testing_context(root, &credentials)?;
             if environment.environment_id != id {
                 return Err(
-                    "saved test credentials belong to a different IAM environment; run sb testing login again".into()
+                    "saved test credentials belong to a different IAM environment; run browser testing login again"
+                        .into(),
                 );
             }
             if json {
@@ -784,11 +787,12 @@ fn validate_runtime_environment_auth(state: &State) -> Result<(), Box<dyn std::e
     }
     if token.starts_with("oac_") {
         return Err(
-            "SB_AUTHTOKEN contains an IAM oac_ short-lived token; run `sb setup` to exchange it and select an organization"
+            "SB_AUTHTOKEN contains an IAM oac_ short-lived token; run `browser setup` to exchange it and select an organization"
                 .into(),
         );
     }
-    Err("SB_AUTHTOKEN must be an IAM oat_ access token, or an oac_ short-lived token exchanged with `sb setup`".into())
+    Err("SB_AUTHTOKEN must be an IAM oat_ access token, or an oac_ short-lived token exchanged with `browser setup`"
+        .into())
 }
 
 fn resolve_org_if_missing(state: &mut State, home: &std::path::Path) -> Result<(), Box<dyn std::error::Error>> {
@@ -797,7 +801,7 @@ fn resolve_org_if_missing(state: &mut State, home: &std::path::Path) -> Result<(
     }
     let using_environment_access_token = State::has_environment_access_token();
     let expected_stored_token = state.stored_token().map(str::to_owned);
-    let token = state.token().ok_or("not signed in: set SB_AUTHTOKEN or run `sb setup`")?;
+    let token = state.token().ok_or("not signed in: set SB_AUTHTOKEN or run `browser setup`")?;
     let org_id = sole_bound_org(
         Client::with_transport(state.backend_url.clone(), Auth::new(token)?, std::sync::Arc::new(transport(state)?))?
             .orgs()?,
@@ -818,7 +822,7 @@ fn resolve_org_if_missing(state: &mut State, home: &std::path::Path) -> Result<(
 
 fn sole_bound_org(orgs: Vec<Org>) -> Result<String, Box<dyn std::error::Error>> {
     match orgs.as_slice() {
-        [] => Err("this token has no accessible organization; run `sb setup` with an IAM token authorized for an organization".into()),
+        [] => Err("this token has no accessible organization; run `browser setup` with an IAM token authorized for an organization".into()),
         [org] => Ok(org.id.clone()),
         _ => Err("this token can access multiple organizations; pass --org-id <id> explicitly".into()),
     }
@@ -871,12 +875,12 @@ fn setup(
         if !io::stdin().is_terminal() {
             if let Some(error) = refresh_failure {
                 return Err(format!(
-                    "stored authentication could not be refreshed: {error}; rerun `sb setup` interactively with a new IAM short-lived token"
+                    "stored authentication could not be refreshed: {error}; rerun `browser setup` interactively with a new IAM short-lived token"
                 )
                 .into());
             }
             return Err(
-                "no auth token: set SB_AUTHTOKEN to an oat_ access token, or run `sb setup` with an IAM oac_ short-lived token"
+                "no auth token: set SB_AUTHTOKEN to an oat_ access token, or run `browser setup` with an IAM oac_ short-lived token"
                     .into(),
             );
         }
@@ -990,7 +994,7 @@ fn setup_delivery_authorization(
         return Err("recording delivery is unavailable on this backend; its configuration must be completed before setup is ready".into());
     }
     if matches!(current.state, DeliveryAuthorizationState::Pending | DeliveryAuthorizationState::Revoking) {
-        return Err("recording authorization is being updated; retry `sb setup` after it finishes".into());
+        return Err("recording authorization is being updated; retry `browser setup` after it finishes".into());
     }
     let token = match std::env::var("SB_RECORDING_SLT").ok().filter(|value| !value.trim().is_empty()) {
         Some(token) => token,
@@ -998,7 +1002,7 @@ fn setup_delivery_authorization(
         None if io::stdin().is_terminal() => rpassword::prompt_password(
             "Fresh IAM oac_ token for background recording delivery (separate from CLI login): ",
         )?,
-        None => return Err("recording delivery needs a separate fresh Browser IAM oac_ token; set SB_RECORDING_SLT and rerun `sb setup`, or rerun interactively. Do not reuse the CLI login token.".into()),
+        None => return Err("recording delivery needs a separate fresh Browser IAM oac_ token; set SB_RECORDING_SLT and rerun `browser setup`, or rerun interactively. Do not reuse the CLI login token.".into()),
     };
     if testing.is_none() && !token.starts_with("oac_") {
         return Err("SB_RECORDING_SLT must be a fresh IAM oac_ short-lived token for Browser".into());
@@ -1355,7 +1359,7 @@ fn usage(client: &Client, command: Option<UsageCommand>, json: bool) -> Result<(
 }
 
 fn client(state: &State) -> Result<Client, Box<dyn std::error::Error>> {
-    let token = state.token().ok_or("not signed in: set SB_AUTHTOKEN or run `sb setup`")?;
+    let token = state.token().ok_or("not signed in: set SB_AUTHTOKEN or run `browser setup`")?;
     client_with_token(state, &token)
 }
 
@@ -1368,7 +1372,7 @@ fn transport(state: &State) -> Result<silicon_browser::HttpTransport, silicon_br
 }
 
 fn client_with_token(state: &State, token: &str) -> Result<Client, Box<dyn std::error::Error>> {
-    let org = state.org_id.clone().ok_or("no organization selected: run `sb setup` or pass --org-id")?;
+    let org = state.org_id.clone().ok_or("no organization selected: run `browser setup` or pass --org-id")?;
     let mut transport = transport(state)?;
     if !State::has_environment_access_token() && state.stored_token() == Some(token) {
         let home = state::home_for_backend(&default_home(), &state.backend_url)?;
@@ -1413,8 +1417,10 @@ fn recover_rejected_access(
         // setup with a different IAM principal. Never transfer queued intent to that token.
         return Err("credentials changed after the rejected request; run the command again".into());
     }
-    let refresh =
-        current.refresh_token().ok_or("no owned refresh token; run `sb setup` with a fresh Browser token")?.to_owned();
+    let refresh = current
+        .refresh_token()
+        .ok_or("no owned refresh token; run `browser setup` with a fresh Browser token")?
+        .to_owned();
     let session = Client::refresh_with_transport(
         backend,
         &AuthRefreshRequest { refresh_token: refresh.clone(), org_id: org.into() },
@@ -1449,9 +1455,9 @@ fn refresh_if_needed(state: &mut State, home: &std::path::Path) -> Result<(), Bo
     }
     let refresh_token = current
         .refresh_token()
-        .ok_or("the auth token expired and has no refresh token; run `sb setup` with a new IAM short-lived token")?
+        .ok_or("the auth token expired and has no refresh token; run `browser setup` with a new IAM short-lived token")?
         .to_owned();
-    let org_id = current.org_id.clone().ok_or("the auth token expired without an organization; run `sb setup`")?;
+    let org_id = current.org_id.clone().ok_or("the auth token expired without an organization; run `browser setup`")?;
     // Exactly one attempt while holding the process-wide refresh lock. An ambiguous transport
     // failure is deliberately not retried because IAM refresh tokens rotate on use.
     let session = Client::refresh_with_transport(
@@ -1532,7 +1538,7 @@ fn replay_command(session_id: &str, command: &str) -> String {
     fn quote(value: &str) -> String {
         format!("'{}'", value.replace('\'', "'\"'\"'"))
     }
-    format!("sb run {} {}", quote(session_id), quote(command))
+    format!("browser run {} {}", quote(session_id), quote(command))
 }
 
 fn print_recording(recording: &Recording) {
@@ -1808,25 +1814,25 @@ mod tests {
     #[test]
     fn documented_commands_parse() {
         for args in [
-            vec!["sb", "profile", "ls"],
-            vec!["sb", "proxy", "ls"],
-            vec!["sb", "session", "new", "p1", "--name", "n", "--description", "d", "--ttl", "30m"],
-            vec!["sb", "session", "new", "--incognito", "--name", "n", "--description", "d"],
-            vec!["sb", "session", "live", "s1"],
-            vec!["sb", "session", "logs", "s1", "--date", "04-09-2026"],
+            vec!["browser", "profile", "ls"],
+            vec!["browser", "proxy", "ls"],
+            vec!["browser", "session", "new", "p1", "--name", "n", "--description", "d", "--ttl", "30m"],
+            vec!["browser", "session", "new", "--incognito", "--name", "n", "--description", "d"],
+            vec!["browser", "session", "live", "s1"],
+            vec!["browser", "session", "logs", "s1", "--date", "04-09-2026"],
             vec![
-                "sb",
+                "browser",
                 "recording",
                 "ls",
                 "--filter",
                 "profile:p1 -> for:@silicon-1 -> name:market* -> description:^research -> is:shared",
             ],
-            vec!["sb", "recording", "rm", "s1"],
-            vec!["sb", "usage", "show", "--org"],
-            vec!["sb", "search", "query", "--purpose", "reason"],
-            vec!["sb", "fetch", "https://example.com", "--purpose", "reason"],
-            vec!["sb", "report-bug", "--title", "broken", "--details", "steps and output", "--pr", "owner/repo#1"],
-            vec!["sb", "run", "s1", "fill @e1 'hello world'", "--json"],
+            vec!["browser", "recording", "rm", "s1"],
+            vec!["browser", "usage", "show", "--org"],
+            vec!["browser", "search", "query", "--purpose", "reason"],
+            vec!["browser", "fetch", "https://example.com", "--purpose", "reason"],
+            vec!["browser", "report-bug", "--title", "broken", "--details", "steps and output", "--pr", "owner/repo#1"],
+            vec!["browser", "run", "s1", "fill @e1 'hello world'", "--json"],
         ] {
             Cli::try_parse_from(args).unwrap();
         }
@@ -1836,7 +1842,7 @@ mod tests {
     /// Silicon Browser's JSON mode remains available before the subcommand.
     #[test]
     fn run_flags_are_not_consumed_as_global_cli_flags() {
-        let cli = Cli::try_parse_from(["sb", "run", "s1", "snapshot", "--json", "--full-page"]).unwrap();
+        let cli = Cli::try_parse_from(["browser", "run", "s1", "snapshot", "--json", "--full-page"]).unwrap();
         assert!(!cli.json);
         let Some(Command::Run(args)) = cli.command else {
             panic!("expected run arguments");
@@ -1845,7 +1851,7 @@ mod tests {
         assert_eq!(args.command, "snapshot");
         assert_eq!(args.flags, ["--json", "--full-page"]);
 
-        let cli = Cli::try_parse_from(["sb", "--json", "run", "s1", "snapshot"]).unwrap();
+        let cli = Cli::try_parse_from(["browser", "--json", "run", "s1", "snapshot"]).unwrap();
         assert!(cli.json);
         let Some(Command::Run(args)) = cli.command else {
             panic!("expected run arguments");
@@ -1864,7 +1870,7 @@ mod tests {
         assert_eq!(stderr.flushes, 1);
     }
 
-    /// Test group: `sb run` preserves ordinary agent-browser process status
+    /// Test group: `browser run` preserves ordinary agent-browser process status
     /// codes while invalid/out-of-range statuses remain a generic failure.
     #[test]
     fn runner_exit_status_is_preserved() {
@@ -1975,10 +1981,10 @@ mod tests {
     /// and useful command categories independently of local runner state.
     #[test]
     fn managed_run_fallback_is_actionable() {
-        assert!(MANAGED_RUN_HELP.contains("sb run {sessionid}"));
+        assert!(MANAGED_RUN_HELP.contains("browser run {sessionid}"));
         assert!(MANAGED_RUN_HELP.contains("navigate"));
         assert!(MANAGED_RUN_HELP.contains("interact"));
-        assert!(MANAGED_RUN_HELP.contains("sb setup"));
+        assert!(MANAGED_RUN_HELP.contains("browser setup"));
     }
 
     /// Test group: setup readiness comes from a real scoped `me` request, not from merely finding
@@ -2011,9 +2017,9 @@ mod tests {
     /// Test group: service discovery is local and preserves the compact documented verbs.
     #[test]
     fn service_verbs_do_not_need_authentication() {
-        let cli = Cli::try_parse_from(["sb", "session"]).unwrap();
+        let cli = Cli::try_parse_from(["browser", "session"]).unwrap();
         assert!(print_service_verbs(cli.command.as_ref().unwrap(), false).unwrap());
-        let cli = Cli::try_parse_from(["sb", "search", "q", "--purpose", "p"]).unwrap();
+        let cli = Cli::try_parse_from(["browser", "search", "q", "--purpose", "p"]).unwrap();
         assert!(!print_service_verbs(cli.command.as_ref().unwrap(), false).unwrap());
     }
 }
