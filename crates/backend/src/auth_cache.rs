@@ -132,7 +132,7 @@ mod tests {
                 .collect(),
             kind: IdentityKind::Carbon,
             org_id: "tos".into(),
-            membership_id: Uuid::nil(),
+            membership_id: Uuid::nil().to_string(),
             authorization_epoch: 1,
             expires_at: Utc::now() + chrono::Duration::minutes(5),
         }

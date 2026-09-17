@@ -185,7 +185,7 @@ impl DeliveryAuth {
         let actor = expected.public_id.as_deref().filter(|v| !v.is_empty()).ok_or(IdentityError::Forbidden)?;
         if expected.org_id != org
             || expected.principal_id.is_nil()
-            || expected.membership_id.is_nil()
+            || expected.membership_id.is_empty()
             || expected.expires_at <= Utc::now()
         {
             return Err(IdentityError::Forbidden.into());
@@ -587,7 +587,7 @@ mod tests {
                         .collect(),
                     kind: IdentityKind::Silicon,
                     org_id: "org".into(),
-                    membership_id: Uuid::from_u128(2),
+                    membership_id: Uuid::from_u128(2).to_string(),
                     authorization_epoch: 1,
                     expires_at: Utc::now() + chrono::TimeDelta::hours(1),
                 },
@@ -962,7 +962,7 @@ mod tests {
         service.enroll("org", &mock.expected, &slt()).await.unwrap();
         let mut replacement_mock = Mock::new();
         replacement_mock.expected.principal_id = Uuid::from_u128(98);
-        replacement_mock.expected.membership_id = Uuid::from_u128(99);
+        replacement_mock.expected.membership_id = Uuid::from_u128(99).to_string();
         let replacement_mock = Arc::new(replacement_mock);
         let replacement = DeliveryAuth::new(
             service.store.clone(),

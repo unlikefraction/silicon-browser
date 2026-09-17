@@ -187,7 +187,7 @@ async fn configured_session_start_requires_delivery_before_provider_creation_the
             .unwrap();
     assert_eq!(binding, (Some(expected.principal_id.to_string()), Some(expected.membership_id.to_string())));
     let mut replaced_membership = expected;
-    replaced_membership.membership_id = Uuid::new_v4();
+    replaced_membership.membership_id = Uuid::new_v4().to_string();
     fixture.identity.allow_identity("oat_owner", replaced_membership);
     let (status, _, body) = request(
         &fixture.app,
@@ -219,7 +219,7 @@ async fn reused_public_name_cannot_adopt_or_disable_historical_delivery_authorit
         .unwrap();
     let mut replacement = old.clone();
     replacement.principal_id = Uuid::new_v4();
-    replacement.membership_id = Uuid::new_v4();
+    replacement.membership_id = Uuid::new_v4().to_string();
     fixture.identity.allow_identity("oat_replacement", replacement);
     let auth = Some(("oat_replacement", "org-1"));
     let (status, _, body) = request(&fixture.app, "GET", "/api/v1/auth/delivery", auth, None).await;

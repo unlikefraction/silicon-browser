@@ -51,7 +51,7 @@ pub struct PrincipalIdentity {
     pub scopes: Vec<String>,
     pub kind: IdentityKind,
     pub org_id: String,
-    pub membership_id: Uuid,
+    pub membership_id: String,
     pub authorization_epoch: i64,
     pub expires_at: DateTime<Utc>,
 }
@@ -701,7 +701,7 @@ impl SiliconIamIdentityProvider {
                 return Err(IdentityError::Forbidden);
             }
         }
-        let membership_id = claims.membership_id.filter(|id| !id.is_nil()).ok_or(IdentityError::Forbidden)?;
+        let membership_id = claims.membership_id.filter(|id| !id.is_empty()).ok_or(IdentityError::Forbidden)?;
         let authorization_epoch =
             claims.authorization_epoch.filter(|epoch| *epoch > 0).ok_or(IdentityError::Forbidden)?;
         let expires_at = DateTime::from_timestamp(claims.expires_at.ok_or(IdentityError::Unauthenticated)?, 0)
@@ -947,7 +947,7 @@ fn organizations_from_claims(
         let id = authorization.org_id.clone();
         let mut selected = claims.clone();
         selected.org_id = Some(id.clone());
-        selected.membership_id = Some(authorization.membership_id);
+        selected.membership_id = Some(authorization.membership_id.clone());
         selected.authorization_epoch = Some(authorization.authorization_epoch);
         selected.authorization = Some(authorization.clone());
         selected.authorizations = None;
@@ -1013,7 +1013,7 @@ fn identity_from_claims(
         scopes: Vec::new(),
         kind,
         org_id: expected_org.to_owned(),
-        membership_id: claims.membership_id.ok_or(IdentityError::Contract {
+        membership_id: claims.membership_id.clone().ok_or(IdentityError::Contract {
             operation: "token introspection",
             reason: "an org-bound token had no membership_id",
         })?,
@@ -1596,7 +1596,7 @@ mod tests {
             actor_type: Some(TokenIntrospectionActorType::Silicon),
             client_id: Some(APP.to_owned()),
             org_id: Some(ORG.to_owned()),
-            membership_id: Some(Uuid::from_u128(2)),
+            membership_id: Some(Uuid::from_u128(2).to_string()),
             session_id: Some(Uuid::from_u128(3)),
             scope: Some("self.identity.read self.tags.read".to_owned()),
             audience: Some(APP.to_owned()),
@@ -1609,7 +1609,7 @@ mod tests {
                 public_id: Some("silicon-1".into()),
                 organization_id: Uuid::from_u128(4),
                 org_id: ORG.into(),
-                membership_id: Uuid::from_u128(2),
+                membership_id: Uuid::from_u128(2).to_string(),
                 membership_version: 1,
                 authorization_epoch: 7,
                 audience: APP.into(),
@@ -1642,7 +1642,7 @@ mod tests {
     fn active_claims_are_bound_to_app_org_actor_and_membership() {
         let identity = identity();
         assert_eq!(identity.principal_id, Uuid::from_u128(1));
-        assert_eq!(identity.membership_id, Uuid::from_u128(2));
+        assert_eq!(identity.membership_id, Uuid::from_u128(2).to_string());
         assert_eq!(identity.public_id.as_deref(), Some("silicon-1"));
 
         let mut wrong_app = claims();
@@ -1670,7 +1670,7 @@ mod tests {
                 0 => snapshot.principal_id = Uuid::new_v4(),
                 1 => snapshot.actor_type = Some(ApplicationAuthorizationActorType::Carbon),
                 2 => snapshot.org_id = "another-org".into(),
-                3 => snapshot.membership_id = Uuid::new_v4(),
+                3 => snapshot.membership_id = Uuid::new_v4().to_string(),
                 4 => snapshot.authorization_epoch += 1,
                 5 => snapshot.audience = "another>app".into(),
                 6 => snapshot.public_id = Some(String::new()),

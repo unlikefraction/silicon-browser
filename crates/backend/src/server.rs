@@ -2688,7 +2688,7 @@ mod tests {
                 .collect(),
             kind,
             org_id: "org-1".into(),
-            membership_id: Uuid::new_v4(),
+            membership_id: Uuid::new_v4().to_string(),
             authorization_epoch: 1,
             expires_at: Utc::now() + TimeDelta::hours(1),
         }

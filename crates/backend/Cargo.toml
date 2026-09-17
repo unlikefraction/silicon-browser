@@ -37,7 +37,7 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 tower-http = { version = "0.6", features = ["cors", "request-id", "trace", "sensitive-headers"] }
 http = "1"
 tower = { version = "0.5", features = ["util"] }
-silicon-iam-client = { version = "=1.9.0", default-features = false }
+silicon-iam-client = { version = "=2.0.0", default-features = false }
 
 tempfile = "3"
 

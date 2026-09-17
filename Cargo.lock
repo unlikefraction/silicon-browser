@@ -2380,11 +2380,12 @@ dependencies = [
 
 [[package]]
 name = "silicon-iam-client"
-version = "1.9.0"
+version = "2.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "47564ad2d347474897c4069583674c354b19050a089a2859ce3c5ac8324a2971"
+checksum = "5c4360c76a9865905721a436adedde478ee4482e383998639e59354ed2c9accb"
 dependencies = [
  "base64 0.22.1",
+ "hex",
  "hmac 0.12.1",
  "http",
  "reqwest",
