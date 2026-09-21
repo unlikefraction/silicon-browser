@@ -42,7 +42,7 @@ const RECORDING_ENDPOINT_PATH: &str = "/api/v1/obo/files";
 /// authorization snapshot. Undisclosed tags remain absent and grant no access.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct PrincipalIdentity {
-    pub principal_id: Uuid,
+    pub principal_id: String,
     pub public_id: Option<String>,
     pub tags: Option<Vec<String>>,
     /// Present only when IAM discloses the current organization membership role.
@@ -611,7 +611,8 @@ impl SiliconIamIdentityProvider {
         if let Some(org) = org {
             request = request.header("x-org-id", org);
         }
-        let claims: TokenIntrospection = decode_response("token introspection", request.send().await).await?;
+        let response: serde_json::Value = decode_response("token introspection", request.send().await).await?;
+        let claims = compatible_introspection(response)?;
         if claims
             .authorization
             .iter()
@@ -688,14 +689,14 @@ impl SiliconIamIdentityProvider {
                 });
             }
         };
-        let principal_id = claims.principal_id.filter(|id| !id.is_nil()).ok_or(IdentityError::Forbidden)?;
+        let principal_id =
+            claims.public_id.clone().filter(|id| !id.trim().is_empty()).ok_or(IdentityError::Forbidden)?;
         if let Some(actor) = response.actor.as_ref() {
             let snapshot_public_id =
                 claims.authorization.as_ref().and_then(|authorization| authorization.public_id.as_deref());
-            if actor.principal_id.is_nil()
-                || principal_id != actor.principal_id
+            if actor.public_id.trim().is_empty()
+                || principal_id != actor.public_id
                 || kind != actor_ref_kind(&actor.type_field, operation)?
-                || actor.public_id.trim().is_empty()
                 || snapshot_public_id.is_some_and(|public_id| public_id != actor.public_id)
             {
                 return Err(IdentityError::Forbidden);
@@ -713,8 +714,8 @@ impl SiliconIamIdentityProvider {
                 refresh_token: response.refresh_token,
                 scope: claims.scope.unwrap_or_default(),
                 identity: PrincipalIdentity {
+                    public_id: Some(principal_id.clone()),
                     principal_id,
-                    public_id: response.actor.as_ref().map(|actor| actor.public_id.clone()),
                     tags: None,
                     org_role: None,
                     scopes: Vec::new(),
@@ -776,7 +777,7 @@ impl SiliconIamIdentityProvider {
         };
         let identity = identity_from_claims(&selected_claims, &self.app_id, &org_id, actor_public_id, Utc::now())?;
         if let Some(actor) = response.actor.as_ref()
-            && (identity.principal_id != actor.principal_id
+            && (identity.principal_id != actor.public_id
                 || identity.kind != actor_ref_kind(&actor.type_field, operation)?)
         {
             return Err(IdentityError::Contract { operation, reason: "exchange actor did not match introspection" });
@@ -976,6 +977,29 @@ fn validate_common_claims(claims: &TokenIntrospection, app_id: &str, now: DateTi
     Ok(())
 }
 
+/// The deployed pre-cutover response puts the verified canonical handle only
+/// in its authorization snapshot. Translate that format at this read boundary;
+/// private UUIDs never become Browser ownership or authentication lookup keys.
+fn compatible_introspection(mut response: serde_json::Value) -> Result<TokenIntrospection, IdentityError> {
+    let invalid = || IdentityError::Contract {
+        operation: "token introspection",
+        reason: "legacy identity did not match its authorization snapshot",
+    };
+    if response.get("public_id").is_none() && response.get("principal_id").is_some() {
+        let legacy = response.get("principal_id").and_then(serde_json::Value::as_str).ok_or_else(invalid)?;
+        Uuid::parse_str(legacy).map_err(|_| invalid())?;
+        if let Some(authorization) = response.get("authorization") {
+            if authorization.get("principal_id").and_then(serde_json::Value::as_str) != Some(legacy) {
+                return Err(invalid());
+            }
+            if let Some(public_id) = authorization.get("public_id").and_then(serde_json::Value::as_str) {
+                response["public_id"] = serde_json::Value::String(public_id.to_owned());
+            }
+        }
+    }
+    serde_json::from_value(response).map_err(|_| invalid())
+}
+
 fn identity_from_claims(
     claims: &TokenIntrospection,
     app_id: &str,
@@ -1003,9 +1027,9 @@ fn identity_from_claims(
             reason: "expires_at was outside the supported timestamp range",
         })?;
     let mut identity = PrincipalIdentity {
-        principal_id: claims.principal_id.ok_or(IdentityError::Contract {
+        principal_id: claims.public_id.clone().filter(|id| !id.trim().is_empty()).ok_or(IdentityError::Contract {
             operation: "token introspection",
-            reason: "an active token had no principal_id",
+            reason: "an active token had no public_id",
         })?,
         public_id,
         tags: None,
@@ -1036,7 +1060,7 @@ fn identity_from_claims(
     let authorization_public_id = authorization.public_id.as_deref().filter(|id| !id.trim().is_empty());
     let scopes: HashSet<&str> = claims.scope.as_deref().ok_or_else(invalid)?.split_whitespace().collect();
     let authorization_scopes: HashSet<&str> = authorization.scopes.iter().map(String::as_str).collect();
-    if authorization.principal_id != identity.principal_id
+    if authorization.public_id.as_deref() != Some(identity.principal_id.as_str())
         || !kind_matches
         || authorization.org_id != expected_org
         || authorization.membership_id != identity.membership_id
@@ -1592,7 +1616,7 @@ mod tests {
     fn claims() -> TokenIntrospection {
         TokenIntrospection {
             active: true,
-            principal_id: Some(Uuid::from_u128(1)),
+            public_id: Some("silicon-1".into()),
             actor_type: Some(TokenIntrospectionActorType::Silicon),
             client_id: Some(APP.to_owned()),
             org_id: Some(ORG.to_owned()),
@@ -1604,7 +1628,6 @@ mod tests {
             expires_at: Some(Utc::now().timestamp() + 1_800),
             authorization_epoch: Some(7),
             authorization: Some(silicon_iam_client::models::ApplicationAuthorization {
-                principal_id: Uuid::from_u128(1),
                 actor_type: Some(ApplicationAuthorizationActorType::Silicon),
                 public_id: Some("silicon-1".into()),
                 organization_id: Uuid::from_u128(4),
@@ -1629,6 +1652,19 @@ mod tests {
         identity_from_claims(&claims(), APP, ORG, Some("silicon-1".into()), Utc::now()).unwrap()
     }
 
+    #[test]
+    fn deployed_uuid_introspection_normalizes_verified_handle_before_cutover() {
+        let mut response = serde_json::to_value(claims()).unwrap();
+        response.as_object_mut().unwrap().remove("public_id");
+        response["principal_id"] = serde_json::json!(Uuid::from_u128(1));
+        response["authorization"]["principal_id"] = serde_json::json!(Uuid::from_u128(1));
+        let claims = compatible_introspection(response.clone()).unwrap();
+        let identity = identity_from_claims(&claims, APP, ORG, None, Utc::now()).unwrap();
+        assert_eq!(identity.principal_id, "silicon-1");
+        response["authorization"]["principal_id"] = serde_json::json!(Uuid::from_u128(9));
+        assert!(compatible_introspection(response).is_err());
+    }
+
     fn exchanged() -> ExchangedAuth {
         ExchangedAuth {
             access_token: oat('A'),
@@ -1641,7 +1677,7 @@ mod tests {
     #[test]
     fn active_claims_are_bound_to_app_org_actor_and_membership() {
         let identity = identity();
-        assert_eq!(identity.principal_id, Uuid::from_u128(1));
+        assert_eq!(identity.principal_id, "silicon-1");
         assert_eq!(identity.membership_id, Uuid::from_u128(2).to_string());
         assert_eq!(identity.public_id.as_deref(), Some("silicon-1"));
 
@@ -1667,7 +1703,7 @@ mod tests {
             let mut inspected = claims();
             let snapshot = inspected.authorization.as_mut().unwrap();
             match mutation {
-                0 => snapshot.principal_id = Uuid::new_v4(),
+                0 => snapshot.public_id = Some("different".into()),
                 1 => snapshot.actor_type = Some(ApplicationAuthorizationActorType::Carbon),
                 2 => snapshot.org_id = "another-org".into(),
                 3 => snapshot.membership_id = Uuid::new_v4().to_string(),
@@ -2042,7 +2078,7 @@ mod tests {
         for wrong_principal in [false, true] {
             let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
             let base = Url::parse(&format!("http://{}", listener.local_addr().unwrap())).unwrap();
-            let response:OAuthTokenResponse=serde_json::from_value(json!({"access_token":oat('A'),"refresh_token":format!("ort_{}","R".repeat(43)),"token_type":"Bearer","expires_in":1800,"scope":"self.identity.read self.membership.read self.tags.read obo:tos>briefcase:briefcase.files.create","org_id":ORG,"actor":{"principal_id":Uuid::from_u128(1),"public_id":"silicon-1","type":"silicon"}})).unwrap();
+            let response:OAuthTokenResponse=serde_json::from_value(json!({"access_token":oat('A'),"refresh_token":format!("ort_{}","R".repeat(43)),"token_type":"Bearer","expires_in":1800,"scope":"self.identity.read self.membership.read self.tags.read obo:tos>briefcase:briefcase.files.create","org_id":ORG,"actor":{"public_id":"silicon-1","type":"silicon"}})).unwrap();
             let server = tokio::spawn(async move {
                 for index in 0..3 {
                     let (mut stream, _) = listener.accept().await.unwrap();
@@ -2058,7 +2094,7 @@ mod tests {
                         current.scope = Some("self.identity.read self.membership.read self.tags.read obo:tos>briefcase:briefcase.files.create".into());
 
                         if wrong_principal {
-                            current.principal_id = Some(Uuid::from_u128(99));
+                            current.public_id = Some("different".into());
                         }
                     }
                     write_test_response(&mut stream, "200 OK", &[], &serde_json::to_string(&current).unwrap()).await;
@@ -2078,7 +2114,7 @@ mod tests {
             } else {
                 let recovered = recovered.unwrap();
                 assert!(!recovered.access_active);
-                assert_eq!(recovered.auth.identity.principal_id, Uuid::from_u128(1));
+                assert_eq!(recovered.auth.identity.principal_id, "silicon-1");
                 assert!(recovered.auth.identity.tags.is_none());
                 assert!(recovered.auth.identity.org_role.is_none());
                 assert!(recovered.auth.identity.scopes.is_empty());

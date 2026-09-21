@@ -122,7 +122,7 @@ mod tests {
 
     fn identity() -> PrincipalIdentity {
         PrincipalIdentity {
-            principal_id: Uuid::nil(),
+            principal_id: Uuid::nil().to_string(),
             public_id: Some("test".into()),
             tags: None,
             org_role: Some("member".into()),

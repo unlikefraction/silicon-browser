@@ -184,7 +184,7 @@ impl DeliveryAuth {
         })?;
         let actor = expected.public_id.as_deref().filter(|v| !v.is_empty()).ok_or(IdentityError::Forbidden)?;
         if expected.org_id != org
-            || expected.principal_id.is_nil()
+            || expected.principal_id.is_empty()
             || expected.membership_id.is_empty()
             || expected.expires_at <= Utc::now()
         {
@@ -194,7 +194,7 @@ impl DeliveryAuth {
         if test_actor {
             self.live_status_for_principal(org, expected).await?;
         }
-        // Actor IDs are reusable. Retry their current enrollment, but create a new
+        // Testing login inputs are reusable. Retry their current enrollment, but create a new
         // IAM family after disable/revocation; an SLT always retains its exact replay.
         let digest =
             hex::encode(Sha256::digest(if test_actor { Uuid::new_v4().to_string() } else { slt.into() }.as_bytes()));
@@ -273,8 +273,8 @@ impl DeliveryAuth {
     fn matches(row: &Grant, p: &PrincipalIdentity) -> bool {
         row.org_id == p.org_id
             && p.public_id.as_deref() == Some(&row.actor_id)
-            && row.principal_id == p.principal_id.to_string()
-            && row.membership_id == p.membership_id.to_string()
+            && row.principal_id == p.principal_id
+            && row.membership_id == p.membership_id
             && serde_json::to_string(&p.kind).ok().as_deref() == Some(&row.actor_kind)
     }
     pub async fn authorized_binding(&self, org: &str, actor: &str) -> Result<(String, String)> {
@@ -577,7 +577,7 @@ mod tests {
         fn new() -> Self {
             Self {
                 expected: PrincipalIdentity {
-                    principal_id: Uuid::from_u128(1),
+                    principal_id: Uuid::from_u128(1).to_string(),
                     public_id: Some("actor".into()),
                     tags: Some(vec![]),
                     org_role: Some("member".into()),
@@ -610,7 +610,7 @@ mod tests {
         fn auth(&self) -> ExchangedAuth {
             let mut identity = self.expected.clone();
             if self.wrong_actor.load(Ordering::SeqCst) {
-                identity.principal_id = Uuid::from_u128(9);
+                identity.principal_id = Uuid::from_u128(9).to_string();
             }
             if self.missing_grant.load(Ordering::SeqCst) {
                 identity.scopes.retain(|scope| !scope.starts_with("obo:"));
@@ -961,7 +961,7 @@ mod tests {
         let (service, mock) = fixture().await;
         service.enroll("org", &mock.expected, &slt()).await.unwrap();
         let mut replacement_mock = Mock::new();
-        replacement_mock.expected.principal_id = Uuid::from_u128(98);
+        replacement_mock.expected.principal_id = Uuid::from_u128(98).to_string();
         replacement_mock.expected.membership_id = Uuid::from_u128(99).to_string();
         let replacement_mock = Arc::new(replacement_mock);
         let replacement = DeliveryAuth::new(

@@ -73,9 +73,7 @@ impl AppState {
                 &scope.principal.membership_id.to_string(),
             )
             .await?;
-        if binding.0 != scope.principal.principal_id.to_string()
-            || binding.1 != scope.principal.membership_id.to_string()
-        {
+        if binding.0 != scope.principal.principal_id || binding.1 != scope.principal.membership_id {
             return Err(ApiFailure::conflict(
                 "recording_authorization_required",
                 "recording delivery needs a fresh SLT for this membership",

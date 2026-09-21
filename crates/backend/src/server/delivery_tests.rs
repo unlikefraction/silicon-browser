@@ -218,7 +218,7 @@ async fn reused_public_name_cannot_adopt_or_disable_historical_delivery_authorit
         .await
         .unwrap();
     let mut replacement = old.clone();
-    replacement.principal_id = Uuid::new_v4();
+    replacement.principal_id = Uuid::new_v4().to_string();
     replacement.membership_id = Uuid::new_v4().to_string();
     fixture.identity.allow_identity("oat_replacement", replacement);
     let auth = Some(("oat_replacement", "org-1"));

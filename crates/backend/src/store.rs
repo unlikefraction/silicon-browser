@@ -22,6 +22,7 @@ use uuid::Uuid;
 use crate::crypto::SecretBox;
 use crate::decimal::decimal_to_millionths;
 
+mod canonical_identities;
 mod command_reports;
 mod delivery;
 #[cfg(test)]
@@ -253,6 +254,33 @@ impl Store {
         } else {
             None
         };
+        let mut canonical_legacy_ids = Vec::new();
+        if principal_id == public_id {
+            let previous: Vec<(String, String)> = sqlx::query_as(
+                "SELECT principal_id,kind FROM identity_projection WHERE org_id=? AND public_id=? AND principal_id<>?",
+            )
+            .bind(org_id)
+            .bind(public_id)
+            .bind(principal_id)
+            .fetch_all(&mut *transaction)
+            .await?;
+            if previous.len() > 1
+                || previous
+                    .iter()
+                    .any(|(id, previous_kind)| Uuid::parse_str(id).is_err() || previous_kind != identity_kind(kind))
+            {
+                return Err(corrupt("identity projection", "ambiguous canonical IAM identity mapping"));
+            }
+            for (legacy, _) in previous {
+                sqlx::query("UPDATE identity_projection SET principal_id=? WHERE org_id=? AND principal_id=?")
+                    .bind(principal_id)
+                    .bind(org_id)
+                    .bind(&legacy)
+                    .execute(&mut *transaction)
+                    .await?;
+                canonical_legacy_ids.push(legacy);
+            }
+        }
         sqlx::query(
             "INSERT INTO identity_projection (org_id, principal_id, public_id, kind, updated_at) \
              VALUES (?, ?, ?, ?, ?) \
@@ -270,7 +298,7 @@ impl Store {
         // Canonicalize both the OAT-only UUID and a previous public id. This
         // keeps ownership stable across first exchange and a later verified
         // IAM public-id rotation.
-        let mut legacy_ids = Vec::new();
+        let mut legacy_ids = canonical_legacy_ids;
         if principal_id != public_id {
             legacy_ids.push(principal_id.to_owned());
         }
@@ -280,7 +308,13 @@ impl Store {
         {
             legacy_ids.push(previous);
         }
+        legacy_ids.sort();
+        legacy_ids.dedup();
         for legacy_id in legacy_ids {
+            if principal_id == public_id {
+                canonical_identities::rewrite_authority(&mut transaction, secrets, org_id, &legacy_id, public_id)
+                    .await?;
+            }
             let rows = sqlx::query("SELECT id, owner_id, access_json FROM profiles WHERE org_id = ?")
                 .bind(org_id)
                 .fetch_all(&mut *transaction)
@@ -353,7 +387,7 @@ impl Store {
                 let encrypted = secrets
                     .seal_for(&command_secret_context(org_id, &command_session_id, sequence, public_id), &command)
                     .map_err(StoreError::Crypto)?;
-                sqlx::query("UPDATE commands SET actor_id = ?, command_enc = ? WHERE session_id = ? AND sequence = ?")
+                sqlx::query("UPDATE commands SET delivery_actor_id = CASE WHEN EXISTS(SELECT 1 FROM recording_artifacts a WHERE a.session_id = commands.session_id AND a.kind = 'commands' AND a.body_sha256 IS NOT NULL) THEN COALESCE(delivery_actor_id, actor_id) ELSE delivery_actor_id END, actor_id = ?, command_enc = ? WHERE session_id = ? AND sequence = ?")
                     .bind(public_id)
                     .bind(encrypted)
                     .bind(command_session_id)

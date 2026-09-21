@@ -2678,7 +2678,7 @@ mod tests {
 
     fn principal(id: &str, kind: IdentityKind, public: bool) -> PrincipalIdentity {
         PrincipalIdentity {
-            principal_id: Uuid::new_v4(),
+            principal_id: Uuid::new_v4().to_string(),
             public_id: public.then(|| id.into()),
             tags: None,
             org_role: Some("member".into()),

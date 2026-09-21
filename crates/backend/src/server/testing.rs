@@ -114,6 +114,7 @@ impl TestingRegistry {
         let url = Url::from_file_path(std::path::absolute(path).map_err(|_| internal("invalid test database path"))?)
             .map_err(|_| internal("invalid test database path"))?;
         let store = Store::connect(&format!("sqlite://{}?mode=rwc", url.path())).await?;
+        store.canonicalize_iam_identities(&self.0.template.secrets).await?;
         let template = &self.0.template;
         let state = AppState::new(
             &*template.public_origin,
