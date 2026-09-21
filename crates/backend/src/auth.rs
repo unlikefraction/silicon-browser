@@ -988,13 +988,24 @@ fn compatible_introspection(mut response: serde_json::Value) -> Result<TokenIntr
     if response.get("public_id").is_none() && response.get("principal_id").is_some() {
         let legacy = response.get("principal_id").and_then(serde_json::Value::as_str).ok_or_else(invalid)?;
         Uuid::parse_str(legacy).map_err(|_| invalid())?;
-        if let Some(authorization) = response.get("authorization") {
+        let snapshots = response
+            .get("authorization")
+            .into_iter()
+            .chain(response.get("authorizations").and_then(serde_json::Value::as_array).into_iter().flatten());
+        let mut canonical = None;
+        for authorization in snapshots {
             if authorization.get("principal_id").and_then(serde_json::Value::as_str) != Some(legacy) {
                 return Err(invalid());
             }
             if let Some(public_id) = authorization.get("public_id").and_then(serde_json::Value::as_str) {
-                response["public_id"] = serde_json::Value::String(public_id.to_owned());
+                if canonical.as_deref().is_some_and(|value| value != public_id) {
+                    return Err(invalid());
+                }
+                canonical = Some(public_id.to_owned());
             }
+        }
+        if let Some(public_id) = canonical {
+            response["public_id"] = serde_json::Value::String(public_id);
         }
     }
     serde_json::from_value(response).map_err(|_| invalid())
@@ -1661,6 +1672,14 @@ mod tests {
         let claims = compatible_introspection(response.clone()).unwrap();
         let identity = identity_from_claims(&claims, APP, ORG, None, Utc::now()).unwrap();
         assert_eq!(identity.principal_id, "silicon-1");
+        let mut unbound = response.clone();
+        let snapshot = unbound.as_object_mut().unwrap().remove("authorization").unwrap();
+        unbound.as_object_mut().unwrap().remove("org_id");
+        unbound["authorizations"] = serde_json::json!([snapshot]);
+        let claims = compatible_introspection(unbound.clone()).unwrap();
+        assert_eq!(organizations_from_claims(&claims, APP, Utc::now()).unwrap()[0].id, ORG);
+        unbound["authorizations"][0]["principal_id"] = serde_json::json!(Uuid::from_u128(9));
+        assert!(compatible_introspection(unbound).is_err());
         response["authorization"]["principal_id"] = serde_json::json!(Uuid::from_u128(9));
         assert!(compatible_introspection(response).is_err());
     }
