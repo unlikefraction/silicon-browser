@@ -744,12 +744,29 @@ fn login_status(
     json: bool,
     org_override: Option<&str>,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let (_, mut state) = load_selected_state(backend, environment)?;
+    let (home, mut state) = load_selected_state(backend, environment)?;
+    validate_runtime_environment_auth(&state)?;
+    let refresh = refresh_if_needed(&mut state, &home);
+    if let Err(error) = refresh {
+        if !is_unauthenticated(error.as_ref()) {
+            return Err(error);
+        }
+        if json {
+            print_json(&serde_json::json!({"authenticated": false}))?;
+        } else {
+            println!("not authenticated");
+        }
+        return Ok(());
+    }
     if let Some(org) = org_override {
         state.org_id = Some(org.to_owned());
     }
     let authenticated = match state.token() {
-        Some(token) => client_with_token(&state, &token).and_then(|client| Ok(client.me()?)).is_ok(),
+        Some(token) => match client_with_token(&state, &token).and_then(|client| Ok(client.me()?)) {
+            Ok(_) => true,
+            Err(error) if is_unauthenticated(error.as_ref()) => false,
+            Err(error) => return Err(error),
+        },
         None => false,
     };
     if json {
@@ -758,6 +775,10 @@ fn login_status(
         println!("{}", if authenticated { "authenticated" } else { "not authenticated" });
     }
     Ok(())
+}
+
+fn is_unauthenticated(error: &(dyn std::error::Error + 'static)) -> bool {
+    matches!(error.downcast_ref::<silicon_browser::Error>(), Some(silicon_browser::Error::Api { code, .. }) if code == "unauthenticated")
 }
 
 fn apply_runtime_overrides(state: &mut State, backend: Option<&str>, org_id: Option<&str>) {
@@ -1379,12 +1400,15 @@ fn client_with_token(state: &State, token: &str) -> Result<Client, Box<dyn std::
         let backend = state.backend_url.clone();
         let bound_org = org.clone();
         let identity = state.identity_id.clone();
+        let generation = state.credential_generation.clone();
         transport = transport.with_unauthorized_recovery(move |request| {
-            recover_rejected_access(&home, &backend, &bound_org, identity.as_deref(), request).map_err(|error| {
-                silicon_browser::Error::Local(format!(
-                    "access was rejected and automatic refresh could not complete: {error}"
-                ))
-            })
+            recover_rejected_access(&home, &backend, &bound_org, identity.as_deref(), generation.as_deref(), request)
+                .map_err(|error| match error.downcast::<silicon_browser::Error>() {
+                    Ok(error) => *error,
+                    Err(error) => silicon_browser::Error::Local(format!(
+                        "access was rejected and automatic refresh could not complete: {error}"
+                    )),
+                })
         });
     }
     Ok(Client::with_transport(state.backend_url.clone(), Auth::new(token)?, std::sync::Arc::new(transport))?
@@ -1396,6 +1420,7 @@ fn recover_rejected_access(
     backend: &str,
     org: &str,
     identity: Option<&str>,
+    generation: Option<&str>,
     request: &silicon_browser::Request,
 ) -> Result<Option<String>, Box<dyn std::error::Error>> {
     let _guard = refresh_lock(home)?;
@@ -1405,6 +1430,7 @@ fn recover_rejected_access(
             && state.identity_id.as_deref() == identity
             && state.backend_url == backend
             && state.org_id.as_deref() == Some(org)
+            && state.credential_generation.as_deref() == generation
     };
     if !matches_binding(&current) || request.org.as_deref() != Some(org) {
         return Err(
@@ -1413,6 +1439,9 @@ fn recover_rejected_access(
         );
     }
     if current.stored_token() != request.bearer.as_deref() {
+        if generation.is_some() && !needs_refresh(&current) {
+            return Ok(current.stored_token().map(str::to_owned));
+        }
         // A public identity string cannot distinguish another refresh from a concurrent
         // setup with a different IAM principal. Never transfer queued intent to that token.
         return Err("credentials changed after the rejected request; run the command again".into());
@@ -1458,8 +1487,8 @@ fn refresh_if_needed(state: &mut State, home: &std::path::Path) -> Result<(), Bo
         .ok_or("the auth token expired and has no refresh token; run `browser setup` with a new IAM short-lived token")?
         .to_owned();
     let org_id = current.org_id.clone().ok_or("the auth token expired without an organization; run `browser setup`")?;
-    // Exactly one attempt while holding the process-wide refresh lock. An ambiguous transport
-    // failure is deliberately not retried because IAM refresh tokens rotate on use.
+    // The backend derives a stable idempotency key from the refresh token and organization,
+    // so another command can safely replay an uncertain exchange with the saved credential.
     let session = Client::refresh_with_transport(
         current.backend_url.clone(),
         &AuthRefreshRequest { refresh_token: refresh_token.clone(), org_id },
@@ -1766,10 +1795,48 @@ mod tests {
             org: Some("org".into()),
             body: None,
         };
-        let error =
-            recover_rejected_access(&home, "http://127.0.0.1:1", "org", Some("reused-name"), &request).unwrap_err();
+        let error = recover_rejected_access(&home, "http://127.0.0.1:1", "org", Some("reused-name"), None, &request)
+            .unwrap_err();
         assert!(error.to_string().contains("credentials changed after"));
         assert_eq!(State::load(&home).unwrap().stored_token(), Some("oat_other_principal"));
+    }
+
+    #[test]
+    fn rejected_request_adopts_an_already_refreshed_token_only_in_the_same_login_generation() {
+        let root = tempfile::tempdir().unwrap();
+        let home = root.path().join("state");
+        State::update(&home, |state| {
+            state.backend_url = "http://127.0.0.1:1".into();
+            state.org_id = Some("org".into());
+            state.identity_id = Some("actor".into());
+            state.credential_generation = Some("generation".into());
+            state.set_tokens("oat_new".into(), Some("ort_new".into()), Some("2099-01-01T00:00:00Z".into()));
+        })
+        .unwrap();
+        let request = silicon_browser::Request {
+            method: silicon_browser::Method::Get,
+            url: "http://127.0.0.1:1/api/v1/profiles".into(),
+            bearer: Some("oat_old".into()),
+            org: Some("org".into()),
+            body: None,
+        };
+        assert_eq!(
+            recover_rejected_access(&home, "http://127.0.0.1:1", "org", Some("actor"), Some("generation"), &request)
+                .unwrap()
+                .as_deref(),
+            Some("oat_new")
+        );
+        assert!(
+            recover_rejected_access(
+                &home,
+                "http://127.0.0.1:1",
+                "org",
+                Some("actor"),
+                Some("previous-login"),
+                &request
+            )
+            .is_err()
+        );
     }
 
     /// Test group: access arguments accept both documented brackets and plain comma lists.
