@@ -27,12 +27,14 @@ async fn main() {
 
 async fn run() -> Result<(), String> {
     let args: Vec<String> = std::env::args().skip(1).collect();
-    if !args.is_empty() && !(args.len() == 2 || args.len() == 4)
-        || args.first().is_some_and(|arg| arg != "--migrate-public-identifiers")
-        || args.len() == 4 && args[2] != "--scope-key"
-    {
-        return Err("usage: silicon-browser-backend [--migrate-public-identifiers mapping.json [--scope-key <IAM-testing-UUID>]]".into());
-    }
+    let (mapping_path, scope_key) = match args.as_slice() {
+        [] => (None, ""),
+        [flag] if flag == "--verify-public-identifiers-only" => (None, ""),
+        [flag, scope_flag, scope] if flag == "--verify-public-identifiers-only" && scope_flag == "--scope-key" => (None, scope.as_str()),
+        [flag, path] if flag == "--migrate-public-identifiers" => (Some(path), ""),
+        [flag, path, scope_flag, scope] if flag == "--migrate-public-identifiers" && scope_flag == "--scope-key" => (Some(path), scope.as_str()),
+        _ => return Err("usage: silicon-browser-backend [--migrate-public-identifiers mapping.json | --verify-public-identifiers-only] [--scope-key <IAM-testing-UUID>]".into()),
+    };
     let config = Config::from_env()?;
     if !args.is_empty() {
         use std::str::FromStr;
@@ -42,7 +44,6 @@ async fn run() -> Result<(), String> {
         if !filename.is_file() {
             return Err("migration requires an existing SQLite database; check SB_DATABASE_URL".into());
         }
-        let scope_key = args.get(3).map(String::as_str).unwrap_or("");
         if let Some(stem) = filename.file_stem().and_then(|name| name.to_str())
             && stem.len() == 101
             && stem.as_bytes()[36] == b'-'
@@ -56,19 +57,28 @@ async fn run() -> Result<(), String> {
         if config.iam_test_environment_key.is_some() && scope_key.is_empty() {
             return Err("testing configuration requires an explicit --scope-key for offline migration".into());
         }
-        let mapping: Vec<PublicIdentifierMapping> = serde_json::from_slice(
-            &std::fs::read(&args[1]).map_err(|error| format!("could not read IAM mapping: {error}"))?,
-        )
-        .map_err(|error| format!("invalid IAM mapping: {error}"))?;
+        let mapping = mapping_path
+            .map(|path| {
+                serde_json::from_slice::<Vec<PublicIdentifierMapping>>(
+                    &std::fs::read(path).map_err(|error| format!("could not read IAM mapping: {error}"))?,
+                )
+                .map_err(|error| format!("invalid IAM mapping: {error}"))
+            })
+            .transpose()?;
         let store = Store::connect(&config.database_url).await.map_err(|error| error.to_string())?;
-        store
-            .migrate_public_identifiers(scope_key, &mapping, &SecretBox::new(&config.encryption_key))
-            .await
-            .map_err(|error| error.to_string())?;
-        tracing::info!(
-            identities = mapping.len(),
-            "public identifier migration completed; no listeners or workers started"
-        );
+        if let Some(mapping) = mapping {
+            store
+                .migrate_public_identifiers(scope_key, &mapping, &SecretBox::new(&config.encryption_key))
+                .await
+                .map_err(|error| error.to_string())?;
+            tracing::info!(
+                identities = mapping.len(),
+                "public identifier migration completed; no listeners or workers started"
+            );
+        } else {
+            store.ensure_public_identifiers_migrated(scope_key).await.map_err(|error| error.to_string())?;
+            tracing::info!("public identifier verification completed; no listeners or workers started");
+        }
         return Ok(());
     }
     let store = Store::connect(&config.database_url).await.map_err(|error| error.to_string())?;

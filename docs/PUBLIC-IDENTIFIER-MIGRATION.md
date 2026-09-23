@@ -6,8 +6,8 @@ actor kinds contain a colon; kind must agree with IAM's verified actor type.
 Membership IDs are `c:alice[org]` and `si:chef[org]`. Bundle IDs and release
 selectors retain their separate grammars (`tos>bundle`, `browser>test@1.0.0`).
 
-This change prepares source and an offline data migrator. It does not perform a
-production cutover, deploy services, publish packages, or rotate secrets.
+This change prepares source and an offline data migrator. Its release verification and actual production cutover are recorded separately
+under `docs/operations/`. This procedure never rotates secrets.
 
 ## Verified upstream contracts
 
@@ -127,8 +127,8 @@ replay; frozen artifact hashes; OBO delivery and unchanged completed receipts.
 Compare row counts and resource IDs with the snapshot. Reopen incoming writes
 only after these checks pass. Unit tests are not proof of a live cutover.
 
-The previously published 0.2.4 package archives remain immutable. Assign a new
-unused release version before building/uploading this changed source. Honeycomb
+Previously published package archives remain immutable. This release uses the
+new version 0.3.1. Preserve existing release archives and checksums. Honeycomb
 uploads now require an explicit `--channel prod` or `--channel dev`; preserve
 `browser>test@VERSION` for dev release selection.
 

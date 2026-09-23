@@ -85,7 +85,7 @@ fn receipt(claim: &RecordingDeliveryClaim) -> BriefcaseEntry {
         content_type: None,
         size: 20,
         permanent_url: "https://briefcase.example/entry".into(),
-        origin_app_id: Some("org>browser".into()),
+        origin_app_id: Some("browser".into()),
     }
 }
 

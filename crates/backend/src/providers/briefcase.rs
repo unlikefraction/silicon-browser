@@ -454,8 +454,10 @@ mod tests {
             ("test-org", "tos>", proof()),
             ("test-org", "tos>Browser", proof()),
             ("test-org", "tos>browser", proof()),
+            ("test-org", "browser>other", proof()),
             ("test-org", "tos>2browser", proof()),
             ("test-org", "Browser", proof()),
+            ("test-org", "2browser", proof()),
             ("test-org\r\n", "browser", proof()),
             ("test-org", "browser", OnBehalfOfGrant::new("invalid-proof-secret").unwrap()),
         ] {
@@ -522,7 +524,7 @@ mod tests {
 
     #[tokio::test]
     async fn authorized_overwrite_preserves_original_creator_metadata() {
-        for origin in [None, Some("test-org>other")] {
+        for origin in [None, Some("other"), Some("test-org>other")] {
             let bytes = b"replacement content".to_vec();
             let mut response = entry(bytes.len());
             response["origin_app_id"] = json!(origin);

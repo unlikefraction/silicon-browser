@@ -357,7 +357,7 @@ impl Store {
                 let encrypted = secrets
                     .seal_for(&command_secret_context(org_id, &command_session_id, sequence, public_id), &command)
                     .map_err(StoreError::Crypto)?;
-                sqlx::query("UPDATE commands SET actor_id = ?, command_enc = ? WHERE session_id = ? AND sequence = ?")
+                sqlx::query("UPDATE commands SET delivery_actor_id = CASE WHEN EXISTS(SELECT 1 FROM recording_artifacts a WHERE a.session_id = commands.session_id AND a.kind = 'commands') THEN COALESCE(delivery_actor_id, actor_id) ELSE delivery_actor_id END, actor_id = ?, command_enc = ? WHERE session_id = ? AND sequence = ?")
                     .bind(public_id)
                     .bind(encrypted)
                     .bind(command_session_id)

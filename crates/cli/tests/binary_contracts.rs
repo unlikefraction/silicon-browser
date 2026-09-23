@@ -153,6 +153,7 @@ fn write_response(stream: &mut TcpStream, response: StubResponse) {
         200 => "OK",
         401 => "Unauthorized",
         409 => "Conflict",
+        503 => "Service Unavailable",
         status => panic!("unsupported stub status {status}"),
     };
     write!(
@@ -971,6 +972,40 @@ fn legacy_identity_refreshes_before_unexpired_access_is_used_in_each_world() {
         assert_eq!(saved["identity_id"], "si:actor");
         assert_eq!(saved["refresh_token"], "ort_rotated");
     }
+}
+
+#[cfg(unix)]
+#[test]
+fn login_status_refreshes_expired_credentials_and_preserves_service_failures() {
+    let server = StubServer::start(vec![
+        refreshed_session_response(),
+        StubResponse::json(200, json!({"data":{"id":"si:actor","name":"Actor","kind":"silicon"}})),
+        StubResponse::json(503, json!({"error":{"code":"unavailable","message":"temporary failure"}})),
+    ]);
+    let root = tempfile::tempdir().unwrap();
+    let home = root.path().join("state");
+    stored_recovery_home(&home, &server.base_url);
+    let mut state: Value = serde_json::from_slice(&fs::read(home.join("state.json")).unwrap()).unwrap();
+    state["token_expires_at"] = json!("2000-01-01T00:00:00Z");
+    fs::write(home.join("state.json"), state.to_string()).unwrap();
+    isolated_sb(&home, &server.base_url)
+        .env_remove("SB_AUTHTOKEN")
+        .args(["login", "status", "--json"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("\"authenticated\": true"));
+    let saved = fs::read(partition_state(&home, &server.base_url)).unwrap();
+    isolated_sb(&home, &server.base_url)
+        .env_remove("SB_AUTHTOKEN")
+        .args(["login", "status", "--json"])
+        .assert()
+        .failure()
+        .stdout("")
+        .stderr(predicate::str::contains("unavailable"));
+    assert_eq!(fs::read(partition_state(&home, &server.base_url)).unwrap(), saved);
+    let requests = server.finish();
+    assert_eq!(requests[0].path, "/api/v1/auth/refresh");
+    assert_eq!(requests[1].headers["authorization"], "Bearer oat_recovered");
 }
 
 #[cfg(unix)]

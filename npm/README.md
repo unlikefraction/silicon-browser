@@ -1,6 +1,6 @@
 # Silicon Browser npm package
 
-The `silicon-browser` npm package exposes the managed Silicon Browser CLI as `browser`, version 0.2.4.
+The `silicon-browser` npm package exposes the managed Silicon Browser CLI as `browser`, version 0.3.1.
 
 ```sh
 browser --version

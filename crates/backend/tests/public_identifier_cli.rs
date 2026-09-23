@@ -86,3 +86,32 @@ async fn migration_cli_is_offline_world_scoped_and_refuses_accidental_new_databa
         pool.close().await;
     }
 }
+
+#[tokio::test]
+async fn verification_cli_applies_only_schema_and_world_marker_without_network() {
+    let directory = tempfile::tempdir().unwrap();
+    let upstream = TcpListener::bind("127.0.0.1:0").unwrap();
+    upstream.set_nonblocking(true).unwrap();
+    let database = directory.path().join("canonical.db");
+    let arguments = ["--verify-public-identifiers-only"];
+    assert!(!migrate(directory.path(), &database, &upstream, &arguments).status.success());
+    assert!(!database.exists());
+    std::fs::write(&database, []).unwrap();
+    let output = migrate(directory.path(), &database, &upstream, &arguments);
+    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stdout));
+    let pool = sqlx::SqlitePool::connect(&format!("sqlite://{}?mode=ro", database.display())).await.unwrap();
+    let marker: (String, Option<String>) =
+        sqlx::query_as("SELECT scope_key, mapping_json FROM public_identifier_schema").fetch_one(&pool).await.unwrap();
+    assert_eq!(marker, (String::new(), None));
+    pool.close().await;
+    assert!(
+        !migrate(
+            directory.path(),
+            &database,
+            &upstream,
+            &["--verify-public-identifiers-only", "--scope-key", "00000000-0000-0000-0000-000000000001"]
+        )
+        .status
+        .success()
+    );
+}

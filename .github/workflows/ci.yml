@@ -24,6 +24,7 @@ jobs:
           sh -n scripts/install.sh
           python3 scripts/test_installer.py
           python3 scripts/test_backup.py
+          python3 scripts/test_public_id_cutover.py
 
   frontend:
     runs-on: ubuntu-latest

@@ -331,7 +331,7 @@ async fn migrate_encryption(tx: &mut Transaction<'_, Sqlite>, map: &ActorMap, se
             .map_err(StoreError::Crypto)?;
         if old != new {
             let encrypted = secrets.seal_for(&command_secret_context(org, session, sequence, new), &value).map_err(StoreError::Crypto)?;
-            sqlx::query("UPDATE commands SET command_enc = ?, artifact_actor_id = CASE WHEN ? THEN COALESCE(artifact_actor_id, actor_id) ELSE artifact_actor_id END WHERE session_id = ? AND sequence = ?")
+            sqlx::query("UPDATE commands SET command_enc = ?, delivery_actor_id = CASE WHEN ? THEN COALESCE(delivery_actor_id, actor_id) ELSE delivery_actor_id END WHERE session_id = ? AND sequence = ?")
                 .bind(encrypted).bind(row.try_get::<bool, _>("frozen")?).bind(session).bind(sequence).execute(&mut **tx).await?;
         }
     }

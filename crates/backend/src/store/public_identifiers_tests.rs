@@ -350,3 +350,39 @@ async fn public_identifier_migration_fresh_store_binds_its_world_at_startup() {
     store.migrate_public_identifiers(&world, &[], &secrets()).await.unwrap();
     store.ensure_public_identifiers_migrated(&world).await.unwrap();
 }
+
+#[tokio::test]
+async fn public_identifier_migration_upgrades_deployed_schema_without_changing_frozen_actor_spelling() {
+    let (store, _, _, _, old_claim) = fixture().await;
+    store.migrate_public_identifiers("", &mapping(), &secrets()).await.unwrap();
+    let claim = RecordingDeliveryClaim { actor_id: "si:chef".into(), ..old_claim };
+    let before = lines(&store.recording_delivery_logs(&claim, 0, 128, &secrets()).await.unwrap());
+    // Reproduce the already canonical deployed v8 store, which has the original
+    // delivery_actor_id column but predates the explicit world marker.
+    sqlx::raw_sql("DROP TABLE public_identifier_schema; DELETE FROM _sqlx_migrations WHERE version = 9;")
+        .execute(&store.pool)
+        .await
+        .unwrap();
+    let checksum: String = sqlx::query_scalar("SELECT hex(checksum) FROM _sqlx_migrations WHERE version = 8")
+        .fetch_one(&store.pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        checksum,
+        "E4F3A3171263651A58706FAF5FEAA080DBA903D5704AB21EC13F7EEAD98D1CE0DAF6C951A476EEC04B58508070171ABE"
+    );
+    store.migrate().await.unwrap();
+    store.ensure_public_identifiers_migrated("").await.unwrap();
+    let after = lines(&store.recording_delivery_logs(&claim, 0, 128, &secrets()).await.unwrap());
+    assert_eq!(before, after);
+    assert_eq!(
+        sqlx::query_scalar::<_, String>("SELECT delivery_actor_id FROM commands").fetch_one(&store.pool).await.unwrap(),
+        PRINCIPAL
+    );
+    let marker: (String, Option<String>) =
+        sqlx::query_as("SELECT scope_key, mapping_json FROM public_identifier_schema")
+            .fetch_one(&store.pool)
+            .await
+            .unwrap();
+    assert_eq!(marker, (String::new(), None));
+}

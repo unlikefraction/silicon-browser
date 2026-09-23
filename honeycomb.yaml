@@ -1,6 +1,6 @@
 format_version: 1
 app_id: browser
-version: 0.2.4
+version: 0.3.1
 bin:
   browser: main
 targets:

@@ -9,7 +9,7 @@ members = [
 exclude = ["target/controller-source/cli"]
 
 [workspace.package]
-version = "0.2.4"
+version = "0.3.1"
 edition = "2024"
 rust-version = "1.98"
 license = "MIT"
@@ -17,8 +17,8 @@ repository = "https://github.com/unlikefraction/silicon-browser"
 homepage = "https://browser.teamofsilicons.com"
 
 [workspace.dependencies]
-silicon-browser-shared = { path = "crates/shared", version = "0.2.4" }
-silicon-browser = { path = "crates/client", version = "0.2.4" }
+silicon-browser-shared = { path = "crates/shared", version = "0.3.1" }
+silicon-browser = { path = "crates/client", version = "0.3.1" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 chrono = { version = "0.4", features = ["serde"] }

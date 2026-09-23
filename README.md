@@ -11,12 +11,12 @@ For the public identifier cutover and retained SQLite data, see
 
 For the six-platform Honeycomb package (`browser`), including Windows and
 bundled browser controllers, see [Honeycomb distribution](docs/HONEYCOMB.md).
-After the identifier cutover, install the public application with `honeycomb install 'browser'`.
+The application is public; install it with `honeycomb install 'browser'`.
 
 Run this in a macOS or Linux terminal:
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/unlikefraction/silicon-browser/managed-v0.2.4/scripts/install.sh | sh && export PATH="$HOME/.local/bin:$PATH"
+curl -fsSL https://raw.githubusercontent.com/unlikefraction/silicon-browser/managed-v0.3.1/scripts/install.sh | sh && export PATH="$HOME/.local/bin:$PATH"
 ```
 
 Since 0.2.4, the CLI command is `browser` (previously `sb`). Existing `SB_*` settings and saved authentication are reused.
@@ -41,11 +41,11 @@ Four Space Station tables have been provisioned, but Browser does not yet emit
 runtime telemetry to them. See the [current capability status](docs/CLI.md#telemetry-updates-and-compatibility)
 for telemetry, updates, and versioning limits.
 
-For installation without interactive setup, use `curl -fsSL https://raw.githubusercontent.com/unlikefraction/silicon-browser/managed-v0.2.4/scripts/install.sh | sh -s -- --no-setup`, then run `~/.local/bin/browser setup` when ready. You can also [download prebuilt binaries](https://github.com/unlikefraction/silicon-browser/releases/tag/managed-v0.2.4) or use `cargo install silicon-browser-cli --version 0.2.4 --locked` with Rust 1.98 or later. For a source checkout, use `cargo install --path crates/cli`.
+For installation without interactive setup, use `curl -fsSL https://raw.githubusercontent.com/unlikefraction/silicon-browser/managed-v0.3.1/scripts/install.sh | sh -s -- --no-setup`, then run `~/.local/bin/browser setup` when ready. You can also [download prebuilt binaries](https://github.com/unlikefraction/silicon-browser/releases/tag/managed-v0.3.1) or build this release using `cargo install --git https://github.com/unlikefraction/silicon-browser.git --tag managed-v0.3.1 --locked silicon-browser-cli` with Rust 1.98 or later. The crates.io release awaits publisher access; use the native packages or pinned Git source for 0.3.1. For a source checkout, use `cargo install --path crates/cli`.
 
 `browser login <SLT>` exchanges a short-lived IAM token; use `--org-id` when the IAM CLI token authorizes multiple workspaces. For example, `iam login --app-id 'browser' --grant-org tos -o json | jq -r .slt` followed by `browser --org-id tos login '<SLT>'`. `browser login status --json` reports the current session, and `browser iam --json` prints the canonical application ID.
 
-The dashboard is live at [browser.teamofsilicons.com](https://browser.teamofsilicons.com). The CLI uses its production API by default. The published [Rust client](https://crates.io/crates/silicon-browser) is available with `cargo add silicon-browser@0.2.4`.
+The dashboard is live at [browser.teamofsilicons.com](https://browser.teamofsilicons.com). The CLI uses its production API by default. The [Rust client](https://crates.io/crates/silicon-browser) is `silicon-browser`; this release targets version 0.3.1. Until its crates.io publication completes, use `cargo add silicon-browser --git https://github.com/unlikefraction/silicon-browser.git --tag managed-v0.3.1`.
 
 Setup accepts a fresh IAM `oac_` token interactively or through `SB_AUTHTOKEN`. IAM supplies the token's organization authorization; `--org` selects one when several are available. Setup exchanges the one-shot token and never persists it. An `oat_` in that variable is an explicit invocation-only bearer override. Setup installs the pinned native controller with integrity checks; it does not install local Chromium, Node or npm. Running setup again is safe.
 

@@ -1,0 +1,11 @@
+# Public identifier cutover — 2026-09-23
+
+Browser 0.3.0 backend is live at `a3aac933708718110efbecde52012b85deb346dc`, executable SHA256 `9611f2161350e59750ee981ecbefa270b254636f76df3d009a2bcf45aa7f16f4`. Public health returned 200. The systemd service and backup timer are active; the durable current symlink selects `/opt/silicon-browser/releases/20260923-a3aac93-public-ids`. Prior release and configuration/key backups remain retained.
+
+A fresh frozen SQLite backup plus environment, mapping, manifest and units were independently verified offhost with AES256, length and SHA256 checks. After copy rehearsal, the offline converter verified the original complete database dump had not changed, mapped the 10 projections using IAM's authoritative subset and preserved every non-identity ledger field. Credentials were rebound using the existing key. SSM apply `3842ca4c-1da1-4c4a-bf1d-356e4ba90810` and activation `c6208a0e-b15e-4e4a-9438-5fb86a8e8ddc` succeeded. Only app-ID configuration fields changed; all other runtime secret values and environment bytes were retained.
+
+Fresh scoped production login and profile reads passed. GitHub CI 35855035581 built all six native targets at 1815aa17db32538b86fd01dd5d2c9e8a60c7728c, whose native-client build inputs exactly match deployed a3aac933. All ten GitHub release assets were SHA256 checked before publishing managed-v0.3.0. Honeycomb release `41ff4840-84d6-4986-bdd5-071c46311d69` is accepted, publication `c6b12204-fcf8-418e-af1e-f2fa81d85ff6` published, package SHA256 `a922a66a22f4f30f3ab4e8a8ae64d1fa8544f96e0f4bed08097527a289c3576e`. Anonymous clean-home installation reports `browser 0.3.0`.
+
+Frontend deployment `dpl_95pMPYLRFKxpGJFSVcM8R1Ts4GqD` is now live on `browser.teamofsilicons.com` in the existing owner project `silicon-browser` (Shubham's Vercel account). The public HTML serves `index-DiPGqOF7.js`; the bundle contains the bare `browser` app-ID check and no prior `tos>browser` check. The earlier candidate on Saket's project did not own this custom domain; no domain transfer or DNS change was required.
+
+The Browser shared 0.3.0 Cargo package verified successfully, but registry upload returned 403 because the configured crates.io account is not an owner. Registry owner is unlikefraction. The three crates remain 0.2.4; new native and Honeycomb packages are published independently.

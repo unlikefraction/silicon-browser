@@ -4,7 +4,3 @@ CREATE TABLE public_identifier_schema (
     scope_key TEXT NOT NULL,
     mapping_json TEXT
 );
-
--- A command archive can be regenerated after an uncertain upload. Its frozen
--- actor spelling is historical content, independent of current authorization.
-ALTER TABLE commands ADD COLUMN artifact_actor_id TEXT;

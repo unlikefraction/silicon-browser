@@ -9,7 +9,7 @@ workflow, see [the online CLI guide](https://browser.teamofsilicons.com/docs).
 Install and set up from a macOS or Linux terminal:
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/unlikefraction/silicon-browser/managed-v0.2.4/scripts/install.sh | sh && export PATH="$HOME/.local/bin:$PATH"
+curl -fsSL https://raw.githubusercontent.com/unlikefraction/silicon-browser/managed-v0.3.1/scripts/install.sh | sh && export PATH="$HOME/.local/bin:$PATH"
 ```
 
 This selects and verifies the native release, installs `browser` into `~/.local/bin`, adds it to your shell's PATH, and runs setup with a fresh IAM authorization token. Setup asks for an organization only when that token authorizes more than one. Supports Intel/x86-64 and ARM64; Linux needs glibc 2.34 or later, so Alpine/musl is currently unsupported. Requires `curl`, `tar`, and `sha256sum` or `shasum`. No Rust toolchain or sudo is needed. Use `sh -s -- --no-setup` instead of `sh` to install without authentication, then run `~/.local/bin/browser setup` later.

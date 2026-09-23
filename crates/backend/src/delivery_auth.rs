@@ -195,7 +195,7 @@ impl DeliveryAuth {
         if test_actor {
             self.live_status_for_principal(org, expected).await?;
         }
-        // Actor IDs are reusable. Retry their current enrollment, but create a new
+        // Testing login inputs are reusable. Retry their current enrollment, but create a new
         // IAM family after disable/revocation; an SLT always retains its exact replay.
         let digest =
             hex::encode(Sha256::digest(if test_actor { Uuid::new_v4().to_string() } else { slt.into() }.as_bytes()));

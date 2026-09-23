@@ -225,3 +225,9 @@ Never ask for credentials, always ask for short lived token.
 - use workflows well... not just for writing code, but thinking, evaluating, testing, researching, organizing, and critiquing yourself.
 - run agents to get critiques on what you have done. what you have thought.
 - don't implement more than this UNDERSTANDING.md asks you until its truely needed.
+
+# Identifier schema
+
+Silicon IDs use `si:{silicon_id}` (for example `si:cos`), Carbon IDs use `c:{carbon_id}` (for example `c:saket`), and application IDs use the bare `{app_id}` (for example `briefcase`). The components after `si:` and `c:` are handles; each prefix appears exactly once. Silicon IDs and application IDs do not contain an organisation component. Organisation membership and application ownership are stored separately under `org_id`.
+
+Outside the schema patterns above, fields and standalone placeholders named `silicon_id`, `sid`, `carbon_id`, or `cid` carry the complete prefixed public ID; `app_id` carries the bare application ID. This applies to authentication, API and CLI inputs and outputs, configuration, permissions, URLs, events and stored identity references. Where a CLI selector uses `@`, it precedes the complete ID, such as `@si:cos` or `@c:saket`.

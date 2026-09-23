@@ -181,5 +181,5 @@ routes in 0.2.1 are additive and preserve existing production API behavior.
 Install the CLI without authentication; then use `browser login` and `browser setup` when ready.
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/unlikefraction/silicon-browser/managed-v0.2.4/scripts/install.sh | sh -s -- --no-setup && export PATH="$HOME/.local/bin:$PATH"
+curl -fsSL https://raw.githubusercontent.com/unlikefraction/silicon-browser/managed-v0.3.1/scripts/install.sh | sh -s -- --no-setup && export PATH="$HOME/.local/bin:$PATH"
 ```

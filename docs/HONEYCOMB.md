@@ -1,7 +1,6 @@
 # Honeycomb distribution
 
-The updated manifest identifies the `browser` CLI application as `browser`.
-Honeycomb does not host the API or
+Honeycomb distributes the `browser` CLI as `browser`. It does not host the API or
 website: the existing AWS backend, Vercel frontend, SQLite storage, IAM login,
 and Briefcase recording delivery retain their current architecture.
 
@@ -23,9 +22,9 @@ Release 0.2.4 renames the public command from `sb` to `browser`. Existing
 `SB_*` variables, authentication, state paths and the private controller remain
 compatible. The curl installer and Honeycomb use the same native CLI builds.
 
-## Current rollout status — 2026-09-17
+## Historical rollout status — 2026-09-17
 
-`tos>browser` is public and active, with its IAM webhook approved. The original
+`browser` is public and active, with its IAM webhook approved. The original
 0.2.3 publication request `17dd5de1-49f7-4a3e-b45e-9a041ec5f3fa` is published at
 configuration revision 1. Its installation and IAM login were verified.
 
@@ -50,23 +49,22 @@ while that wording change is reviewed.
 
 ## Build a release
 
-The identifier migration is source preparation. Complete the [coordinated
-cutover](PUBLIC-IDENTIFIER-MIGRATION.md) before deploying these builds. The
-already published 0.2.4 archives stay immutable; choose a new unused release
-version before packaging or uploading the changed manifest and binaries.
+Browser 0.3.0 introduced canonical identities; its published artifacts remain
+immutable. This checkout prepares 0.3.1. Follow the [migration procedure](PUBLIC-IDENTIFIER-MIGRATION.md)
+for any retained store that has not completed the identifier cutover.
 
 Keep `Cargo.toml`, workspace versions in `Cargo.lock`, and `honeycomb.yaml` in
 sync. The **Honeycomb package** GitHub Actions workflow builds and checks every
 target on its native operating system and architecture. It runs when CLI source,
 package inputs or the workflow change, and can also be dispatched manually. Download its final
-`honeycomb-browser-0.2.4.tar.gz` artifact.
+`honeycomb-browser-0.3.1.tar.gz` artifact.
 
 For local assembly of the six native workflow artifacts:
 
 ```sh
 python3 scripts/test_honeycomb_package.py
 python3 scripts/package_honeycomb.py --targets target/honeycomb/targets
-honeycomb validate target/honeycomb-browser-0.2.4.tar.gz
+honeycomb validate target/honeycomb-browser-0.3.1.tar.gz
 ```
 
 The packer checks native executable headers and hashes against the versions
@@ -87,10 +85,10 @@ rotate its credentials as part of an ordinary package update.
 
 ```sh
 honeycomb apps get 'browser' --json
-honeycomb --idempotency-key silicon-browser-honeycomb-0.2.4-upload-20260917 \
-  releases upload 'browser' target/honeycomb-browser-0.2.4.tar.gz --channel prod --revision REVISION
+honeycomb --idempotency-key silicon-browser-honeycomb-0.3.1-upload-20260924 \
+  releases upload 'browser' target/honeycomb-browser-0.3.1.tar.gz --revision REVISION
 honeycomb releases list 'browser'
-honeycomb install 'browser' --version 0.2.4
+honeycomb install 'browser' --version 0.3.1
 browser --version
 browser --help
 browser setup

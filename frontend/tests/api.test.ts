@@ -114,7 +114,7 @@ test('test context, exchange, renewal and mutations stay isolated without persis
   assert.deepEqual(saved, [production.currentSession()]);
 });
 test('invalid or rejected test contexts never exchange credentials or alter production auth', async () => {
-  for (const context of [null, { ...testContext, app_id: 'tos>other' }, { ...testContext, environment_id: '../api' }, { ...testContext, name: null }, 'rejected']) {
+  for (const context of [null, { ...testContext, app_id: 'other' }, { ...testContext, environment_id: '../api' }, { ...testContext, name: null }, 'rejected']) {
     let calls = 0, saves = 0;
     const production = new BrowserApi('https://backend.browser.teamofsilicons.com', (async () => { calls++; return context === 'rejected' ? response({}, 403) : response(context); }) as typeof fetch, () => { saves++; });
     production.setSession(session());

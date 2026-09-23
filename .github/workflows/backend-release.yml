@@ -1,0 +1,38 @@
+name: Build native ARM64 backend candidate
+on:
+  workflow_dispatch:
+  push:
+    branches: ['release/**']
+permissions:
+  contents: read
+jobs:
+  backend:
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.98
+        with:
+          targets: aarch64-unknown-linux-gnu
+      - uses: Swatinem/rust-cache@v2
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install pinned baseline toolchain
+        run: |
+          python3 -m pip install 'cargo-zigbuild==0.23.4' 'ziglang==0.15.2'
+          python3 -c 'from pathlib import Path; import ziglang; print("CARGO_ZIGBUILD_ZIG_PATH=" + str(Path(ziglang.__file__).with_name("zig")))' >> "$GITHUB_ENV"
+      - name: Build for production glibc baseline
+        run: cargo zigbuild --release --locked --target aarch64-unknown-linux-gnu.2.34 -p silicon-browser-backend
+      - name: Export candidate
+        run: |
+          mkdir -p release
+          cp target/aarch64-unknown-linux-gnu/release/silicon-browser-backend release/
+          sha256sum release/silicon-browser-backend > release/SHA256SUMS
+          printf '%s\n' "$GITHUB_SHA" > release/SOURCE_REVISION
+          python3 -c 'import subprocess; r = subprocess.run(["release/silicon-browser-backend", "--help"], capture_output=True); assert r.returncode == 1 and b"usage: silicon-browser-backend" in r.stdout + r.stderr'
+      - uses: actions/upload-artifact@v4
+        with:
+          name: browser-arm64-backend
+          path: release/*
+          if-no-files-found: error
