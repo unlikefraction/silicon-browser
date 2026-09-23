@@ -581,7 +581,7 @@ mod tests {
                     public_id: Some("actor".into()),
                     tags: Some(vec![]),
                     org_role: Some("member".into()),
-                    scopes: "self.identity.read self.membership.read obo:org>briefcase:briefcase.files.create"
+                    scopes: "self.identity.read self.membership.read obo:briefcase:briefcase.files.create"
                         .split_whitespace()
                         .map(str::to_owned)
                         .collect(),
@@ -622,7 +622,7 @@ mod tests {
                 access_token: "oat_owned_backend".into(),
                 refresh_token: "ort_owned_backend".into(),
                 identity,
-                scope: "self.identity.read self.membership.read obo:org>briefcase:briefcase.files.create".into(),
+                scope: "self.identity.read self.membership.read obo:briefcase:briefcase.files.create".into(),
             }
         }
         fn transient() -> IdentityError {
@@ -705,7 +705,7 @@ mod tests {
     async fn fixture() -> (DeliveryAuth, Arc<Mock>) {
         let store = Store::connect("sqlite::memory:").await.unwrap();
         let mock = Arc::new(Mock::new());
-        (DeliveryAuth::new(store, SecretBox::new(&[37; 32]), mock.clone(), "org>briefcase".into()), mock)
+        (DeliveryAuth::new(store, SecretBox::new(&[37; 32]), mock.clone(), "briefcase".into()), mock)
     }
     fn slt() -> String {
         format!("oac_{}", "a".repeat(43))
@@ -714,7 +714,7 @@ mod tests {
         RecordingProofRequest {
             expected_org_id: "org".into(),
             expected_actor_id: "actor".into(),
-            audience: "org>briefcase".into(),
+            audience: "briefcase".into(),
             path: "".into(),
             name: "video.mp4".into(),
             content_type: "video/mp4".into(),
@@ -810,16 +810,16 @@ mod tests {
     async fn test_actor_delivery_replays_pending_enrollment_and_reenrolls_after_revocation() {
         let (service, mock) = fixture().await;
         assert!(matches!(
-            service.enroll("org", &mock.expected, "actor").await,
+            service.enroll("org", &mock.expected, "si:actor").await,
             Err(DeliveryAuthError::Identity(IdentityError::InvalidInput { .. }))
         ));
         assert!(mock.calls.lock().unwrap().is_empty());
         mock.testing.store(true, Ordering::SeqCst);
         mock.fail_exchange.store(true, Ordering::SeqCst);
-        assert!(service.enroll("org", &mock.expected, "actor").await.is_err());
+        assert!(service.enroll("org", &mock.expected, "si:actor").await.is_err());
         expire(&service).await;
-        assert_eq!(service.enroll("org", &mock.expected, "actor").await.unwrap().state, State::Active);
-        service.enroll("org", &mock.expected, "actor").await.unwrap();
+        assert_eq!(service.enroll("org", &mock.expected, "si:actor").await.unwrap().state, State::Active);
+        service.enroll("org", &mock.expected, "si:actor").await.unwrap();
         {
             let calls = mock.calls.lock().unwrap();
             assert_eq!(calls.len(), 2);
@@ -827,9 +827,9 @@ mod tests {
         }
         service.disable_for_principal("org", &mock.expected).await.unwrap();
         service.recover_pending_once().await.unwrap();
-        assert_eq!(service.enroll("org", &mock.expected, "actor").await.unwrap().state, State::Active);
+        assert_eq!(service.enroll("org", &mock.expected, "si:actor").await.unwrap().state, State::Active);
         mock.revoked.store(true, Ordering::SeqCst);
-        assert_eq!(service.enroll("org", &mock.expected, "actor").await.unwrap().state, State::Active);
+        assert_eq!(service.enroll("org", &mock.expected, "si:actor").await.unwrap().state, State::Active);
         mock.revoked.store(false, Ordering::SeqCst);
         let counts: (i64, i64) = sqlx::query_as("SELECT COUNT(*), SUM(enabled) FROM delivery_credentials")
             .fetch_one(service.store.pool())
@@ -848,7 +848,7 @@ mod tests {
         assert!(service.enroll("org", &mock.expected, &slt()).await.is_err());
         expire(&service).await;
         let restarted =
-            DeliveryAuth::new(service.store.clone(), service.secrets.clone(), mock.clone(), "org>briefcase".into());
+            DeliveryAuth::new(service.store.clone(), service.secrets.clone(), mock.clone(), "briefcase".into());
         assert_eq!(restarted.recover_pending_once().await.unwrap(), 1);
         mock.fail_refresh.store(true, Ordering::SeqCst);
         expire(&restarted).await;
@@ -968,7 +968,7 @@ mod tests {
             service.store.clone(),
             service.secrets.clone(),
             replacement_mock.clone(),
-            "org>briefcase".into(),
+            "briefcase".into(),
         );
         assert!(!replacement.status_for_principal("org", &replacement_mock.expected).await.unwrap().enabled);
         replacement.disable_for_principal("org", &replacement_mock.expected).await.unwrap();
@@ -1013,7 +1013,7 @@ mod tests {
         assert_eq!(service.open(&row).unwrap().refresh.as_deref(), Some("ort_recovered_backend"));
         assert_ne!(row.mutation_key.as_deref(), Some(original_key.as_str()));
         let restarted =
-            DeliveryAuth::new(service.store.clone(), service.secrets.clone(), mock.clone(), "org>briefcase".into());
+            DeliveryAuth::new(service.store.clone(), service.secrets.clone(), mock.clone(), "briefcase".into());
         restarted.recover_pending_once().await.unwrap();
         assert_eq!(restarted.status("org", "actor").await.unwrap().state, State::Active);
         restarted.issue_recording_proof(request()).await.unwrap();

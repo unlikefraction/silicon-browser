@@ -1,0 +1,53 @@
+[package]
+name = "silicon-iam-client"
+version = "4.0.0"
+description = "Client for the Silicon IAM API: identity, organization governance, application login, and delegated access."
+keywords = ["iam", "identity", "authentication", "authorization", "client"]
+categories = ["api-bindings", "authentication"]
+readme = "../../docs/client/README.md"
+edition.workspace = true
+rust-version.workspace = true
+license = "Apache-2.0"
+repository.workspace = true
+authors.workspace = true
+
+[features]
+default = []
+# The stateful `iam` binary needs to establish its own direct IAM session.
+# Application integrations must not enable this: their only login input is an
+# SLT through `OAuth::login`.
+cli-session = []
+
+[lib]
+name = "silicon_iam_client"
+path = "src/lib.rs"
+
+[dependencies]
+hex.workspace = true
+base64 = "0.22.1"
+hmac.workspace = true
+http.workspace = true
+reqwest.workspace = true
+secrecy.workspace = true
+semver.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+serde_with.workspace = true
+sha2.workspace = true
+subtle.workspace = true
+thiserror.workspace = true
+time.workspace = true
+tokio = { workspace = true, features = ["rt", "time"] }
+url.workspace = true
+uuid.workspace = true
+
+[target.'cfg(unix)'.dependencies]
+space-station = "0.1.1"
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
+
+[dev-dependencies]
+tokio.workspace = true
+uuid.workspace = true
+
+[lints]
+workspace = true

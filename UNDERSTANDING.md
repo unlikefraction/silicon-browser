@@ -66,7 +66,7 @@ setup a persistent browser identity: one fingerprint, one proxy location, access
 
 `browser profile ls` prints name, id & location for all profiles.
 `browser profile show {profileid}` name, fingerprint, location, access, owner, sessions run, created.
-`browser profile new --name "..." --location "..." --access [@carbon,@ceo:tos,growth]` @carbon, @silicon, or tag (with no @) prints the id it made. whoever runs it is the default user; access and tags union on top of that. this creates a new browser profile, not a new session.
+`browser profile new --name "..." --location "..." --access [@c:saket,@si:ceo,growth]` @c:{carbon_id}, @si:{silicon_id}, or tag (with no @) prints the id it made. whoever runs it is the default user; access and tags union on top of that. this creates a new browser profile, not a new session.
 `browser profile set {profileid} --name "..."` / `--access [...]`
 name and access are all that is editable. fingerprint and location are not.
 `browser profile end {profileid} --note "..."` retires it. its recordings and usage stay. no one will be able to use this profile later.
@@ -111,7 +111,7 @@ is: mine, shared
 browser minutes and proxy GB, stored per session, for analytics and for billing.
 
 `browser usage show {sessionid}` minutes, GB in and out, and what each costs.
-`browser usage ls --filter "between:01-08-2026=30-08-2026 -> for:@ceo:tos"` a line per session with its total.
+`browser usage ls --filter "between:01-08-2026=30-08-2026 -> for:@si:ceo"` a line per session with its total.
 `browser usage show --org` the org's total for that window.
 
 [search & fetch]
@@ -225,3 +225,9 @@ Never ask for credentials, always ask for short lived token.
 - use workflows well... not just for writing code, but thinking, evaluating, testing, researching, organizing, and critiquing yourself.
 - run agents to get critiques on what you have done. what you have thought.
 - don't implement more than this UNDERSTANDING.md asks you until its truely needed.
+
+# Identifier schema
+
+Silicon IDs use `si:{silicon_id}` (for example `si:cos`), Carbon IDs use `c:{carbon_id}` (for example `c:saket`), and application IDs use the bare `{app_id}` (for example `briefcase`). The components after `si:` and `c:` are handles; each prefix appears exactly once. Silicon IDs and application IDs do not contain an organisation component. Organisation membership and application ownership are stored separately under `org_id`.
+
+Outside the schema patterns above, fields and standalone placeholders named `silicon_id`, `sid`, `carbon_id`, or `cid` carry the complete prefixed public ID; `app_id` carries the bare application ID. This applies to authentication, API and CLI inputs and outputs, configuration, permissions, URLs, events and stored identity references. Where a CLI selector uses `@`, it precedes the complete ID, such as `@si:cos` or `@c:saket`.

@@ -4,7 +4,7 @@ import { loginUrl, readEntry, requireLiveEnvironment, matchingCallback, IAM_AUTH
 
 test('IAM popup uses canonical application without an organization, with a nonce in callback', () => {
   const url = new URL(loginUrl('https://browser.teamofsilicons.com', 'random-nonce'));
-  assert.equal(url.origin, IAM_AUTH_ORIGIN); assert.equal(url.pathname, '/login'); assert.equal(url.searchParams.get('app_id'), 'tos>browser'); assert.equal(url.searchParams.get('org_id'), null);
+  assert.equal(url.origin, IAM_AUTH_ORIGIN); assert.equal(url.pathname, '/login'); assert.equal(url.searchParams.get('app_id'), 'browser'); assert.equal(url.searchParams.get('org_id'), null);
   const callback = new URL(url.searchParams.get('redirect_uri')!); assert.equal(callback.origin, 'https://browser.teamofsilicons.com'); assert.equal(callback.pathname, '/auth/callback'); assert.equal(callback.searchParams.get('nonce'), 'random-nonce');
 });
 test('callback credentials and live grant are stripped from displayed entry URL', () => {

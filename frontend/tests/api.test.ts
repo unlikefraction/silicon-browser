@@ -52,7 +52,7 @@ test('default fetch preserves the native browser global receiver', async () => {
   } finally { globalThis.fetch = original; }
 });
 
-const testContext = { environment_id: '11111111-1111-4111-8111-111111111111', app_id: 'tos>browser', name: 'Browser integration tests' };
+const testContext = { environment_id: '11111111-1111-4111-8111-111111111111', app_id: 'browser', name: 'Browser integration tests' };
 const testCredentials = { app_secret: 'ask_test-secret', iam_test_key: 'iam_test-root', briefcase_test_environment_key: 'briefcase_test-root' };
 test('test app secret alone selects the environment and accepts existing test actor IDs', async () => {
   for (const actor of ['alice', 'worker:tos']) {
@@ -111,7 +111,7 @@ test('test context, exchange, renewal and mutations stay isolated without persis
   assert.deepEqual(saved, [production.currentSession()]);
 });
 test('invalid or rejected test contexts never exchange credentials or alter production auth', async () => {
-  for (const context of [null, { ...testContext, app_id: 'tos>other' }, { ...testContext, environment_id: '../api' }, { ...testContext, name: null }, 'rejected']) {
+  for (const context of [null, { ...testContext, app_id: 'other' }, { ...testContext, environment_id: '../api' }, { ...testContext, name: null }, 'rejected']) {
     let calls = 0, saves = 0;
     const production = new BrowserApi('https://backend.browser.teamofsilicons.com', (async () => { calls++; return context === 'rejected' ? response({}, 403) : response(context); }) as typeof fetch, () => { saves++; });
     production.setSession(session());

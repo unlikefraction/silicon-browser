@@ -48,7 +48,8 @@ jobs:
           components: clippy,rustfmt
       - uses: Swatinem/rust-cache@v2
       - name: Formatting
-        run: cargo fmt --all -- --check
+        # Preserve the IAM vendor snapshot's upstream formatting configuration.
+        run: cargo fmt -p silicon-browser-shared -p silicon-browser -p silicon-browser-cli -p silicon-browser-backend -- --check
       - name: Tests
         run: cargo test --workspace --all-targets
       - name: Lints

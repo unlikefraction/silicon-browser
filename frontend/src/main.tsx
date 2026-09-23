@@ -252,14 +252,14 @@ function App() {
         <Show when={testing()}>{context => <div class="notice auth-wait" role="status"><span><strong>Test mode · {context().name}</strong><br/><span class="mono">{context().environment_id}</span><br/>Test credentials stay in memory and are cleared when you exit or reload.</span>{button('Exit test mode', exitTesting)}</div>}</Show>
         <Show when={testTokenRequest()}>{request => <form class="panel form-panel" autocomplete="off" onSubmit={event => { event.preventDefault(); const form = event.currentTarget; const token = String(new FormData(form).get('test_token') || '').trim(); if (!/^[^\s\x00-\x1f\x7f]{1,16384}$/.test(token)) { setNotice('Enter an existing IAM test actor ID or a test short-lived token without whitespace.'); return; } form.reset(); request().accept(token); }}>
           <h2>Authorize test {request().purpose}</h2><p>Use your existing test actor ID or a fresh token for the same test identity and organization. Authorization stays in the current test environment.</p>
-          <pre>iam --test {testing()!.environment_id} login --app-id 'tos&gt;browser' --grant-org {shellQuote(auth()!.org.id)} -o json</pre>
+          <pre>iam --test {testing()!.environment_id} login --app-id 'browser' --grant-org {shellQuote(auth()!.org.id)} -o json</pre>
           <label>Test actor ID or short-lived token<input name="test_token" type="password" required maxlength={16384} autocomplete="off" spellcheck={false} placeholder="alice, worker:tos, or oac_…"/></label>
           <div class="actions"><button class="primary">Authorize</button><button type="button" onClick={() => request().cancel()}>Cancel</button></div>
         </form>}</Show>
         <Show when={showTesting()}>
           <section class="panel form-panel"><h1>Testing environment</h1><p>Open an isolated IAM testing workspace. Browser verifies the environment before switching; your production sign-in stays saved.</p>
             <Show when={pendingLive?.testEnvironmentId}><p class="hint">This live invitation requires environment <span class="mono">{pendingLive?.testEnvironmentId}</span>. Enroll its app secret to continue.</p></Show>
-            <p class="fine">Use an existing test actor ID such as alice or worker:tos, or generate a short-lived token with <code>iam --test &lt;environment-id&gt; login --app-id 'tos&gt;browser' --grant-org &lt;org&gt; -o json</code>. Use the returned <code>slt</code>.</p>
+            <p class="fine">Use an existing test actor ID such as c:alice or si:worker, or generate a short-lived token with <code>iam --test &lt;environment-id&gt; login --app-id 'browser' --grant-org &lt;org&gt; -o json</code>. Use the returned <code>slt</code>.</p>
             <form autocomplete="off" onSubmit={event => { event.preventDefault(); const form = event.currentTarget; const data = new FormData(form); form.reset(); void perform(() => startTesting(data)); }}>
               <label>Browser test app secret<input name="app_secret" type="password" required maxlength={16384} autocomplete="off" spellcheck={false}/></label>
               <label>IAM test environment key (optional)<input name="iam_test_key" type="password" maxlength={16384} autocomplete="off" spellcheck={false}/><span class="fine">The test app secret selects the environment. Add its root key only when required by your setup.</span></label>

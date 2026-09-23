@@ -115,6 +115,7 @@ impl TestingRegistry {
             .map_err(|_| internal("invalid test database path"))?;
         let store = Store::connect(&format!("sqlite://{}?mode=rwc", url.path())).await?;
         store.canonicalize_iam_identities(&self.0.template.secrets).await?;
+        store.verify_public_identifiers().await?;
         let template = &self.0.template;
         let state = AppState::new(
             &*template.public_origin,

@@ -198,8 +198,8 @@ mod tests {
         let receipt = store
             .put_on_behalf(PutArtifact {
                 org_id: "tos".into(),
-                actor_id: "worker:tos".into(),
-                path: "private/worker:tos/sb/session/recording.mp4".into(),
+                actor_id: "si:worker".into(),
+                path: "private/si:worker/sb/session/recording.mp4".into(),
                 content_type: "video/mp4".into(),
                 source: ArtifactSource::RemoteUrl("https://signed.invalid/secret".into()),
                 obo: grant(),
@@ -217,8 +217,8 @@ mod tests {
         let result = store
             .trash_on_behalf(TrashArtifact {
                 org_id: "tos".into(),
-                actor_id: "worker:tos".into(),
-                path: "private/worker:tos/../another-user/recording.mp4".into(),
+                actor_id: "si:worker".into(),
+                path: "private/si:worker/../another-user/recording.mp4".into(),
                 obo: grant(),
             })
             .await;
@@ -227,7 +227,7 @@ mod tests {
         let result = store
             .trash_on_behalf(TrashArtifact {
                 org_id: "tos".into(),
-                actor_id: "worker:tos".into(),
+                actor_id: "si:worker".into(),
                 path: "private/another-worker/sb/session/recording.mp4".into(),
                 obo: grant(),
             })

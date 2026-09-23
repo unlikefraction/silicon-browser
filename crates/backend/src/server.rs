@@ -2682,7 +2682,7 @@ mod tests {
             public_id: public.then(|| id.into()),
             tags: None,
             org_role: Some("member".into()),
-            scopes: "self.identity.read self.membership.read obo:org-1>briefcase:briefcase.files.create"
+            scopes: "self.identity.read self.membership.read obo:briefcase:briefcase.files.create"
                 .split_whitespace()
                 .map(str::to_owned)
                 .collect(),

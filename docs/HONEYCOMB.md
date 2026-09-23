@@ -1,6 +1,6 @@
 # Honeycomb distribution
 
-Honeycomb distributes the `browser` CLI as `tos>browser`. It does not host the API or
+Honeycomb distributes the `browser` CLI as `browser`. It does not host the API or
 website: the existing AWS backend, Vercel frontend, SQLite storage, IAM login,
 and Briefcase recording delivery retain their current architecture.
 
@@ -24,7 +24,7 @@ compatible. The curl installer and Honeycomb use the same native CLI builds.
 
 ## Current rollout status — 2026-09-17
 
-`tos>browser` is public and active, with its IAM webhook approved. The original
+`browser` is public and active, with its IAM webhook approved. The original
 0.2.3 publication request `17dd5de1-49f7-4a3e-b45e-9a041ec5f3fa` is published at
 configuration revision 1. Its installation and IAM login were verified.
 
@@ -80,11 +80,11 @@ Use the existing application for subsequent releases. Do not recreate it or
 rotate its credentials as part of an ordinary package update.
 
 ```sh
-honeycomb apps get 'tos>browser' --json
+honeycomb apps get 'browser' --json
 honeycomb --idempotency-key silicon-browser-honeycomb-0.2.4-upload-20260917 \
-  releases upload 'tos>browser' target/honeycomb-browser-0.2.4.tar.gz --revision REVISION
-honeycomb releases list 'tos>browser'
-honeycomb install 'tos>browser' --version 0.2.4
+  releases upload 'browser' target/honeycomb-browser-0.2.4.tar.gz --revision REVISION
+honeycomb releases list 'browser'
+honeycomb install 'browser' --version 0.2.4
 browser --version
 browser --help
 browser setup
@@ -105,7 +105,7 @@ IAM's fresh verification for `application.webhook.approve` and the exact pending
 endpoint; a stored login is insufficient.
 
 Browser requests identity, membership and tags for authorization, plus
-`obo:tos>briefcase:briefcase.files.create` for user-authorized recording delivery.
+`obo:briefcase:briefcase.files.create` for user-authorized recording delivery.
 Honeycomb itself needs its own Briefcase upload/download/publication grants; a
 missing Honeycomb grant must be repaired in that platform, not added to Browser.
 

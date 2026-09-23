@@ -27,19 +27,32 @@ async fn main() {
 
 async fn run() -> Result<(), String> {
     let arguments: Vec<_> = std::env::args_os().skip(1).collect();
+    let public_mapping = match arguments.as_slice() {
+        [flag, path] if flag == "--migrate-public-identifiers" => Some(path),
+        _ => None,
+    };
     let cutover_only = match arguments.as_slice() {
         [] => false,
+        [flag, _] if flag == "--migrate-public-identifiers" => true,
         [argument] if argument == "--canonicalize-identities-only" => true,
-        _ => return Err("usage: silicon-browser-backend [--canonicalize-identities-only]".into()),
+        _ => return Err("usage: silicon-browser-backend [--canonicalize-identities-only | --migrate-public-identifiers mapping.json]".into()),
     };
     let config = Config::from_env()?;
     let store = Store::connect(&config.database_url).await.map_err(|error| error.to_string())?;
     let secrets = SecretBox::new(&config.encryption_key);
     store.canonicalize_iam_identities(&secrets).await.map_err(|error| error.to_string())?;
+    if let Some(path) = public_mapping {
+        let bytes = std::fs::read(path).map_err(|error| error.to_string())?;
+        let mappings: Vec<silicon_browser_backend::store::PublicIdentifierMapping> =
+            serde_json::from_slice(&bytes).map_err(|error| error.to_string())?;
+        store.migrate_public_identifiers(&mappings, &secrets).await.map_err(|error| error.to_string())?;
+    }
+    store.canonicalize_iam_identities(&secrets).await.map_err(|error| error.to_string())?;
     if cutover_only {
         tracing::info!("canonical identity conversion verified; no API or workers started");
         return Ok(());
     }
+    store.verify_public_identifiers().await.map_err(|error| error.to_string())?;
     let cache = Arc::new(silicon_browser_backend::auth_cache::AuthorizationCache::default());
     let webhook = config
         .iam_webhook_secret

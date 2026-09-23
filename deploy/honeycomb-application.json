@@ -10,7 +10,7 @@
   "webhook_scope": ["full"],
   "app_scope": {
     "iam": ["self.identity.read", "self.membership.read", "self.tags.read"],
-    "external": [{"app_id": "tos>briefcase", "endpoint_id": "briefcase.files.create"}]
+    "external": [{"app_id": "briefcase", "endpoint_id": "briefcase.files.create"}]
   },
   "obo_endpoints": [],
   "obo_review_message": "Browser delivers each completed session recording and Silicon command log into the initiating member's private Briefcase application folder. Delegated uploads require that member's separate recording authorization and selected organization.",

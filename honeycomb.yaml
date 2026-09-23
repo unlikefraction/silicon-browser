@@ -1,6 +1,6 @@
 format_version: 1
-app_id: tos>browser
-version: 0.2.5
+app_id: browser
+version: 0.3.0
 bin:
   browser: main
 targets:

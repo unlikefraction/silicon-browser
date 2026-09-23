@@ -146,7 +146,7 @@ mod tests {
             ("PORT", "8081"),
             ("SB_ORIGIN", "https://browser.example/"),
             ("SB_ENCRYPTION_KEY", "00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff"),
-            ("IAM_APP_ID", "tos>browser"),
+            ("IAM_APP_ID", "browser"),
             ("IAM_APP_SECRET", "ask_secret"),
             ("BROWSER_USE_API_KEY", "bu_secret"),
             ("TINYFISH_API_KEYS", "first, second"),
@@ -221,7 +221,7 @@ mod tests {
         values.insert("SB_ORIGIN", "http://localhost:3000");
         values.insert("SILICON_IAM_URL", "http://127.0.0.1:8081");
         values.insert("BRIEFCASE_URL", "http://[::1]:8082");
-        values.insert("BRIEFCASE_APP_ID", "tos>briefcase");
+        values.insert("BRIEFCASE_APP_ID", "briefcase");
         assert!(Config::from_vars(|key| values.get(key).map(ToString::to_string)).is_ok());
     }
 }

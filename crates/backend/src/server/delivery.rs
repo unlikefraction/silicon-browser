@@ -32,9 +32,11 @@ impl AppState {
         audience: String,
     ) -> Result<Self, String> {
         let valid = |id: &str| {
-            id.split_once('>').is_some_and(|(org, app)| {
-                !org.is_empty() && !app.is_empty() && !app.contains('>') && !id.chars().any(char::is_whitespace)
-            })
+            (1..=80).contains(&id.len())
+                && id.as_bytes().first().is_some_and(u8::is_ascii_lowercase)
+                && id
+                    .bytes()
+                    .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || matches!(byte, b'_' | b'-'))
         };
         if !valid(&issuer) || !valid(&audience) {
             return Err("recording issuer and Briefcase audience must be canonical applications".into());

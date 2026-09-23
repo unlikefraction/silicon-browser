@@ -175,16 +175,21 @@ impl AuthExchangeRequest {
             return self.validate();
         }
         let actor = &self.short_lived_token;
-        if actor.is_empty()
-            || actor.len() > 256
-            || ["ask_", "oat_", "ort_", "iat_", "irt_", "cat_", "sat_", "crt_", "srt_"]
-                .iter()
-                .any(|prefix| actor.starts_with(prefix))
-            || !actor.bytes().all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-' | b'.' | b':'))
-            || actor.split(':').count() > 2
-            || actor.split(':').any(str::is_empty)
-        {
-            return Err(ValidationError::Invalid { field: "short_lived_token", reason: "test login expects an IAM oac_ token or an actor ID (1-256 ASCII letters/digits/_/./-, optionally one nonempty :org suffix); other credential families are not actor IDs".into() });
+        let valid = actor
+            .strip_prefix("si:")
+            .map(|handle| (handle, 50))
+            .or_else(|| actor.strip_prefix("c:").map(|handle| (handle, 30)))
+            .is_some_and(|(handle, maximum)| {
+                (3..=maximum).contains(&handle.len())
+                    && handle
+                        .bytes()
+                        .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || matches!(byte, b'_' | b'-'))
+            });
+        if !valid {
+            return Err(ValidationError::Invalid {
+                field: "short_lived_token",
+                reason: "test login expects an IAM oac_ token or c:<handle>/si:<handle> public ID".into(),
+            });
         }
         if let Some(org) = &self.org_id {
             identifier(org, "org_id")?;
@@ -196,7 +201,7 @@ impl AuthExchangeRequest {
 #[cfg(test)]
 #[test]
 fn actor_login_requires_testing_and_rejects_other_credentials() {
-    for actor in ["worker", "worker:tos", "worker-1.example", "oac_one_use"] {
+    for actor in ["c:worker", "si:worker", "si:worker-1", "oac_one_use"] {
         let request = AuthExchangeRequest { short_lived_token: actor.into(), org_id: Some("tos".into()) };
         assert!(request.validate_testing().is_ok(), "{actor}");
         assert_eq!(request.validate().is_ok(), actor.starts_with("oac_"));

@@ -8,8 +8,8 @@ async fn configured_delivery_fixture() -> Fixture {
         .clone()
         .with_recording_delivery(
             BriefcaseClient::new("http://127.0.0.1:1", None).unwrap(),
-            "org-1>browser".into(),
-            "org-1>briefcase".into(),
+            "browser".into(),
+            "briefcase".into(),
         )
         .unwrap();
     fixture.app = router(fixture.state.clone());
@@ -27,7 +27,7 @@ fn allow_delivery_exchange(fixture: &Fixture, slt: &str, identity: PrincipalIden
             access_token: "oat_backend_delivery_secret".into(),
             refresh_token: "ort_backend_delivery_secret".into(),
             identity,
-            scope: "self.identity.read self.membership.read obo:org-1>briefcase:briefcase.files.create".into(),
+            scope: "self.identity.read self.membership.read obo:briefcase:briefcase.files.create".into(),
         },
     );
 }
@@ -67,7 +67,7 @@ async fn expired_recording_access_refreshes_its_owned_family_before_session_crea
     fixture.identity.allow_identity("oat_renewed_delivery", expected.clone());
     fixture.identity.allow_refresh("ort_backend_delivery_secret", "org-1", ExchangedAuth {
         access_token: "oat_renewed_delivery".into(), refresh_token: "ort_renewed_delivery".into(),
-        identity: expected, scope: "self.identity.read self.membership.read obo:org-1>briefcase:briefcase.files.create".into(),
+        identity: expected, scope: "self.identity.read self.membership.read obo:briefcase:briefcase.files.create".into(),
     });
     let (status, _, body) = request(
         &fixture.app, "POST", "/api/v1/sessions", Some(("oat_owner", "org-1")),

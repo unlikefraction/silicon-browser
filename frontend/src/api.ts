@@ -31,7 +31,7 @@ export class BrowserApi {
     }
     if (!credentials.app_secret) throw new ApiError('Browser test app secret is required.');
     const context = await this.request<TestingContext>('/testing/context', 'POST', credentials, null);
-    if (context?.app_id !== 'tos>browser' || !/^[a-f\d]{8}(?:-[a-f\d]{4}){3}-[a-f\d]{12}$/i.test(context.environment_id) || typeof context.name !== 'string') throw new ApiError('The server returned an invalid Browser testing environment. Your current workspace has not changed.');
+    if (context?.app_id !== 'browser' || !/^[a-f\d]{8}(?:-[a-f\d]{4}){3}-[a-f\d]{12}$/i.test(context.environment_id) || typeof context.name !== 'string') throw new ApiError('The server returned an invalid Browser testing environment. Your current workspace has not changed.');
     context.environment_id = context.environment_id.toLowerCase();
     if (expectedEnvironmentId && context.environment_id.toLowerCase() !== expectedEnvironmentId.toLowerCase()) throw new ApiError(`This invitation requires testing environment ${expectedEnvironmentId}. The supplied app secret selects a different environment.`);
     // A separate client keeps test credentials and renewals out of production storage.

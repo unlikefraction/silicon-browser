@@ -23,6 +23,7 @@ use crate::crypto::SecretBox;
 use crate::decimal::decimal_to_millionths;
 
 mod canonical_identities;
+pub use canonical_identities::PublicIdentifierMapping;
 mod command_reports;
 mod delivery;
 #[cfg(test)]
@@ -187,6 +188,13 @@ pub struct Store {
     usage_write_test_hook: Option<UsageWriteTestHook>,
 }
 
+struct IdentityProjection<'a> {
+    org_id: &'a str,
+    principal_id: &'a str,
+    public_id: &'a str,
+    kind: IdentityKind,
+}
+
 #[cfg(test)]
 #[derive(Clone)]
 struct UsageWriteTestHook {
@@ -234,15 +242,37 @@ impl Store {
         secrets: &SecretBox,
         now: DateTime<Utc>,
     ) -> StoreResult<Identity> {
+        let mut transaction = self.pool.begin_with("BEGIN IMMEDIATE").await?;
+        let identity = self
+            .remember_identity_projection_in(
+                &mut transaction,
+                IdentityProjection { org_id, principal_id, public_id, kind },
+                secrets,
+                now,
+                false,
+            )
+            .await?;
+        transaction.commit().await?;
+        Ok(identity)
+    }
+
+    async fn remember_identity_projection_in(
+        &self,
+        transaction: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+        projection: IdentityProjection<'_>,
+        secrets: &SecretBox,
+        now: DateTime<Utc>,
+        migrating: bool,
+    ) -> StoreResult<Identity> {
+        let IdentityProjection { org_id, principal_id, public_id, kind } = projection;
         safe_id(org_id, "org_id")?;
         safe_id(principal_id, "principal_id")?;
         safe_id(public_id, "public_id")?;
-        let mut transaction = self.pool.begin_with("BEGIN IMMEDIATE").await?;
         let existing =
             sqlx::query("SELECT public_id, kind FROM identity_projection WHERE org_id = ? AND principal_id = ?")
                 .bind(org_id)
                 .bind(principal_id)
-                .fetch_optional(&mut *transaction)
+                .fetch_optional(&mut **transaction)
                 .await?;
         let previous_public_id = if let Some(existing) = existing.as_ref() {
             let stored_public_id: String = existing.try_get("public_id")?;
@@ -262,12 +292,12 @@ impl Store {
             .bind(org_id)
             .bind(public_id)
             .bind(principal_id)
-            .fetch_all(&mut *transaction)
+            .fetch_all(&mut **transaction)
             .await?;
             if previous.len() > 1
-                || previous
-                    .iter()
-                    .any(|(id, previous_kind)| Uuid::parse_str(id).is_err() || previous_kind != identity_kind(kind))
+                || previous.iter().any(|(id, previous_kind)| {
+                    (!migrating && Uuid::parse_str(id).is_err()) || previous_kind != identity_kind(kind)
+                })
             {
                 return Err(corrupt("identity projection", "ambiguous canonical IAM identity mapping"));
             }
@@ -276,7 +306,7 @@ impl Store {
                     .bind(principal_id)
                     .bind(org_id)
                     .bind(&legacy)
-                    .execute(&mut *transaction)
+                    .execute(&mut **transaction)
                     .await?;
                 canonical_legacy_ids.push(legacy);
             }
@@ -292,7 +322,7 @@ impl Store {
         .bind(public_id)
         .bind(identity_kind(kind))
         .bind(timestamp(now))
-        .execute(&mut *transaction)
+        .execute(&mut **transaction)
         .await?;
 
         // Canonicalize both the OAT-only UUID and a previous public id. This
@@ -312,12 +342,11 @@ impl Store {
         legacy_ids.dedup();
         for legacy_id in legacy_ids {
             if principal_id == public_id {
-                canonical_identities::rewrite_authority(&mut transaction, secrets, org_id, &legacy_id, public_id)
-                    .await?;
+                canonical_identities::rewrite_authority(transaction, secrets, org_id, &legacy_id, public_id).await?;
             }
             let rows = sqlx::query("SELECT id, owner_id, access_json FROM profiles WHERE org_id = ?")
                 .bind(org_id)
-                .fetch_all(&mut *transaction)
+                .fetch_all(&mut **transaction)
                 .await?;
             for row in rows {
                 let profile_id: String = row.try_get("id")?;
@@ -341,14 +370,14 @@ impl Store {
                 .bind(serde_json::to_string(&rewritten).map_err(corrupt_json)?)
                 .bind(org_id)
                 .bind(profile_id)
-                .execute(&mut *transaction)
+                .execute(&mut **transaction)
                 .await?;
             }
             sqlx::query("UPDATE sessions SET started_by = ? WHERE org_id = ? AND started_by = ?")
                 .bind(public_id)
                 .bind(org_id)
                 .bind(&legacy_id)
-                .execute(&mut *transaction)
+                .execute(&mut **transaction)
                 .await?;
             sqlx::query(
                 "INSERT OR IGNORE INTO session_participants (session_id, actor_id, role, first_seen_at) \
@@ -359,7 +388,7 @@ impl Store {
             .bind(public_id)
             .bind(org_id)
             .bind(&legacy_id)
-            .execute(&mut *transaction)
+            .execute(&mut **transaction)
             .await?;
             sqlx::query(
                 "DELETE FROM session_participants WHERE actor_id = ? AND session_id IN \
@@ -367,7 +396,7 @@ impl Store {
             )
             .bind(&legacy_id)
             .bind(org_id)
-            .execute(&mut *transaction)
+            .execute(&mut **transaction)
             .await?;
             let command_rows = sqlx::query(
                 "SELECT c.session_id, c.sequence, c.command_enc FROM commands c \
@@ -375,7 +404,7 @@ impl Store {
             )
             .bind(org_id)
             .bind(&legacy_id)
-            .fetch_all(&mut *transaction)
+            .fetch_all(&mut **transaction)
             .await?;
             for row in command_rows {
                 let command_session_id: String = row.try_get("session_id")?;
@@ -392,7 +421,7 @@ impl Store {
                     .bind(encrypted)
                     .bind(command_session_id)
                     .bind(sequence)
-                    .execute(&mut *transaction)
+                    .execute(&mut **transaction)
                     .await?;
             }
             sqlx::query(
@@ -402,7 +431,7 @@ impl Store {
             .bind(public_id)
             .bind(&legacy_id)
             .bind(org_id)
-            .execute(&mut *transaction)
+            .execute(&mut **transaction)
             .await?;
             // Briefcase paths are provider receipts, not identity-derived local paths.
             // A public-ID projection must never invent a remote rename.
@@ -410,10 +439,9 @@ impl Store {
                 .bind(public_id)
                 .bind(org_id)
                 .bind(&legacy_id)
-                .execute(&mut *transaction)
+                .execute(&mut **transaction)
                 .await?;
         }
-        transaction.commit().await?;
         Ok(projected_identity_value(public_id, principal_id, kind))
     }
 
