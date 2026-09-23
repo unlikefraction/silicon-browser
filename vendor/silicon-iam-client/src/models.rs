@@ -3294,8 +3294,8 @@ pub struct LogoutRequest {
     pub mode: Option<LogoutRequestMode>,
 }
 
-/// Membership IDs use carbon_id[org_id] or the full silicon_id[org_id], for
-/// example saket[tos] or helper:tos[tos].
+/// Membership IDs use `c:carbon_id[org_id]` or `si:silicon_id[org_id]`, for
+/// example `c:saket[tos]` or `si:helper[tos]`.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Membership {
     /// Present when profile reads are authorized.
