@@ -62,11 +62,11 @@ main() {
     trap 'rm -rf "$work"' EXIT
     trap 'exit 130' INT
     trap 'exit 143' TERM
-    asset="browser-v0.2.5-$target"
-    printf 'Installing browser 0.2.5 for %s…\n' "$target"
+    asset="browser-v0.3.0-$target"
+    printf 'Installing browser 0.3.0 for %s…\n' "$target"
     curl --fail --show-error --silent --location --proto '=https' --tlsv1.2 \
         --retry 3 --connect-timeout 20 --max-time 300 \
-        "https://github.com/unlikefraction/silicon-browser/releases/download/managed-v0.2.5/$asset.tar.gz" \
+        "https://github.com/unlikefraction/silicon-browser/releases/download/managed-v0.3.0/$asset.tar.gz" \
         --output "$work/archive.tar.gz"
     if [ "$checksum" = sha256sum ]; then
         actual=$(sha256sum "$work/archive.tar.gz")
@@ -77,7 +77,7 @@ main() {
     tar -xzf "$work/archive.tar.gz" -C "$work" "$asset/browser"
     chmod 755 "$work/$asset/browser"
     installed_version=$("$work/$asset/browser" --version) || fail 'The release cannot run on this system; existing installation was not changed.'
-    [ "$installed_version" = 'browser 0.2.5' ] || fail 'The release has an unexpected command name or version; existing installation was not changed.'
+    [ "$installed_version" = 'browser 0.3.0' ] || fail 'The release has an unexpected command name or version; existing installation was not changed.'
     [ ! -d "$bin_dir/browser" ] || fail "$bin_dir/browser is a directory."
     mv -f "$work/$asset/browser" "$bin_dir/browser"
     add_path "$HOME/.profile"
