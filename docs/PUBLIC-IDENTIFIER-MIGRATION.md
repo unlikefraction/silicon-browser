@@ -86,7 +86,19 @@ For an isolated testing database or a restored test-world copy:
 silicon-browser-backend --migrate-public-identifiers testing-map.json --scope-key ENVIRONMENT_UUID
 ```
 
-This mode starts no HTTP listener or network workers. Normal server/test-world
+For a database already converted to canonical identifiers, verify and bind its
+world without replaying the identity conversion:
+
+```sh
+silicon-browser-backend --verify-public-identifiers-only
+# Add --scope-key ENVIRONMENT_UUID for a testing database.
+```
+
+Both offline modes require an existing database and start no HTTP listener or
+network workers. Verification applies pending structural migrations and records
+the world marker; it does not rewrite identity rows. Release 0.3.1 preserves
+deployed migration 0008 and its frozen `delivery_actor_id` values exactly;
+migration 0009 adds only the world marker table. Normal server/test-world
 startup rejects unmigrated references. The migration uses one transaction,
 rejects unmapped, conflicting and cross-world mappings, and can be repeated
 with the same map. Keep the mapping and backup through the rollback window.

@@ -24,7 +24,7 @@
   <h2 id="install">1. Install</h2>
   <p>On macOS or Linux, run the <a href="#setup-command">one-line installer</a>. It selects your architecture, verifies the download, and installs <code>browser</code> into <code>~/.local/bin</code>. Linux requires glibc 2.34 or later; macOS and Linux support ARM64 and x86-64.</p>
   <p>The command below installs without authentication. Sign in separately with <code>browser login</code> and run <code>browser setup</code> when ready to configure browser control and recording delivery. Source installation needs Rust 1.98 or later:</p>
-  <pre><code>cargo install --git https://github.com/unlikefraction/silicon-browser.git --tag managed-v0.3.1 --locked silicon-browser-cli
+  <pre><code>cargo install silicon-browser-cli --version 0.3.1 --locked
 browser --help
 browser iam --json</code></pre>
 
@@ -124,7 +124,7 @@ x-sb-test-app-secret: ask_...</code></pre>
 
   <h2 id="develop">Build on Browser</h2>
   <p>The stateless <a href="https://crates.io/crates/silicon-browser">silicon-browser Rust package</a> implements the API client. The <a href="https://crates.io/crates/silicon-browser-cli">silicon-browser-cli package</a> provides <code>browser</code>; <a href="https://crates.io/crates/silicon-browser-shared">silicon-browser-shared</a> contains the common contracts.</p>
-  <pre><code>cargo add silicon-browser --git https://github.com/unlikefraction/silicon-browser.git --tag managed-v0.3.1
+  <pre><code>cargo add silicon-browser@0.3.1
 
 # In a source checkout:
 cargo test --workspace --all-targets

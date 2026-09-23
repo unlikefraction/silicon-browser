@@ -53,14 +53,14 @@ if [ "${TEST_CORRUPT:-0}" = 1 ]; then printf bad >> "$destination"; fi
         payload = b'''#!/bin/sh
 if [ "$1" = --version ]; then
   [ "${TEST_EXEC_FAIL:-0}" = 0 ] || exit 1
-  echo "${TEST_CLI_VERSION:-browser 0.3.0}"
+  echo "${TEST_CLI_VERSION:-browser 0.3.1}"
 elif [ "$1" = setup ]; then
   [ -t 0 ] || exit 42
   printf '%s\\n' "$@" > "$HOME/setup-arguments"
 fi
 '''
         with tarfile.open(archive, 'w:gz') as output:
-            entry = tarfile.TarInfo(f'browser-v0.3.0-{target}/browser')
+            entry = tarfile.TarInfo(f'browser-v0.3.1-{target}/browser')
             entry.size = len(payload)
             entry.mode = 0o755
             output.addfile(entry, io.BytesIO(payload))
@@ -88,11 +88,11 @@ fi
                 self.assertEqual(result.returncode, 0, result.stderr)
                 self.assertTrue(os.access(self.binary, os.X_OK))
                 self.assertEqual(subprocess.check_output([self.binary, '--version'], env=self.env, text=True).strip(),
-                                 'browser 0.3.0')
+                                 'browser 0.3.1')
                 self.assertIn(target + '.tar.gz', (self.root / 'url').read_text())
                 self.assertEqual((self.home / '.zshrc').read_text().count('export PATH='), 1)
                 self.assertEqual(list(self.binary.parent.glob('.browser-install.*')), [])
-        self.assertIn('/managed-v0.3.0/browser-v0.3.0-', (self.root / 'url').read_text())
+        self.assertIn('/managed-v0.3.1/browser-v0.3.1-', (self.root / 'url').read_text())
         command = '. "$HOME/.profile"; command -v browser'
         result = subprocess.run(['sh', '-c', command], env=self.env, capture_output=True, text=True)
         self.assertEqual(result.stdout.strip(), str(self.binary))
@@ -127,7 +127,7 @@ fi
         self.prepare()
         self.binary.parent.mkdir(parents=True)
         self.binary.write_text('existing installation')
-        for version in ['sb 0.3.0', 'browser 0.2.2']:
+        for version in ['sb 0.3.1', 'browser 0.2.2']:
             self.env['TEST_CLI_VERSION'] = version
             result = self.run_installer('--no-setup')
             self.assertNotEqual(result.returncode, 0)

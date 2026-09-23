@@ -19,16 +19,16 @@ main() {
     case "$(uname -s):$(uname -m)" in
         Darwin:arm64|Darwin:aarch64)
             target=aarch64-apple-darwin
-            digest=42bb1967e9886866387ff18832775ab8f49bd44a73de64a583100492eaba7678 ;;
+            digest=7bca327c371fc608701a45c82d194cf2503cf856b8edde03edf9d63557a51c0b ;;
         Darwin:x86_64)
             target=x86_64-apple-darwin
-            digest=c5b12bc81e7afc3d61e19e335253c6a5bbe796d0087235c8210dfb937985003a ;;
+            digest=ebac329b3d77b8ae4a621b3edb8ab108024629233c330bad7866d4495c3fa398 ;;
         Linux:aarch64|Linux:arm64)
             target=aarch64-unknown-linux-gnu
-            digest=6d166d937d49cc0bcb4f3e391d4a8e6544444629852917f2ca9101e13b646859 ;;
+            digest=8b2e803e3f3968ae4ca527f0f425d35f0f5d8cfe0b9627fca8fa98023d6fceb2 ;;
         Linux:x86_64)
             target=x86_64-unknown-linux-gnu
-            digest=69612e80a88052530f20c7e87c9fb11b7617f45d0955b70126a3ba5e93e72890 ;;
+            digest=2a207a6bd630b930c02b904f5ff73b79ab77554deace8f17bed24a324a5a30d7 ;;
         *) fail 'Supported platforms: macOS and Linux on x86-64 or ARM64.' ;;
     esac
     case "$target" in
@@ -62,11 +62,11 @@ main() {
     trap 'rm -rf "$work"' EXIT
     trap 'exit 130' INT
     trap 'exit 143' TERM
-    asset="browser-v0.3.0-$target"
-    printf 'Installing browser 0.3.0 for %s…\n' "$target"
+    asset="browser-v0.3.1-$target"
+    printf 'Installing browser 0.3.1 for %s…\n' "$target"
     curl --fail --show-error --silent --location --proto '=https' --tlsv1.2 \
         --retry 3 --connect-timeout 20 --max-time 300 \
-        "https://github.com/unlikefraction/silicon-browser/releases/download/managed-v0.3.0/$asset.tar.gz" \
+        "https://github.com/unlikefraction/silicon-browser/releases/download/managed-v0.3.1/$asset.tar.gz" \
         --output "$work/archive.tar.gz"
     if [ "$checksum" = sha256sum ]; then
         actual=$(sha256sum "$work/archive.tar.gz")
@@ -77,7 +77,7 @@ main() {
     tar -xzf "$work/archive.tar.gz" -C "$work" "$asset/browser"
     chmod 755 "$work/$asset/browser"
     installed_version=$("$work/$asset/browser" --version) || fail 'The release cannot run on this system; existing installation was not changed.'
-    [ "$installed_version" = 'browser 0.3.0' ] || fail 'The release has an unexpected command name or version; existing installation was not changed.'
+    [ "$installed_version" = 'browser 0.3.1' ] || fail 'The release has an unexpected command name or version; existing installation was not changed.'
     [ ! -d "$bin_dir/browser" ] || fail "$bin_dir/browser is a directory."
     mv -f "$work/$asset/browser" "$bin_dir/browser"
     add_path "$HOME/.profile"
