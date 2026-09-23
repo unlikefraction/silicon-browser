@@ -3,12 +3,12 @@ use std::collections::HashSet;
 use serde::{Deserialize, Serialize};
 
 use crate::validation::{MAX_IDENTIFIER_CHARS, collection_len, identifier};
-use crate::{Identity, Validate, ValidationError};
+use crate::{Identity, Validate, ValidationError, actor_id};
 
 /// Normalized union of explicit principals (`@id`) and IAM tags (`tag`).
 ///
 /// Serialization is deliberately a plain string array so it maps directly to
-/// `--access [@carbon,@silicon,growth]`.
+/// `--access [@c:alice,@si:worker,growth]`.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(transparent)]
 pub struct AccessList(Vec<String>);
@@ -92,7 +92,10 @@ impl Validate for AccessList {
     fn validate(&self) -> Result<(), ValidationError> {
         collection_len(self.0.len(), "access", Self::MAX_ENTRIES)?;
         for entry in &self.0 {
-            normalize_entry(entry)?;
+            let entry = normalize_entry(entry)?;
+            if let Some(principal) = entry.strip_prefix('@') {
+                actor_id(principal, "access")?;
+            }
         }
         Ok(())
     }
@@ -174,17 +177,17 @@ mod access_list_tests {
     /// Test group: profile access is a set union with an owner who cannot be omitted.
     #[test]
     fn owner_is_first_and_duplicates_are_removed() {
-        let access = AccessList::with_owner("silicon-1", ["growth", "@silicon-1", "growth"]).unwrap();
-        assert_eq!(access.as_slice(), ["@silicon-1", "growth"]);
+        let access = AccessList::with_owner("si:silicon-1", ["growth", "@si:silicon-1", "growth"]).unwrap();
+        assert_eq!(access.as_slice(), ["@si:silicon-1", "growth"]);
     }
 
     /// Test group: either an explicit identity or any IAM tag grants access.
     #[test]
     fn matches_principals_and_tags() {
-        let access = AccessList::new(["@carbon-1", "growth"]).unwrap();
-        assert!(access.allows(&identity("carbon-1", &[])));
-        assert!(access.allows(&identity("silicon-2", &["growth"])));
-        assert!(!access.allows(&identity("silicon-3", &["sales"])));
+        let access = AccessList::new(["@c:carbon-1", "growth"]).unwrap();
+        assert!(access.allows(&identity("c:carbon-1", &[])));
+        assert!(access.allows(&identity("si:silicon-2", &["growth"])));
+        assert!(!access.allows(&identity("si:silicon-3", &["sales"])));
     }
 
     /// Test group: malformed CLI list fragments never become ambiguous grants.
@@ -195,6 +198,12 @@ mod access_list_tests {
         assert!(AccessList::new(["sales team"]).is_err());
         assert!(AccessList::new(["@@principal"]).is_err());
         assert!(AccessList::new(["sales\0team"]).is_err());
+        assert!(AccessList::new(["@c:alice0", "@si:worker", "growth"]).unwrap().validate().is_ok());
+        for old in ["@alice", "@worker:tos", "@00000000-0000-0000-0000-000000000000"] {
+            assert!(AccessList::new([old]).unwrap().validate().is_err(), "{old}");
+        }
+        let unnormalized: AccessList = serde_json::from_str(r#"[" @alice "]"#).unwrap();
+        assert!(unnormalized.validate().is_err());
     }
 
     /// Test group: ACL work and persisted rows remain bounded before normalization.

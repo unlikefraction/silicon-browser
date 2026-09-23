@@ -30,11 +30,11 @@ browser iam --json</code></pre>
 
   <h2 id="authenticate">2. Authenticate with IAM</h2>
   <p>Browser uses short-lived authorization tokens from the official IAM CLI or IAM's web consent screen. It never asks for your IAM password. Replace <code>tos</code> with your organization:</p>
-  <pre><code>slt=$(iam login --app-id 'tos&gt;browser' --grant-org tos -o json | jq -r .slt)
+  <pre><code>slt=$(iam login --app-id 'browser' --grant-org tos -o json | jq -r .slt)
 browser --org-id tos login "$slt"
 browser login status --json
 browser setup</code></pre>
-  <p>Setup installs the pinned native browser controller and requests a separate fresh IAM token for background recording authorization. Browser can then deliver completed recordings after your terminal closes. <code>browser iam --json</code> identifies the application as <code>tos&gt;browser</code>.</p>
+  <p>Setup installs the pinned native browser controller and requests a separate fresh IAM token for background recording authorization. Browser can then deliver completed recordings after your terminal closes. <code>browser iam --json</code> identifies the application as <code>browser</code>.</p>
   <p>Private state lives in <code>$SILICON_HOME/.silicon-browser</code>, or <code>~/.silicon-browser</code> when <code>SILICON_HOME</code> is absent. State is partitioned by backend URL and testing environment. <code>SB_HOME</code> explicitly selects a different private home.</p>
 
   <h2 id="browser">3. Run a browser</h2>
@@ -55,11 +55,11 @@ browser fetch https://example.com --purpose "Extract relevant claims"</code></pr
   <p>Keep the secret in a private JSON file containing <code>{"app_secret":"ask_..."}</code>, then enroll it:</p>
   <pre><code>browser testing login --credentials-stdin &lt; test-credentials.json
 # Use the environment UUID returned above on every test command.
-browser --test ENVIRONMENT_UUID --org-id tos login worker:tos
+browser --test ENVIRONMENT_UUID --org-id tos login si:worker
 browser --test ENVIRONMENT_UUID testing status --json
 browser --test ENVIRONMENT_UUID login status --json
 browser --test ENVIRONMENT_UUID profile ls</code></pre>
-  <p><code>browser testing login</code> also reads <code>SB_TEST_APP_SECRET</code>. Test login accepts an existing test actor ID such as <code>alice</code> or <code>worker:tos</code>, or an IAM test <code>oac_</code> token. Mint a short-lived test token with <code>iam --test ENVIRONMENT_UUID login --app-id 'tos&gt;browser' --grant-org tos -o json</code>.</p>
+  <p><code>browser testing login</code> also reads <code>SB_TEST_APP_SECRET</code>. Test login accepts an existing test actor ID such as <code>c:alice</code> or <code>si:worker</code>, or an IAM test <code>oac_</code> token. Mint a short-lived test token with <code>iam --test ENVIRONMENT_UUID login --app-id 'browser' --grant-org tos -o json</code>.</p>
   <p class="note"><strong>Browser sessions require test recording storage.</strong> Add <code>briefcase_test_environment_key</code> to the enrollment JSON (or set <code>SB_BRIEFCASE_TEST_KEY</code>) using the Briefcase app secret imported into this same IAM environment. Run <code>browser --test ENVIRONMENT_UUID setup</code> to authorize recording delivery as the signed-in actor. Missing storage or authorization fails explicitly.</p>
   <h3>Website</h3>
   <ol>
@@ -79,14 +79,14 @@ Content-Type: application/json
 
 {"app_secret":"ask_..."}</code></pre>
   <p>IAM verifies that the secret belongs to the Browser test application. The response identifies its environment:</p>
-  <pre><code>{"data":{"environment_id":"ENVIRONMENT_UUID","app_id":"tos&gt;browser","name":"My test environment"}}</code></pre>
+  <pre><code>{"data":{"environment_id":"ENVIRONMENT_UUID","app_id":"browser","name":"My test environment"}}</code></pre>
   <p>The JSON may additionally include <code>iam_test_key</code> and <code>briefcase_test_environment_key</code>. The optional <code>iam_test_key</code> is exactly 32 ASCII letters or digits. <code>briefcase_test_environment_key</code> contains the imported Briefcase IAM app secret (<code>ask_</code> plus 43 base64url characters). Both must belong to the Browser app secret’s IAM environment; existing field names are retained for compatibility.</p>
   <h3>2. Authenticate a test actor</h3>
   <pre><code>POST https://backend.browser.teamofsilicons.com/testing/ENVIRONMENT_UUID/api/v1/auth/exchange
 Content-Type: application/json
 x-sb-test-app-secret: ask_...
 
-{"short_lived_token":"worker:tos","org_id":"tos"}</code></pre>
+{"short_lived_token":"si:worker","org_id":"tos"}</code></pre>
   <p>The exchange returns <code>data.access_token</code>, <code>data.refresh_token</code>, <code>data.expires_at</code>, identity, and organization. The actor must exist in this IAM environment. You may supply an IAM test short-lived token instead of an actor ID.</p>
   <h3>3. Call the normal API in that environment</h3>
   <pre><code>GET https://backend.browser.teamofsilicons.com/testing/ENVIRONMENT_UUID/api/v1/profiles

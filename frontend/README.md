@@ -9,7 +9,7 @@ provides CLI, website, and direct API instructions for IAM testing environments.
 
 1. Select **Testing environment** on the welcome screen or in the workspace header.
 2. Enter the Browser test app's `ask_` secret. IAM verifies it and supplies the environment UUID; its root key is optional.
-3. Enter an existing IAM test actor ID (`alice` or `worker:tos`), or a test `oac_` short-lived token, and select its organization by entering the organization ID.
+3. Enter an existing IAM test actor ID (`c:alice` or `si:worker`), or a test `oac_` short-lived token, and select its organization by entering the organization ID.
 4. To create browser sessions or save recordings, enter the **Briefcase test environment key** using the imported Briefcase IAM app secret from this same environment. It is optional for sign-in and metadata use, but required for browser sessions because Browser requires recording storage.
 5. Select **Enter test mode**. The badge shows the verified environment name and UUID. In **Settings**, enable recording access using the same test actor or a fresh test token. Test authorization uses a masked form in this page.
 6. Select **Exit test mode** to return to your production workspace. Reloading also clears the test sign-in and restores any saved production sign-in.
@@ -17,7 +17,7 @@ provides CLI, website, and direct API instructions for IAM testing environments.
 To obtain a short-lived token instead of using an existing actor ID:
 
 ```sh
-iam --test <environment-uuid> login --app-id 'tos>browser' --grant-org <org> -o json
+iam --test <environment-uuid> login --app-id 'browser' --grant-org <org> -o json
 ```
 
 Use the returned `slt`. The optional IAM root key contains exactly 32 ASCII letters or digits. The
@@ -56,7 +56,7 @@ The `/docs/` landing page is static HTML. The same build publishes the repositor
 
 The public API origin defaults to `https://backend.browser.teamofsilicons.com`. On the backend, set `SB_ORIGIN=https://browser.teamofsilicons.com`. Requests go directly to that API using explicit bearer and organization headers, omit cookies and refuse redirects. CORS must allow Authorization, Content-Type, X-Org-Id, x-sb-test-app-secret, x-testing-environment-key, and x-sb-test-briefcase-key, and expose `x-sb-auth-rejected` for one safe pre-handler authentication retry. Test context verification posts to `/api/v1/testing/context`; all later test calls use `/testing/<verified-environment-uuid>/api/v1` with test headers. Only authentication, profile/session management, metadata and logs use the API. The live iframe connects straight to its returned HTTPS viewer URL.
 
-Production sign-in opens the canonical IAM login in a popup, with application `tos>browser`; organization selection is handled by IAM after authentication. Its one-use callback is accepted only from the exact popup window and frontend origin with the initiating nonce. If the sign-in window loses its opener, a same-origin BroadcastChannel keyed by that random nonce completes the handoff. The callback query and live-link fragment are removed immediately. The production interactive access/refresh pair is saved in origin-scoped sessionStorage, keyed by API origin, so the same tab restores its identity after reload. Successful renewal replaces the saved pair before another authenticated request; sign-out or a terminal renewal rejection clears it. Temporary network errors preserve the saved session. Codes and live grants remain memory-only. This is tab-session persistence, not a persistent login across browser restarts or synchronized sign-in across tabs. Production recording delivery uses a second IAM sign-in so its independent background authorization survives closing the tab. It can be disabled in Settings. Test mode uses memory-only clients and test actors/tokens for both sign-in and recording authorization; it never opens production IAM popup authentication.
+Production sign-in opens the canonical IAM login in a popup, with application `browser`; organization selection is handled by IAM after authentication. Its one-use callback is accepted only from the exact popup window and frontend origin with the initiating nonce. If the sign-in window loses its opener, a same-origin BroadcastChannel keyed by that random nonce completes the handoff. The callback query and live-link fragment are removed immediately. The production interactive access/refresh pair is saved in origin-scoped sessionStorage, keyed by API origin, so the same tab restores its identity after reload. Successful renewal replaces the saved pair before another authenticated request; sign-out or a terminal renewal rejection clears it. Temporary network errors preserve the saved session. Codes and live grants remain memory-only. This is tab-session persistence, not a persistent login across browser restarts or synchronized sign-in across tabs. Production recording delivery uses a second IAM sign-in so its independent background authorization survives closing the tab. It can be disabled in Settings. Test mode uses memory-only clients and test actors/tokens for both sign-in and recording authorization; it never opens production IAM popup authentication.
 
 For a local backend on port 8091, set its `SB_ORIGIN=http://127.0.0.1:8092`, then:
 

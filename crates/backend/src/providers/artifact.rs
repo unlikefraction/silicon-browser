@@ -158,7 +158,7 @@ fn validate_artifact_identity(org_id: &str, actor_id: &str) -> ProviderResult<()
             && value.len() <= 255
             && value.bytes().all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b':' | b'.'))
     };
-    if !safe(org_id) || !safe(actor_id) {
+    if !safe(org_id) || silicon_browser_shared::actor_id(actor_id, "actor_id").is_err() {
         return Err(ProviderError::InvalidInput("invalid artifact owner".into()));
     }
     Ok(())
@@ -198,8 +198,8 @@ mod tests {
         let receipt = store
             .put_on_behalf(PutArtifact {
                 org_id: "tos".into(),
-                actor_id: "worker:tos".into(),
-                path: "private/worker:tos/sb/session/recording.mp4".into(),
+                actor_id: "si:worker".into(),
+                path: "private/si:worker/sb/session/recording.mp4".into(),
                 content_type: "video/mp4".into(),
                 source: ArtifactSource::RemoteUrl("https://signed.invalid/secret".into()),
                 obo: grant(),
@@ -217,8 +217,8 @@ mod tests {
         let result = store
             .trash_on_behalf(TrashArtifact {
                 org_id: "tos".into(),
-                actor_id: "worker:tos".into(),
-                path: "private/worker:tos/../another-user/recording.mp4".into(),
+                actor_id: "si:worker".into(),
+                path: "private/si:worker/../another-user/recording.mp4".into(),
                 obo: grant(),
             })
             .await;
@@ -227,7 +227,7 @@ mod tests {
         let result = store
             .trash_on_behalf(TrashArtifact {
                 org_id: "tos".into(),
-                actor_id: "worker:tos".into(),
+                actor_id: "si:worker".into(),
                 path: "private/another-worker/sb/session/recording.mp4".into(),
                 obo: grant(),
             })

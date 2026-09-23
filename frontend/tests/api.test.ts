@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { BrowserApi, acceptAuth, dateForApi, publicError, safeHttps, shellQuote } from '../src/api';
 import type { AuthSession } from '../src/types';
-const session = (access = 'oat_initial'): AuthSession => ({ access_token: access, refresh_token: 'ort_refresh', expires_at: new Date(Date.now() + 900000).toISOString(), identity: { id: '@tester', name: 'Tester', kind: 'carbon' }, org: { id: 'tos', name: 'tos' } });
+const session = (access = 'oat_initial'): AuthSession => ({ access_token: access, refresh_token: 'ort_refresh', expires_at: new Date(Date.now() + 900000).toISOString(), identity: { id: 'c:tester', name: 'Tester', kind: 'carbon' }, org: { id: 'tos', name: 'tos' } });
 const response = (data: unknown, status = 200, headers: Record<string, string> = {}) => new Response(JSON.stringify(status === 200 ? {data} : {error: {message: 'Unauthorized'}}), {status, headers});
 function client(handler: (url: string, options: RequestInit) => Promise<Response>) { const api = new BrowserApi('https://backend.browser.teamofsilicons.com', ((url, options) => handler(String(url), options || {})) as typeof fetch); api.setSession(session()); return api; }
 
@@ -32,6 +32,9 @@ test('refresh response must preserve organization and identity when scoped', () 
   assert.throws(()=>acceptAuth(session(), 'other')); assert.throws(()=>acceptAuth(session(), 'tos', '@someone-else'));
   assert.throws(()=>acceptAuth({...session(), access_token:'secret'}, 'tos')); assert.throws(()=>acceptAuth({...session(), expires_at:'invalid'}, 'tos'));
   assert.throws(()=>acceptAuth({...session(), access_token:'oat_'}, 'tos')); assert.throws(()=>acceptAuth({...session(), refresh_token:'ort_bad\nheader'}, 'tos'));
+  for (const identity of [{id:'tester', name:'Tester', kind:'carbon'}, {id:'worker:tos', name:'Worker', kind:'silicon'}, {id:'c:tester', name:'Tester', kind:'silicon'}]) {
+    assert.throws(() => acceptAuth({...session(), identity: identity as AuthSession['identity']}), /sign in again/);
+  }
 });
 test('viewer links reject script, plaintext and embedded credentials', () => {
   for (const value of ['javascript:alert(1)', 'http://example.com', 'https://user:secret@example.com', 'not a url']) assert.equal(safeHttps(value), null);
@@ -52,10 +55,10 @@ test('default fetch preserves the native browser global receiver', async () => {
   } finally { globalThis.fetch = original; }
 });
 
-const testContext = { environment_id: '11111111-1111-4111-8111-111111111111', app_id: 'tos>browser', name: 'Browser integration tests' };
+const testContext = { environment_id: '11111111-1111-4111-8111-111111111111', app_id: 'browser', name: 'Browser integration tests' };
 const testCredentials = { app_secret: 'ask_test-secret', iam_test_key: 'iam_test-root', briefcase_test_environment_key: 'briefcase_test-root' };
 test('test app secret alone selects the environment and accepts existing test actor IDs', async () => {
-  for (const actor of ['alice', 'worker:tos']) {
+  for (const actor of ['c:alice', 'si:worker']) {
     const production = new BrowserApi('https://backend.browser.teamofsilicons.com', (async (input, options) => {
       if (String(input).endsWith('/testing/context')) {
         assert.deepEqual(JSON.parse(String(options?.body)), { app_secret: testCredentials.app_secret });
@@ -64,7 +67,7 @@ test('test app secret alone selects the environment and accepts existing test ac
       assert.equal((options?.headers as Record<string, string>)['x-testing-environment-key'], undefined);
       assert.equal((options?.headers as Record<string, string>)['x-sb-test-briefcase-key'], undefined);
       assert.equal(JSON.parse(String(options?.body)).short_lived_token, actor);
-      return response(session('oat_test'));
+      return response({ ...session('oat_test'), identity: { id: actor, name: 'Test actor', kind: actor.startsWith('c:') ? 'carbon' : 'silicon' } });
     }) as typeof fetch);
     const result = await production.startTesting({ app_secret: testCredentials.app_secret }, actor, 'tos');
     assert.equal(result.api.currentSession()?.access_token, 'oat_test');
@@ -121,6 +124,7 @@ test('invalid or rejected test contexts never exchange credentials or alter prod
   let calls = 0;
   const production = new BrowserApi('https://backend.browser.teamofsilicons.com', (async () => { calls++; return response({}); }) as typeof fetch);
   await assert.rejects(production.startTesting(testCredentials, 'invalid token', 'tos'), /oac_/);
+  for (const actor of ['alice', 'worker:tos', 'c:ab', 'si:worker:tos', 'oat_private']) await assert.rejects(production.startTesting(testCredentials, actor, 'tos'), /Migrate old selectors/);
   await assert.rejects(production.startTesting({ ...testCredentials, iam_test_key: 'bad\nheader' }, 'oac_test', 'tos'), /whitespace/);
   assert.equal(calls, 0);
 });
@@ -147,15 +151,21 @@ test('failed test sign-in preserves production and closing during renewal never 
   assert.equal(api.currentSession(), null);
   assert.equal(production.currentSession()?.access_token, 'oat_initial');
 });
+test('test actor selectors reject an authenticated response for another account', async () => {
+  const production = new BrowserApi('https://backend.browser.teamofsilicons.com', (async input => response(String(input).endsWith('/testing/context') ? testContext : session('oat_other'))) as typeof fetch);
+  production.setSession(session());
+  await assert.rejects(production.startTesting(testCredentials, 'si:worker', 'tos'), /identity.*sign in again/);
+  assert.equal(production.currentSession()?.access_token, 'oat_initial');
+});
 test('test invitations require matching verified context before exchange and test paths cannot escape to production', async () => {
   let calls = 0;
   const production = new BrowserApi('https://backend.browser.teamofsilicons.com', (async input => {
     calls++;
-    return response(String(input).endsWith('/testing/context') ? testContext : session('oat_test'));
+    return response(String(input).endsWith('/testing/context') ? testContext : { ...session('oat_test'), identity: { id: 'c:alice', name: 'Alice', kind: 'carbon' } });
   }) as typeof fetch);
-  await assert.rejects(production.startTesting(testCredentials, 'alice', 'tos', '22222222-2222-4222-8222-222222222222'), /different environment/);
+  await assert.rejects(production.startTesting(testCredentials, 'c:alice', 'tos', '22222222-2222-4222-8222-222222222222'), /different environment/);
   assert.equal(calls, 1);
-  const { api } = await production.startTesting(testCredentials, 'alice', 'tos', testContext.environment_id);
+  const { api } = await production.startTesting(testCredentials, 'c:alice', 'tos', testContext.environment_id);
   assert.equal(calls, 3);
   for (const path of ['/../../../../api/v1/me', '/%2e%2e/%2e%2e/%2e%2e/%2e%2e/api/v1/me', '/sessions/%2f..%2f..', '/sessions/%5c..', '/sessions#ignored', '\\..\\..\\..\\..\\api\\v1\\me']) {
     await assert.rejects(api.request(path), /inside this environment/);

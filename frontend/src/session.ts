@@ -15,7 +15,8 @@ export class TabSession {
       const value = JSON.parse(raw);
       if (typeof value?.org?.id !== 'string' || !value.org.id ||
           typeof value?.identity?.name !== 'string' || !['carbon', 'silicon'].includes(value?.identity?.kind)) throw new Error('Invalid saved session');
-      // An expired access token can still have a valid refresh token.
+      // Canonical sessions retain refresh families. Legacy cached identities require
+      // normal sign-in; never rename an identity or edit opaque tokens locally.
       return acceptAuth(value, value.org.id);
     } catch {
       try { this.save(null); } catch { /* Storage may be disabled entirely. */ }

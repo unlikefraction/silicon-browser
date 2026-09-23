@@ -40,7 +40,7 @@ The official IAM CLI can mint Browser's token directly. Pass the selected
 organization when a Carbon has access to more than one workspace:
 
 ```sh
-slt=$(iam login --app-id 'tos>browser' --grant-org tos -o json | jq -r .slt)
+slt=$(iam login --app-id 'browser' --grant-org tos -o json | jq -r .slt)
 browser --org-id tos login "$slt"
 ```
 
@@ -69,7 +69,7 @@ browser testing login
 browser testing login --credentials-stdin < test-credentials.json
 
 browser --test <environment-uuid> testing status --json
-browser --test <environment-uuid> login worker:tos --org-id tos
+browser --test <environment-uuid> login si:worker --org-id tos
 browser --test <environment-uuid> login status --json
 browser --test <environment-uuid> setup
 browser --test <environment-uuid> profile ls

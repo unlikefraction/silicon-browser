@@ -1,6 +1,6 @@
 {
   "org_id": "tos",
-  "local_app_id": "browser",
+  "app_id": "browser",
   "name": "Silicon Browser",
   "description": "Silicon Browser gives people and software agents managed browser profiles, shared access, expiring sessions, and live handoff. Its browser command connects directly to remote browsers while the hosted API manages identity, permissions, session metadata, recordings, and usage. Teams can search and fetch web content, automate browser actions, share profiles with authorized members, and deliver recordings into the initiating member's Briefcase. IAM provides authentication and organization consent. Browser commands execute on the caller's computer, and browser output does not pass through the metadata API.",
   "website_url": "https://browser.teamofsilicons.com",
@@ -10,7 +10,7 @@
   "webhook_scope": ["full"],
   "app_scope": {
     "iam": ["self.identity.read", "self.membership.read", "self.tags.read"],
-    "external": [{"app_id": "tos>briefcase", "endpoint_id": "briefcase.files.create"}]
+    "external": [{"app_id": "briefcase", "endpoint_id": "briefcase.files.create"}]
   },
   "obo_endpoints": [],
   "obo_review_message": "Browser delivers each completed session recording and Silicon command log into the initiating member's private Briefcase application folder. Delegated uploads require that member's separate recording authorization and selected organization.",

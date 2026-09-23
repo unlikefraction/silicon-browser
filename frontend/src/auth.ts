@@ -1,6 +1,6 @@
 import type { PendingLive } from './types';
 export const IAM_AUTH_ORIGIN = 'https://auth.iam.teamofsilicons.com';
-export const IAM_APP_ID = 'tos>browser';
+export const IAM_APP_ID = 'browser';
 const CALLBACK_TYPE = 'silicon-browser:sign-in';
 export function readEntry(url: URL) {
   const match = url.pathname.match(/^\/sessions\/([^/]+)\/live\/?$/);

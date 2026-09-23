@@ -23,6 +23,58 @@ pub trait Validate {
     fn validate(&self) -> Result<(), ValidationError>;
 }
 
+/// Complete IAM actor ID. Organization authority is always a separate field.
+pub fn actor_id(value: &str, field: &'static str) -> Result<crate::IdentityKind, ValidationError> {
+    let parsed = value
+        .strip_prefix("c:")
+        .map(|handle| (handle, 30, crate::IdentityKind::Carbon))
+        .or_else(|| value.strip_prefix("si:").map(|handle| (handle, 50, crate::IdentityKind::Silicon)));
+    if let Some((handle, max, kind)) = parsed
+        && (3..=max).contains(&handle.len())
+        && handle.bytes().all(handle_byte)
+    {
+        return Ok(kind);
+    }
+    Err(ValidationError::Invalid { field, reason: "expected c:<carbon-handle> (3–30 characters) or si:<silicon-handle> (3–50 characters), using lowercase letters, digits, _ or -; migrate old selectors or sign in again".into() })
+}
+
+/// Bare IAM application handle; bundle and release selectors are separate grammars.
+pub fn app_id(value: &str, field: &'static str) -> Result<(), ValidationError> {
+    if (1..=80).contains(&value.len()) && value.as_bytes()[0].is_ascii_lowercase() && value.bytes().all(handle_byte) {
+        return Ok(());
+    }
+    Err(ValidationError::Invalid {
+        field,
+        reason: "expected a bare application ID of 1–80 lowercase letters, digits, _ or -, beginning with a letter"
+            .into(),
+    })
+}
+
+fn handle_byte(byte: u8) -> bool {
+    byte.is_ascii_lowercase() || byte.is_ascii_digit() || matches!(byte, b'_' | b'-')
+}
+
+#[cfg(test)]
+#[test]
+fn public_identifiers_preserve_kinds_and_handle_limits() {
+    use crate::IdentityKind::{Carbon, Silicon};
+    assert_eq!(actor_id("c:alice0", "id"), Ok(Carbon));
+    assert_eq!(actor_id("si:chef", "id"), Ok(Silicon));
+    for (prefix, max) in [("c:", 30), ("si:", 50)] {
+        assert!(actor_id(&format!("{prefix}{}", "a".repeat(max)), "id").is_ok());
+        assert!(actor_id(&format!("{prefix}{}", "a".repeat(max + 1)), "id").is_err());
+    }
+    for value in ["alice", "chef:tos", "c:ab", "si:ab", "si:Chef", "c:alice:tos", "@c:alice"] {
+        assert!(actor_id(value, "id").is_err(), "{value}");
+    }
+    for value in ["browser", "briefcase", "a", &"a".repeat(80)] {
+        assert!(app_id(value, "app").is_ok(), "{value}");
+    }
+    for value in ["", "tos>browser", "browser>test@1.0.0", "1browser", "Browser", &"a".repeat(81)] {
+        assert!(app_id(value, "app").is_err(), "{value}");
+    }
+}
+
 pub(crate) fn required(value: &str, field: &'static str) -> Result<(), ValidationError> {
     if value.trim().is_empty() { Err(ValidationError::Required { field }) } else { Ok(()) }
 }

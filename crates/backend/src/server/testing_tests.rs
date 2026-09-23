@@ -19,7 +19,7 @@ async fn iam_stub(State(state): State<Arc<TestIam>>, request: axum::extract::Req
     assert!(!request.headers().contains_key("x-testing-environment-key"));
     let decoded = base64::engine::general_purpose::STANDARD.decode(selector.strip_prefix("Basic ").unwrap()).unwrap();
     let decoded = String::from_utf8(decoded).unwrap();
-    let supplied = decoded.strip_prefix("tos>browser:").expect("configured Browser application");
+    let supplied = decoded.strip_prefix("browser:").expect("configured Browser application");
     let environment = if supplied == secret('B') { Uuid::from_u128(20) } else { Uuid::from_u128(10) };
     let path = request.uri().path();
     if path == "/api/version" {
@@ -37,22 +37,22 @@ async fn iam_stub(State(state): State<Arc<TestIam>>, request: axum::extract::Req
         state.verifications.fetch_add(1, Ordering::SeqCst);
         let mut metadata = json!({"environment_id":environment,"org_id":"org-1","name":"Browser test","version":1,
             "key_generation":if supplied == secret('R') { 2 } else { 1 },"created_at":"2026-09-12T00:00:00Z",
-            "creator_type":"application","creator_id":"tos>browser"});
+            "creator_type":"application","creator_id":"browser"});
         if state.cleaned.load(Ordering::SeqCst) {
             metadata["cleaned_at"] = json!("2026-09-14T00:00:00Z");
         }
         return Json(json!({"environment_id":environment,
-            "application":{"app_id":"tos>browser","base_url":"https://browser.example","app_scope":{"iam":[],"external":[]},"webhook_scope":[],"testing_idle_days":30},
+            "application":{"app_id":"browser","base_url":"https://browser.example","app_scope":{"iam":[],"external":[]},"webhook_scope":[],"testing_idle_days":30},
             "environment":metadata})).into_response();
     }
     assert_eq!(path, "/api/v1/oauth/introspect");
-    Json(json!({"active":true,"principal_id":Uuid::from_u128(1),"actor_type":"silicon","client_id":"tos>browser",
-        "org_id":"org-1","membership_id":Uuid::from_u128(2),"session_id":Uuid::from_u128(3),
-        "scope":"self.identity.read self.tags.read","audience":"tos>browser","issued_at":Utc::now().timestamp()-1,
+    Json(json!({"active":true,"public_id":"si:owner-1","actor_type":"silicon","client_id":"browser",
+        "org_id":"org-1","membership_id":"si:owner-1[org-1]","session_id":Uuid::from_u128(3),
+        "scope":"self.identity.read self.tags.read","audience":"browser","issued_at":Utc::now().timestamp()-1,
         "expires_at":Utc::now().timestamp()+1800,"authorization_epoch":7,
-        "authorization":{"principal_id":Uuid::from_u128(1),"actor_type":"silicon","public_id":"owner-1",
-            "organization_id":Uuid::from_u128(4),"org_id":"org-1","membership_id":Uuid::from_u128(2),
-            "membership_version":1,"authorization_epoch":7,"audience":"tos>browser",
+        "authorization":{"actor_type":"silicon","public_id":"si:owner-1",
+            "organization_id":Uuid::from_u128(4),"org_id":"org-1","membership_id":"si:owner-1[org-1]",
+            "membership_version":1,"authorization_epoch":7,"audience":"browser",
             "testing_environment_id":environment,"scopes":["self.identity.read","self.tags.read"],"tags":[]}}))
     .into_response()
 }
@@ -100,7 +100,7 @@ async fn test_routes_verify_before_storage_and_isolate_environments_cleaning_and
         ("SB_ORIGIN", "https://browser.example".to_owned()),
         ("SB_DATABASE_URL", format!("sqlite://{}?mode=rwc", directory.path().join("production.db").display())),
         ("SB_ENCRYPTION_KEY", "07".repeat(32)),
-        ("IAM_APP_ID", "tos>browser".to_owned()),
+        ("IAM_APP_ID", "browser".to_owned()),
         ("IAM_APP_SECRET", secret('P')),
         ("BROWSER_USE_API_KEY", "provider-test".to_owned()),
         ("SILICON_IAM_URL", base),

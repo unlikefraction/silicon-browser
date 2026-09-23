@@ -5,7 +5,7 @@ import { TabSession } from '../src/session';
 import type { AuthSession } from '../src/types';
 
 const origin = 'https://backend.browser.teamofsilicons.com';
-const initial: AuthSession = { access_token: 'oat_original', refresh_token: 'ort_original', expires_at: '2020-01-01T00:00:00Z', identity: { id: 'owner', name: 'Owner', kind: 'carbon' }, org: { id: 'tos', name: 'tos' } };
+const initial: AuthSession = { access_token: 'oat_original', refresh_token: 'ort_original', expires_at: '2020-01-01T00:00:00Z', identity: { id: 'c:owner', name: 'Owner', kind: 'carbon' }, org: { id: 'tos', name: 'tos' } };
 const renewed: AuthSession = { ...initial, access_token: 'oat_renewed', refresh_token: 'ort_renewed', expires_at: '2099-01-01T00:00:00Z' };
 function fixture() {
   const values = new Map<string, string>();
@@ -74,4 +74,13 @@ test('unavailable storage does not crash initial rendering and explains a failed
   const saved = new TabSession(origin, () => { throw new Error('blocked'); });
   assert.equal(saved.load(), null);
   assert.throws(() => saved.save(initial), /Allow website storage/);
+});
+
+test('legacy cached identities require fresh sign-in before being displayed', () => {
+  const { saved, values } = fixture();
+  for (const identity of [{ id: 'owner', name: 'Owner', kind: 'carbon' as const }, { id: 'worker:tos', name: 'Worker', kind: 'silicon' as const }]) {
+    saved.save({ ...initial, expires_at: '2099-01-01T00:00:00Z', identity });
+    assert.equal(saved.load(), null);
+    assert.equal(values.size, 0);
+  }
 });

@@ -24,6 +24,10 @@ use crate::decimal::decimal_to_millionths;
 
 mod command_reports;
 mod delivery;
+mod public_identifiers;
+#[cfg(test)]
+mod public_identifiers_tests;
+pub use public_identifiers::PublicIdentifierMapping;
 #[cfg(test)]
 mod delivery_tests;
 pub use delivery::{RecordingArtifactKind, RecordingDeliveryClaim};
@@ -2194,13 +2198,13 @@ mod tests {
     #[tokio::test]
     async fn profile_access_is_normalized_and_scoped() {
         let store = Store::in_memory().await.unwrap();
-        let owner = silicon("owner-1");
-        let profile = create_profile(&store, &owner, &["growth", "@carbon-1", "growth"], "acl").await;
-        assert_eq!(profile.access.as_slice(), ["@owner-1", "growth", "@carbon-1"]);
+        let owner = silicon("si:owner-1");
+        let profile = create_profile(&store, &owner, &["growth", "@c:carbon-1", "growth"], "acl").await;
+        assert_eq!(profile.access.as_slice(), ["@si:owner-1", "growth", "@c:carbon-1"]);
 
-        let tagged = identity("silicon-2", IdentityKind::Silicon, &["growth"]);
-        let explicit = identity("carbon-1", IdentityKind::Carbon, &[]);
-        let stranger = silicon("stranger");
+        let tagged = identity("si:silicon-2", IdentityKind::Silicon, &["growth"]);
+        let explicit = identity("c:carbon-1", IdentityKind::Carbon, &[]);
+        let stranger = silicon("si:stranger");
         assert_eq!(store.profiles("org-1", &tagged).await.unwrap().len(), 1);
         assert_eq!(store.profiles("org-1", &explicit).await.unwrap().len(), 1);
         assert!(store.profiles("org-1", &stranger).await.unwrap().is_empty());
@@ -2521,11 +2525,11 @@ mod tests {
     #[tokio::test]
     async fn command_logs_are_ordered_and_encrypted() {
         let store = Store::in_memory().await.unwrap();
-        let owner = silicon("owner-1");
-        let profile = create_profile(&store, &owner, &["@runner-1"], "commands").await;
+        let owner = silicon("si:owner-1");
+        let profile = create_profile(&store, &owner, &["@si:runner-1"], "commands").await;
         let session = active_session(&store, &owner, &profile.id, "commands").await;
         let box_ = secrets();
-        let runner = silicon("runner-1");
+        let runner = silicon("si:runner-1");
         let one = store
             .report_command(
                 "org-1",
@@ -2563,7 +2567,7 @@ mod tests {
         assert_eq!(logs[0].command, "open https://secret.test");
         assert_eq!(logs[1].exit_code, Some(2));
         let participants = store.session("org-1", &owner, &session.id).await.unwrap().participant_ids;
-        assert!(participants.contains(&"runner-1".into()));
+        assert!(participants.contains(&"si:runner-1".into()));
 
         sqlx::query("UPDATE commands SET command_enc = CASE sequence WHEN 1 THEN ? WHEN 2 THEN ? END")
             .bind(&encrypted[1])
@@ -2581,9 +2585,9 @@ mod tests {
     #[tokio::test]
     async fn connection_renewal_rechecks_current_profile_access() {
         let store = Store::in_memory().await.unwrap();
-        let owner = silicon("owner-1");
-        let runner = silicon("runner-1");
-        let profile = create_profile(&store, &owner, &["@runner-1"], "command-auth").await;
+        let owner = silicon("si:owner-1");
+        let runner = silicon("si:runner-1");
+        let profile = create_profile(&store, &owner, &["@si:runner-1"], "command-auth").await;
         let session = active_session(&store, &owner, &profile.id, "command-auth").await;
         store
             .update_profile(
@@ -2636,11 +2640,11 @@ mod tests {
     #[tokio::test]
     async fn recording_discovery_filters_metadata_actors_and_acl_shares() {
         let store = Store::in_memory().await.unwrap();
-        let owner = silicon("owner-1");
-        let acl_viewer = silicon("acl-viewer");
-        let runner = identity("carbon-1", IdentityKind::Carbon, &[]);
-        let stranger = silicon("stranger");
-        let profile = create_profile(&store, &owner, &["@acl-viewer"], "recording-discovery").await;
+        let owner = silicon("si:owner-1");
+        let acl_viewer = silicon("si:acl-viewer");
+        let runner = identity("c:carbon-1", IdentityKind::Carbon, &[]);
+        let stranger = silicon("si:stranger");
+        let profile = create_profile(&store, &owner, &["@si:acl-viewer"], "recording-discovery").await;
         let session = active_session(&store, &owner, &profile.id, "recording-discovery").await;
         store
             .associate_participant(
@@ -2656,10 +2660,10 @@ mod tests {
         let visible = store.recording("org-1", &acl_viewer, &session.id, &secrets()).await.unwrap();
         assert_eq!(visible.profile_id.as_deref(), Some(profile.id.as_str()));
         assert!(!visible.incognito);
-        assert_eq!(visible.participant_ids, ["owner-1", "carbon-1"]);
+        assert_eq!(visible.participant_ids, ["si:owner-1", "c:carbon-1"]);
 
         let metadata = RecordingFilter::parse(&format!(
-            "profile:{} -> for:@owner-1 -> for:@carbon-1 -> name:market* -> description:^research -> is:shared",
+            "profile:{} -> for:@si:owner-1 -> for:@c:carbon-1 -> name:market* -> description:^research -> is:shared",
             profile.id
         ))
         .unwrap();
@@ -2667,8 +2671,8 @@ mod tests {
         assert!(store.recordings("org-1", &owner, Some(&metadata), &secrets()).await.unwrap().is_empty());
         assert!(store.recordings("org-1", &stranger, Some(&metadata), &secrets()).await.unwrap().is_empty());
 
-        let mine = RecordingFilter::parse("is:mine -> for:@owner-1").unwrap();
-        let mut owner_alias = silicon("canonical-owner");
+        let mine = RecordingFilter::parse("is:mine -> for:@si:owner-1").unwrap();
+        let mut owner_alias = silicon("si:canonical-owner");
         owner_alias.verified_aliases.push(owner.id.clone());
         assert_eq!(store.recordings("org-1", &owner_alias, Some(&mine), &secrets()).await.unwrap().len(), 1);
 
@@ -2679,7 +2683,7 @@ mod tests {
             .activate_session("org-1", &incognito.id, &provider("recording-incognito"), &secrets(), at(2, 12))
             .await
             .unwrap();
-        let incognito_filter = RecordingFilter::parse("is:incognito -> for:@owner-1 -> name:private*").unwrap();
+        let incognito_filter = RecordingFilter::parse("is:incognito -> for:@si:owner-1 -> name:private*").unwrap();
         let values = store.recordings("org-1", &owner, Some(&incognito_filter), &secrets()).await.unwrap();
         assert_eq!(values.len(), 1);
         assert!(values[0].incognito);
@@ -2815,7 +2819,7 @@ mod tests {
     #[tokio::test]
     async fn usage_reads_filters_and_aggregates() {
         let store = Store::in_memory().await.unwrap();
-        let owner = silicon("owner-1");
+        let owner = silicon("si:owner-1");
         let profile = create_profile(&store, &owner, &[], "usage").await;
         let session = active_session(&store, &owner, &profile.id, "usage").await;
         let usage = store
@@ -2841,7 +2845,7 @@ mod tests {
         assert_eq!(usage.cost.proxy_out.micros, 250_000);
         assert_eq!(usage.cost.total.micros, 750_000);
 
-        let filter = UsageFilter::parse("between:02-08-2026=02-08-2026 -> for:@owner-1").unwrap();
+        let filter = UsageFilter::parse("between:02-08-2026=02-08-2026 -> for:@si:owner-1").unwrap();
         let total = store.usage_total("org-1", &owner, Some(&filter)).await.unwrap();
         assert_eq!(total.sessions, 1);
         assert_eq!(total.browser_seconds, 90);
@@ -2850,7 +2854,7 @@ mod tests {
         // Organization billing is intentionally broader than the caller's
         // profile/session ACL. A second owner's private session is included,
         // while an otherwise identical session in another org is not.
-        let other_owner = silicon("other-owner");
+        let other_owner = silicon("si:other-owner");
         let hidden_profile = create_profile(&store, &other_owner, &[], "hidden-usage").await;
         let hidden_session = active_session(&store, &other_owner, &hidden_profile.id, "hidden-usage").await;
         store

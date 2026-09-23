@@ -4,7 +4,7 @@ use chrono::NaiveDate;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
-use crate::{Identity, Recording, Session, SessionStatus, Usage};
+use crate::{Identity, Recording, Session, SessionStatus, Usage, actor_id};
 
 const MAX_FILTER_CHARS: usize = 16_384;
 const MAX_FILTER_STAGES: usize = 64;
@@ -324,13 +324,8 @@ fn stages(value: &str) -> Result<Vec<(usize, String, String)>, FilterError> {
 }
 
 fn principal(key: &str, value: &str) -> Result<String, FilterError> {
-    let value = value.trim().trim_start_matches('@');
-    if value.is_empty()
-        || value.chars().count() > MAX_FILTER_PRINCIPAL_CHARS
-        || value.chars().any(|ch| ch.is_control() || ch.is_whitespace() || matches!(ch, '/' | '\\'))
-    {
-        return Err(invalid(key, "expected @identity"));
-    }
+    let value = value.trim().strip_prefix('@').unwrap_or(value.trim());
+    actor_id(value, "for").map_err(|error| invalid(key, &error.to_string()))?;
     Ok(value.to_owned())
 }
 
@@ -388,8 +383,8 @@ mod filter_tests {
             name: "Market scan".into(),
             description: "Research browser vendors".into(),
             status: SessionStatus::Active,
-            initiator_id: "silicon-1".into(),
-            participant_ids: vec!["carbon-1".into()],
+            initiator_id: "si:silicon-1".into(),
+            participant_ids: vec!["c:carbon-1".into()],
             ttl: SessionTtl::Minutes30,
             started_at,
             expires_at: started_at + chrono::Duration::minutes(30),
@@ -406,9 +401,9 @@ mod filter_tests {
             incognito: false,
             session_name: "Market scan".into(),
             session_description: "Research browser vendors".into(),
-            owner_id: "silicon-1".into(),
-            participant_ids: vec!["silicon-1".into(), "carbon-1".into()],
-            briefcase_path: "private/silicon-1/sb/session-1".into(),
+            owner_id: "si:silicon-1".into(),
+            participant_ids: vec!["si:silicon-1".into(), "c:carbon-1".into()],
+            briefcase_path: "private/si:silicon-1/sb/session-1".into(),
             briefcase_link: None,
             command_log_link: None,
             command_log_path: None,
@@ -426,7 +421,7 @@ mod filter_tests {
         Usage {
             session_id: "session-1".into(),
             started_at: Utc.with_ymd_and_hms(2026, 8, 10, 12, 0, 0).unwrap(),
-            principal_ids: vec!["silicon-1".into(), "carbon-1".into()],
+            principal_ids: vec!["si:silicon-1".into(), "c:carbon-1".into()],
             browser_seconds: 60,
             proxy_bytes_in: 0,
             proxy_bytes_out: 0,
@@ -445,13 +440,13 @@ mod filter_tests {
     #[test]
     fn session_filters_status_people_and_text() {
         let filter =
-            SessionFilter::parse("is: active -> for: @carbon-1 -> name:market* -> description:^research").unwrap();
+            SessionFilter::parse("is: active -> for: @c:carbon-1 -> name:market* -> description:^research").unwrap();
         assert!(filter.matches(&session(), "someone-else"));
 
         let ended = SessionFilter::parse("is:ended").unwrap();
-        assert!(!ended.matches(&session(), "silicon-1"));
+        assert!(!ended.matches(&session(), "si:silicon-1"));
         let mine = SessionFilter::parse("is:mine").unwrap();
-        assert!(mine.matches(&session(), "carbon-1"));
+        assert!(mine.matches(&session(), "c:carbon-1"));
     }
 
     /// Test group: incognito is a mode facet, independent of terminal status.
@@ -462,14 +457,14 @@ mod filter_tests {
         value.location = None;
         value.incognito = true;
         value.status = SessionStatus::Expired;
-        assert!(SessionFilter::parse("is:incognito").unwrap().matches(&value, "silicon-1"));
-        assert!(SessionFilter::parse("is:expired").unwrap().matches(&value, "silicon-1"));
+        assert!(SessionFilter::parse("is:incognito").unwrap().matches(&value, "si:silicon-1"));
+        assert!(SessionFilter::parse("is:expired").unwrap().matches(&value, "si:silicon-1"));
     }
 
     /// Test group: recording contains searches both discoverability fields.
     #[test]
     fn recording_contains_name_or_description() {
-        let viewer = identity("silicon-1");
+        let viewer = identity("si:silicon-1");
         assert!(RecordingFilter::parse("contains:market").unwrap().matches(&recording(), &viewer));
         assert!(RecordingFilter::parse("contains:VENDOR").unwrap().matches(&recording(), &viewer));
         assert!(!RecordingFilter::parse("contains:checkout").unwrap().matches(&recording(), &viewer));
@@ -478,16 +473,16 @@ mod filter_tests {
     /// Test group: recording discovery composes profile, actor, and source-session metadata.
     #[test]
     fn recording_filters_profile_actor_text_and_incognito() {
-        let viewer = identity("silicon-1");
+        let viewer = identity("si:silicon-1");
         let filter =
-            RecordingFilter::parse("profile:profile-1 -> for:@carbon-1 -> name:market* -> description:^research")
+            RecordingFilter::parse("profile:profile-1 -> for:@c:carbon-1 -> name:market* -> description:^research")
                 .unwrap();
         assert!(filter.matches(&recording(), &viewer));
         assert!(!RecordingFilter::parse("profile:profile-2").unwrap().matches(&recording(), &viewer));
 
         let mut owner_is_implicit_actor = recording();
-        owner_is_implicit_actor.participant_ids.retain(|participant| participant != "silicon-1");
-        assert!(RecordingFilter::parse("for:@silicon-1").unwrap().matches(&owner_is_implicit_actor, &viewer));
+        owner_is_implicit_actor.participant_ids.retain(|participant| participant != "si:silicon-1");
+        assert!(RecordingFilter::parse("for:@si:silicon-1").unwrap().matches(&owner_is_implicit_actor, &viewer));
 
         let mut incognito = recording();
         incognito.profile_id = None;
@@ -500,14 +495,14 @@ mod filter_tests {
     /// viewer, including profile-ACL visibility without session participation.
     #[test]
     fn recording_mine_and_shared_are_viewer_relative() {
-        let owner = identity("silicon-1");
+        let owner = identity("si:silicon-1");
         let acl_viewer = identity("acl-viewer");
         assert!(RecordingFilter::parse("is:mine").unwrap().matches(&recording(), &owner));
         assert!(RecordingFilter::parse("is:shared").unwrap().matches(&recording(), &acl_viewer));
         assert!(!RecordingFilter::parse("is:shared").unwrap().matches(&recording(), &owner));
 
-        let mut aliased_owner = identity("public-silicon");
-        aliased_owner.verified_aliases.push("silicon-1".into());
+        let mut aliased_owner = identity("si:public-silicon");
+        aliased_owner.verified_aliases.push("si:silicon-1".into());
         assert!(RecordingFilter::parse("is:mine").unwrap().matches(&recording(), &aliased_owner));
         assert!(!RecordingFilter::parse("is:shared").unwrap().matches(&recording(), &aliased_owner));
     }
@@ -515,7 +510,7 @@ mod filter_tests {
     /// Test group: usage date windows are inclusive and compose with actor selection.
     #[test]
     fn usage_between_and_for_are_inclusive() {
-        let filter = UsageFilter::parse("between:10-08-2026=10-08-2026 -> for:@carbon-1").unwrap();
+        let filter = UsageFilter::parse("between:10-08-2026=10-08-2026 -> for:@c:carbon-1").unwrap();
         assert!(filter.matches(&usage()));
         assert!(!UsageFilter::parse("between:11-08-2026=12-08-2026").unwrap().matches(&usage()));
     }
@@ -528,6 +523,11 @@ mod filter_tests {
         assert!(RecordingFilter::parse("profile:profile/escape").is_err());
         assert!(UsageFilter::parse("between:30-08-2026=01-08-2026").is_err());
         assert!(UsageFilter::parse("between:31-02-2026=01-03-2026").is_err());
+        for old in ["for:@alice", "for:@worker:tos", "for:@@c:alice"] {
+            assert!(SessionFilter::parse(old).is_err(), "{old}");
+            assert!(RecordingFilter::parse(old).is_err(), "{old}");
+            assert!(UsageFilter::parse(old).is_err(), "{old}");
+        }
     }
 
     /// Test group: an omitted filter is represented by an empty, match-all pipeline.

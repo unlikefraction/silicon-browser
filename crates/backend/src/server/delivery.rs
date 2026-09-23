@@ -31,14 +31,8 @@ impl AppState {
         issuer: String,
         audience: String,
     ) -> Result<Self, String> {
-        let valid = |id: &str| {
-            id.split_once('>').is_some_and(|(org, app)| {
-                !org.is_empty() && !app.is_empty() && !app.contains('>') && !id.chars().any(char::is_whitespace)
-            })
-        };
-        if !valid(&issuer) || !valid(&audience) {
-            return Err("recording issuer and Briefcase audience must be canonical applications".into());
-        }
+        silicon_browser_shared::app_id(&issuer, "issuer").map_err(|error| error.to_string())?;
+        silicon_browser_shared::app_id(&audience, "audience").map_err(|error| error.to_string())?;
         self.recording_delivery = Some(Arc::new(RecordingDeliveryServices {
             auth: DeliveryAuth::new(self.store.clone(), self.secrets.clone(), self.identity.clone(), audience.clone()),
             transfer: RecordingDelivery::new(briefcase, self.browser.clone()),
@@ -73,9 +67,7 @@ impl AppState {
                 &scope.principal.membership_id.to_string(),
             )
             .await?;
-        if binding.0 != scope.principal.principal_id.to_string()
-            || binding.1 != scope.principal.membership_id.to_string()
-        {
+        if binding.0 != scope.principal.principal_id || binding.1 != scope.principal.membership_id {
             return Err(ApiFailure::conflict(
                 "recording_authorization_required",
                 "recording delivery needs a fresh SLT for this membership",

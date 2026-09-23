@@ -1,5 +1,7 @@
 # Deployment layout
 
+Existing databases must follow the [public identifier cutover](PUBLIC-IDENTIFIER-MIGRATION.md) before deploying this source. Use bare `IAM_APP_ID=browser` and, when enabled, `BRIEFCASE_APP_ID=briefcase`.
+
 Vercel serves `https://browser.teamofsilicons.com`. A dedicated AWS host runs the native API daemon at `https://backend.browser.teamofsilicons.com`. Clients control remote browsers directly; the AWS host has no controller or Chromium installation and serves no frontend assets. Containers are not required.
 
 ## Traffic paths

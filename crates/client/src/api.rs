@@ -56,7 +56,7 @@ impl Client {
     pub fn iam_with_transport(base: impl Into<String>, transport: Arc<dyn Transport>) -> Result<IamInfo, Error> {
         let client = Self::with_transport(base, Auth::new("pre-auth")?, transport)?;
         let info: IamInfo = client.send_without_auth(Method::Get, "/api/v1/iam", None)?;
-        validate_id(&info.app_id, "app_id")?;
+        app_id(&info.app_id, "app_id").map_err(protocol)?;
         Ok(info)
     }
 
@@ -69,7 +69,7 @@ impl Client {
         let client = Self::new(base, Auth::new("pre-auth")?)?;
         let environment: TestingEnvironment =
             client.send_without_auth(Method::Post, "/api/v1/testing/context", Some(json(credentials)?))?;
-        validate_id(&environment.app_id, "app_id")?;
+        app_id(&environment.app_id, "app_id").map_err(protocol)?;
         if environment.environment_id.is_nil() {
             return Err(Error::Protocol("testing context returned an empty environment ID".into()));
         }
@@ -110,6 +110,9 @@ impl Client {
         let session: AuthSession =
             client.send_without_auth(Method::Post, "/api/v1/auth/exchange", Some(json(request)?))?;
         validate_auth_session(&session, request.org_id.as_deref())?;
+        if !request.short_lived_token.starts_with("oac_") && session.identity.id != request.short_lived_token {
+            return Err(Error::Protocol("test authentication returned a different actor; sign in again".into()));
+        }
         Ok(session)
     }
 
@@ -159,7 +162,9 @@ impl Client {
     }
 
     pub fn me(&self) -> Result<Identity, Error> {
-        self.get_scoped("/api/v1/me")
+        let identity: Identity = self.get_scoped("/api/v1/me")?;
+        identity.validate().map_err(protocol)?;
+        Ok(identity)
     }
 
     /// Return the services enabled by the backend right now. This is queried
@@ -252,6 +257,7 @@ impl Client {
         if connection.session_id != session_id || connection.principal_id.trim().is_empty() {
             return Err(Error::Protocol("session connection identity did not match the request".into()));
         }
+        actor_id(&connection.principal_id, "principal_id").map_err(protocol)?;
         crate::controller::validate_connection(&connection)?;
         Ok(connection)
     }
@@ -551,7 +557,7 @@ mod tests {
         assert!(matches!(client.end_delivery_authorization(), Err(Error::Local(_))));
         let client = client.org("org-1").unwrap();
         assert!(client.authorize_delivery(&DeliveryAuthorizationRequest { short_lived_token: String::new() }).is_err());
-        let actor = DeliveryAuthorizationRequest { short_lived_token: "worker:tos".into() };
+        let actor = DeliveryAuthorizationRequest { short_lived_token: "si:worker".into() };
         assert!(client.authorize_delivery(&actor).is_err());
         assert!(
             client
@@ -681,7 +687,7 @@ mod tests {
             "access_token": "oat_access",
             "refresh_token": "ort_refresh",
             "expires_at": "2030-03-17T17:46:40Z",
-            "identity": {"id":"silicon-1","name":"Silicon","kind":"silicon"},
+            "identity": {"id":"si:silicon-1","name":"Silicon","kind":"silicon"},
             "org": {"id":"other-org","name":"Other"},
             "services": ["session"]
         }))

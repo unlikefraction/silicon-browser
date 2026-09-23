@@ -66,7 +66,7 @@ setup a persistent browser identity: one fingerprint, one proxy location, access
 
 `browser profile ls` prints name, id & location for all profiles.
 `browser profile show {profileid}` name, fingerprint, location, access, owner, sessions run, created.
-`browser profile new --name "..." --location "..." --access [@carbon,@ceo:tos,growth]` @carbon, @silicon, or tag (with no @) prints the id it made. whoever runs it is the default user; access and tags union on top of that. this creates a new browser profile, not a new session.
+`browser profile new --name "..." --location "..." --access [@c:alice,@si:ceo,growth]` @c:handle, @si:handle, or tag (with no @) prints the id it made. whoever runs it is the default user; access and tags union on top of that. this creates a new browser profile, not a new session.
 `browser profile set {profileid} --name "..."` / `--access [...]`
 name and access are all that is editable. fingerprint and location are not.
 `browser profile end {profileid} --note "..."` retires it. its recordings and usage stay. no one will be able to use this profile later.
@@ -111,7 +111,7 @@ is: mine, shared
 browser minutes and proxy GB, stored per session, for analytics and for billing.
 
 `browser usage show {sessionid}` minutes, GB in and out, and what each costs.
-`browser usage ls --filter "between:01-08-2026=30-08-2026 -> for:@ceo:tos"` a line per session with its total.
+`browser usage ls --filter "between:01-08-2026=30-08-2026 -> for:@si:ceo"` a line per session with its total.
 `browser usage show --org` the org's total for that window.
 
 [search & fetch]

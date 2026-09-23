@@ -10,7 +10,7 @@ async fn start(fixture: &Fixture, carbon: bool, profile: bool) -> Session {
             "POST",
             "/api/v1/profiles",
             Some((token, "org-1")),
-            Some(json!({"name":"Shared","location":"in","access":["@viewer-1", "workers"]})),
+            Some(json!({"name":"Shared","location":"in","access":["@c:viewer-1", "workers"]})),
         )
         .await;
         assert_eq!(status, StatusCode::OK, "{}", String::from_utf8_lossy(&body));
@@ -138,7 +138,7 @@ async fn connection_renewal_denies_removed_profile_participants_and_ending_or_ex
             .session(
                 "org-1",
                 &Identity {
-                    id: "viewer-1".into(),
+                    id: "c:viewer-1".into(),
                     name: "Viewer".into(),
                     kind: IdentityKind::Carbon,
                     tags: vec![],
@@ -288,7 +288,7 @@ async fn five_hundred_concurrent_clients_read_connections_and_report_without_bro
     let mut workers = tokio::task::JoinSet::new();
     for i in 0..500 {
         let token = format!("oat_load_{i}");
-        let mut identity = principal(&format!("worker-{i}"), IdentityKind::Silicon, true);
+        let mut identity = principal(&format!("si:worker-{i}"), IdentityKind::Silicon, true);
         identity.tags = Some(vec!["workers".into()]);
         fixture.identity.allow_identity(&token, identity);
         let (app, session, barrier) = (fixture.app.clone(), session.clone(), barrier.clone());

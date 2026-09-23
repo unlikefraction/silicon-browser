@@ -118,21 +118,20 @@ mod tests {
     use silicon_browser_shared::IdentityKind;
     use std::sync::Arc;
     use std::sync::atomic::AtomicUsize;
-    use uuid::Uuid;
 
     fn identity() -> PrincipalIdentity {
         PrincipalIdentity {
-            principal_id: Uuid::nil(),
-            public_id: Some("test".into()),
+            principal_id: "c:test".into(),
+            public_id: Some("c:test".into()),
             tags: None,
             org_role: Some("member".into()),
-            scopes: "self.identity.read self.membership.read obo:org-1>briefcase:briefcase.files.create"
+            scopes: "self.identity.read self.membership.read obo:briefcase:briefcase.files.create"
                 .split_whitespace()
                 .map(str::to_owned)
                 .collect(),
             kind: IdentityKind::Carbon,
             org_id: "tos".into(),
-            membership_id: Uuid::nil(),
+            membership_id: "c:test[tos]".into(),
             authorization_epoch: 1,
             expires_at: Utc::now() + chrono::Duration::minutes(5),
         }

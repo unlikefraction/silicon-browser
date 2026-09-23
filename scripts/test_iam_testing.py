@@ -45,8 +45,8 @@ def main():
         raise ValueError("invalid backend")
     if "/testing/" in parsed.path or parsed.path.endswith("/testing"):
         raise ValueError("backend must be a root URL")
-    if not re.fullmatch(r"[A-Za-z0-9_.-]+(?::[A-Za-z0-9_.-]+)?", actor) or len(actor) > 256 or actor.startswith(("ask_", "oac_", "oat_", "ort_", "iat_", "irt_", "cat_", "sat_", "crt_", "srt_")):
-        raise ValueError("SB_TEST_ACTOR must be an actor ID")
+    if not re.fullmatch(r"(?:c:[a-z0-9_-]{3,30}|si:[a-z0-9_-]{3,50})", actor):
+        raise ValueError("SB_TEST_ACTOR must be a complete c:handle or si:handle actor ID")
     credentials = {"app_secret": os.environ["SB_TEST_APP_SECRET"]}
     for variable, field in (("SB_IAM_TEST_KEY", "iam_test_key"), ("SB_BRIEFCASE_TEST_KEY", "briefcase_test_environment_key")):
         if variable in os.environ:

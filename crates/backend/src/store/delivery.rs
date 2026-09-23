@@ -372,7 +372,7 @@ impl Store {
                     .map_err(StoreError::Crypto)?;
                 Ok(SessionLog {
                     sequence: nonnegative(sequence, "log sequence")?,
-                    actor_id: actor,
+                    actor_id: row.try_get::<Option<String>, _>("artifact_actor_id")?.unwrap_or(actor),
                     command,
                     at: parse_timestamp(row.try_get("started_at")?, "command.started_at")?,
                     exit_code: row.try_get("exit_code")?,

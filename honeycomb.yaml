@@ -1,5 +1,5 @@
 format_version: 1
-app_id: tos>browser
+app_id: browser
 version: 0.2.4
 bin:
   browser: main

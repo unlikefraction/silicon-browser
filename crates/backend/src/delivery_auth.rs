@@ -184,8 +184,9 @@ impl DeliveryAuth {
         })?;
         let actor = expected.public_id.as_deref().filter(|v| !v.is_empty()).ok_or(IdentityError::Forbidden)?;
         if expected.org_id != org
-            || expected.principal_id.is_nil()
-            || expected.membership_id.is_nil()
+            || silicon_browser_shared::actor_id(actor, "public_id").ok() != Some(expected.kind)
+            || expected.principal_id != actor
+            || expected.membership_id != format!("{actor}[{org}]")
             || expected.expires_at <= Utc::now()
         {
             return Err(IdentityError::Forbidden.into());
@@ -273,8 +274,8 @@ impl DeliveryAuth {
     fn matches(row: &Grant, p: &PrincipalIdentity) -> bool {
         row.org_id == p.org_id
             && p.public_id.as_deref() == Some(&row.actor_id)
-            && row.principal_id == p.principal_id.to_string()
-            && row.membership_id == p.membership_id.to_string()
+            && row.principal_id == p.principal_id
+            && row.membership_id == p.membership_id
             && serde_json::to_string(&p.kind).ok().as_deref() == Some(&row.actor_kind)
     }
     pub async fn authorized_binding(&self, org: &str, actor: &str) -> Result<(String, String)> {
@@ -577,17 +578,17 @@ mod tests {
         fn new() -> Self {
             Self {
                 expected: PrincipalIdentity {
-                    principal_id: Uuid::from_u128(1),
-                    public_id: Some("actor".into()),
+                    principal_id: "si:actor".into(),
+                    public_id: Some("si:actor".into()),
                     tags: Some(vec![]),
                     org_role: Some("member".into()),
-                    scopes: "self.identity.read self.membership.read obo:org>briefcase:briefcase.files.create"
+                    scopes: "self.identity.read self.membership.read obo:briefcase:briefcase.files.create"
                         .split_whitespace()
                         .map(str::to_owned)
                         .collect(),
                     kind: IdentityKind::Silicon,
                     org_id: "org".into(),
-                    membership_id: Uuid::from_u128(2),
+                    membership_id: "si:actor[org]".into(),
                     authorization_epoch: 1,
                     expires_at: Utc::now() + chrono::TimeDelta::hours(1),
                 },
@@ -610,7 +611,7 @@ mod tests {
         fn auth(&self) -> ExchangedAuth {
             let mut identity = self.expected.clone();
             if self.wrong_actor.load(Ordering::SeqCst) {
-                identity.principal_id = Uuid::from_u128(9);
+                identity.principal_id = "si:another".into();
             }
             if self.missing_grant.load(Ordering::SeqCst) {
                 identity.scopes.retain(|scope| !scope.starts_with("obo:"));
@@ -622,7 +623,7 @@ mod tests {
                 access_token: "oat_owned_backend".into(),
                 refresh_token: "ort_owned_backend".into(),
                 identity,
-                scope: "self.identity.read self.membership.read obo:org>briefcase:briefcase.files.create".into(),
+                scope: "self.identity.read self.membership.read obo:briefcase:briefcase.files.create".into(),
             }
         }
         fn transient() -> IdentityError {
@@ -705,7 +706,7 @@ mod tests {
     async fn fixture() -> (DeliveryAuth, Arc<Mock>) {
         let store = Store::connect("sqlite::memory:").await.unwrap();
         let mock = Arc::new(Mock::new());
-        (DeliveryAuth::new(store, SecretBox::new(&[37; 32]), mock.clone(), "org>briefcase".into()), mock)
+        (DeliveryAuth::new(store, SecretBox::new(&[37; 32]), mock.clone(), "briefcase".into()), mock)
     }
     fn slt() -> String {
         format!("oac_{}", "a".repeat(43))
@@ -713,8 +714,8 @@ mod tests {
     fn request() -> RecordingProofRequest {
         RecordingProofRequest {
             expected_org_id: "org".into(),
-            expected_actor_id: "actor".into(),
-            audience: "org>briefcase".into(),
+            expected_actor_id: "si:actor".into(),
+            audience: "briefcase".into(),
             path: "".into(),
             name: "video.mp4".into(),
             content_type: "video/mp4".into(),
@@ -770,7 +771,7 @@ mod tests {
             service
                 .validate_authorized_binding_for_principal(
                     "org",
-                    "actor",
+                    "si:actor",
                     &mock.expected.principal_id.to_string(),
                     &mock.expected.membership_id.to_string()
                 )
@@ -810,16 +811,16 @@ mod tests {
     async fn test_actor_delivery_replays_pending_enrollment_and_reenrolls_after_revocation() {
         let (service, mock) = fixture().await;
         assert!(matches!(
-            service.enroll("org", &mock.expected, "actor").await,
+            service.enroll("org", &mock.expected, "si:actor").await,
             Err(DeliveryAuthError::Identity(IdentityError::InvalidInput { .. }))
         ));
         assert!(mock.calls.lock().unwrap().is_empty());
         mock.testing.store(true, Ordering::SeqCst);
         mock.fail_exchange.store(true, Ordering::SeqCst);
-        assert!(service.enroll("org", &mock.expected, "actor").await.is_err());
+        assert!(service.enroll("org", &mock.expected, "si:actor").await.is_err());
         expire(&service).await;
-        assert_eq!(service.enroll("org", &mock.expected, "actor").await.unwrap().state, State::Active);
-        service.enroll("org", &mock.expected, "actor").await.unwrap();
+        assert_eq!(service.enroll("org", &mock.expected, "si:actor").await.unwrap().state, State::Active);
+        service.enroll("org", &mock.expected, "si:actor").await.unwrap();
         {
             let calls = mock.calls.lock().unwrap();
             assert_eq!(calls.len(), 2);
@@ -827,9 +828,9 @@ mod tests {
         }
         service.disable_for_principal("org", &mock.expected).await.unwrap();
         service.recover_pending_once().await.unwrap();
-        assert_eq!(service.enroll("org", &mock.expected, "actor").await.unwrap().state, State::Active);
+        assert_eq!(service.enroll("org", &mock.expected, "si:actor").await.unwrap().state, State::Active);
         mock.revoked.store(true, Ordering::SeqCst);
-        assert_eq!(service.enroll("org", &mock.expected, "actor").await.unwrap().state, State::Active);
+        assert_eq!(service.enroll("org", &mock.expected, "si:actor").await.unwrap().state, State::Active);
         mock.revoked.store(false, Ordering::SeqCst);
         let counts: (i64, i64) = sqlx::query_as("SELECT COUNT(*), SUM(enabled) FROM delivery_credentials")
             .fetch_one(service.store.pool())
@@ -848,7 +849,7 @@ mod tests {
         assert!(service.enroll("org", &mock.expected, &slt()).await.is_err());
         expire(&service).await;
         let restarted =
-            DeliveryAuth::new(service.store.clone(), service.secrets.clone(), mock.clone(), "org>briefcase".into());
+            DeliveryAuth::new(service.store.clone(), service.secrets.clone(), mock.clone(), "briefcase".into());
         assert_eq!(restarted.recover_pending_once().await.unwrap(), 1);
         mock.fail_refresh.store(true, Ordering::SeqCst);
         expire(&restarted).await;
@@ -868,7 +869,7 @@ mod tests {
             service.enroll("org", &mock.expected, &slt()).await,
             Err(DeliveryAuthError::Identity(IdentityError::Forbidden))
         ));
-        assert!(!service.status("org", "actor").await.unwrap().enabled);
+        assert!(!service.status("org", "si:actor").await.unwrap().enabled);
         service.recover_pending_once().await.unwrap();
         assert_eq!(mock.calls.lock().unwrap().last().unwrap().0, "revoke");
     }
@@ -882,11 +883,11 @@ mod tests {
         let task = tokio::spawn(async move { running.issue_recording_proof(request()).await });
         mock.entered.notified().await;
         assert!(matches!(service.issue_recording_proof(request()).await, Err(DeliveryAuthError::Busy)));
-        assert!(!service.disable("org", "actor").await.unwrap().enabled);
+        assert!(!service.disable("org", "si:actor").await.unwrap().enabled);
         mock.release.notify_one();
         assert!(matches!(task.await.unwrap(), Err(DeliveryAuthError::NeedsAuthorization)));
         service.recover_pending_once().await.unwrap();
-        assert_eq!(service.status("org", "actor").await.unwrap().state, State::Disabled);
+        assert_eq!(service.status("org", "si:actor").await.unwrap().state, State::Disabled);
         let row: Grant =
             sqlx::query_as("SELECT * FROM delivery_credentials").fetch_one(service.store.pool()).await.unwrap();
         let credentials = service.open(&row).unwrap();
@@ -902,7 +903,7 @@ mod tests {
             service.issue_recording_proof(request()).await,
             Err(DeliveryAuthError::Identity(IdentityError::Unauthenticated))
         ));
-        assert_eq!(service.status("org", "actor").await.unwrap().state, State::NeedsAuth);
+        assert_eq!(service.status("org", "si:actor").await.unwrap().state, State::NeedsAuth);
         assert!(matches!(service.issue_recording_proof(request()).await, Err(DeliveryAuthError::NeedsAuthorization)));
         assert_eq!(mock.calls.lock().unwrap().len(), 2);
     }
@@ -912,7 +913,7 @@ mod tests {
         service.enroll("org", &mock.expected, &slt()).await.unwrap();
         mock.access_revoked.store(true, Ordering::SeqCst);
         service.issue_recording_proof(request()).await.unwrap();
-        assert_eq!(service.status("org", "actor").await.unwrap().state, State::Active);
+        assert_eq!(service.status("org", "si:actor").await.unwrap().state, State::Active);
         let calls = mock.calls.lock().unwrap();
         assert_eq!(calls.iter().map(|v| v.0.as_str()).collect::<Vec<_>>(), ["exchange", "refresh"]);
         assert_ne!(calls[0].1, calls[1].1);
@@ -924,7 +925,7 @@ mod tests {
         mock.access_revoked.store(true, Ordering::SeqCst);
         mock.reject_refreshed_access.store(true, Ordering::SeqCst);
         assert!(service.issue_recording_proof(request()).await.is_err());
-        assert_eq!(service.status("org", "actor").await.unwrap().state, State::NeedsAuth);
+        assert_eq!(service.status("org", "si:actor").await.unwrap().state, State::NeedsAuth);
         assert!(service.issue_recording_proof(request()).await.is_err());
         assert_eq!(mock.calls.lock().unwrap().len(), 2);
     }
@@ -932,7 +933,7 @@ mod tests {
     async fn historical_job_requires_original_principal_and_membership_before_any_exchange() {
         let (service, mock) = fixture().await;
         service.enroll("org", &mock.expected, &slt()).await.unwrap();
-        let (principal, membership) = service.authorized_binding("org", "actor").await.unwrap();
+        let (principal, membership) = service.authorized_binding("org", "si:actor").await.unwrap();
         expire(&service).await;
         assert!(matches!(
             service.issue_recording_proof_for_principal(&Uuid::from_u128(99).to_string(), &membership, request()).await,
@@ -954,42 +955,27 @@ mod tests {
         expire(&service).await;
         service.issue_recording_proof(request()).await.unwrap();
         service.observe_failure(&old, &IdentityError::Unauthenticated).await.unwrap();
-        assert_eq!(service.status("org", "actor").await.unwrap().state, State::Active);
+        assert_eq!(service.status("org", "si:actor").await.unwrap().state, State::Active);
     }
     #[tokio::test]
-    async fn reused_public_id_keeps_families_and_status_scoped_to_immutable_principals() {
+    async fn inconsistent_actor_and_membership_bindings_cannot_enroll_or_disable_an_existing_family() {
         let (service, mock) = fixture().await;
         service.enroll("org", &mock.expected, &slt()).await.unwrap();
-        let mut replacement_mock = Mock::new();
-        replacement_mock.expected.principal_id = Uuid::from_u128(98);
-        replacement_mock.expected.membership_id = Uuid::from_u128(99);
-        let replacement_mock = Arc::new(replacement_mock);
-        let replacement = DeliveryAuth::new(
-            service.store.clone(),
-            service.secrets.clone(),
-            replacement_mock.clone(),
-            "org>briefcase".into(),
-        );
-        assert!(!replacement.status_for_principal("org", &replacement_mock.expected).await.unwrap().enabled);
-        replacement.disable_for_principal("org", &replacement_mock.expected).await.unwrap();
-        assert!(service.status_for_principal("org", &mock.expected).await.unwrap().enabled);
-        replacement.enroll("org", &replacement_mock.expected, &format!("oac_{}", "b".repeat(43))).await.unwrap();
-        assert!(service.status_for_principal("org", &mock.expected).await.unwrap().enabled);
-        assert!(replacement.status_for_principal("org", &replacement_mock.expected).await.unwrap().enabled);
-        assert!(matches!(service.authorized_binding("org", "actor").await, Err(DeliveryAuthError::NeedsAuthorization)));
-        service
-            .issue_recording_proof_for_principal(
-                &mock.expected.principal_id.to_string(),
-                &mock.expected.membership_id.to_string(),
-                request(),
-            )
-            .await
-            .unwrap();
-        replacement.disable_for_principal("org", &replacement_mock.expected).await.unwrap();
-        replacement.recover_pending_once().await.unwrap();
-        assert!(service.status_for_principal("org", &mock.expected).await.unwrap().enabled);
+        for bad_membership in [false, true] {
+            let mut inconsistent = mock.expected.clone();
+            if bad_membership {
+                inconsistent.membership_id = "si:actor[another-org]".into();
+            } else {
+                inconsistent.principal_id = "si:another".into();
+            }
+            assert!(matches!(
+                service.enroll("org", &inconsistent, &slt()).await,
+                Err(DeliveryAuthError::Identity(IdentityError::Forbidden))
+            ));
+            service.disable_for_principal("org", &inconsistent).await.unwrap();
+            assert!(service.status_for_principal("org", &mock.expected).await.unwrap().enabled);
+        }
         assert_eq!(mock.calls.lock().unwrap().len(), 1);
-        assert_eq!(replacement_mock.calls.lock().unwrap().last().unwrap().0, "revoke");
     }
     #[tokio::test]
     async fn late_replay_persists_recovered_ort_before_a_new_durable_refresh() {
@@ -1013,9 +999,9 @@ mod tests {
         assert_eq!(service.open(&row).unwrap().refresh.as_deref(), Some("ort_recovered_backend"));
         assert_ne!(row.mutation_key.as_deref(), Some(original_key.as_str()));
         let restarted =
-            DeliveryAuth::new(service.store.clone(), service.secrets.clone(), mock.clone(), "org>briefcase".into());
+            DeliveryAuth::new(service.store.clone(), service.secrets.clone(), mock.clone(), "briefcase".into());
         restarted.recover_pending_once().await.unwrap();
-        assert_eq!(restarted.status("org", "actor").await.unwrap().state, State::Active);
+        assert_eq!(restarted.status("org", "si:actor").await.unwrap().state, State::Active);
         restarted.issue_recording_proof(request()).await.unwrap();
         let calls = mock.calls.lock().unwrap();
         assert_eq!(calls[1], ("late_replay".into(), original_key));

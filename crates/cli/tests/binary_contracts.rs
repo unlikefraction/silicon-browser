@@ -184,13 +184,13 @@ fn isolated_sb(home: &Path, backend: &str) -> assert_cmd::Command {
 fn iam_testing_enrollment_login_status_refresh_and_state_stay_in_the_test_environment() {
     let id = "11111111-1111-4111-8111-111111111111";
     let other = "22222222-2222-4222-8222-222222222222";
-    let environment = json!({"data":{"environment_id":id,"app_id":"tos>browser","name":"Browser checks"}});
+    let environment = json!({"data":{"environment_id":id,"app_id":"browser","name":"Browser checks"}});
     let credentials = json!({"app_secret":"ask_test_private","iam_test_key":"a".repeat(32),"briefcase_test_environment_key":format!("ask_{}", "b".repeat(43))});
     let server = StubServer::start(vec![
         StubResponse::json(200, environment.clone()),
         StubResponse::json(200, environment),
         refreshed_session_response(),
-        StubResponse::json(200, json!({"data":{"id":"actor","name":"Actor","kind":"silicon"}})),
+        StubResponse::json(200, json!({"data":{"id":"si:actor","name":"Actor","kind":"silicon"}})),
         refreshed_session_response(),
         StubResponse::json(200, json!({"data":[]})),
         rejected_response(true),
@@ -221,7 +221,7 @@ fn iam_testing_enrollment_login_status_refresh_and_state_stay_in_the_test_enviro
         .assert()
         .success()
         .stdout(predicate::str::contains("\"configured\": true"));
-    command().args(["--test", id, "login", "actor", "--json"]).assert().success();
+    command().args(["--test", id, "login", "si:actor", "--json"]).assert().success();
     command()
         .args(["--test", id, "login", "status", "--json"])
         .assert()
@@ -259,7 +259,7 @@ fn iam_testing_enrollment_login_status_refresh_and_state_stay_in_the_test_enviro
         assert_eq!(request.json(), credentials);
         assert!(!request.headers.contains_key("authorization"));
     }
-    assert_eq!(requests[2].json()["short_lived_token"], "actor");
+    assert_eq!(requests[2].json()["short_lived_token"], "si:actor");
     assert_eq!(requests[4].path, format!("/testing/{id}/api/v1/auth/refresh"));
     assert_eq!(requests[7].path, format!("/testing/{id}/api/v1/auth/refresh"));
     for request in &requests[2..] {
@@ -275,7 +275,7 @@ fn testing_enrollment_accepts_secret_only_and_rejects_wrong_environment_without_
     let id = "11111111-1111-4111-8111-111111111111";
     let server = StubServer::start(vec![StubResponse::json(
         200,
-        json!({"data":{"environment_id":id,"app_id":"tos>browser","name":"Test"}}),
+        json!({"data":{"environment_id":id,"app_id":"browser","name":"Test"}}),
     )]);
     let directory = tempfile::tempdir().unwrap();
     let home = directory.path().join("state");
@@ -329,7 +329,7 @@ fn bare_command_uses_environment_auth_and_live_service_discovery() {
             200,
             json!({
                 "data": {
-                    "id": "silicon-7",
+                    "id": "si:silicon-7",
                     "name": "Ada Browser",
                     "kind": "silicon",
                     "tags": ["engineering"]
@@ -366,7 +366,7 @@ fn profile_busy_renders_structured_owner_session_and_expiry_details() {
                 "code": "profile_busy",
                 "message": "profile already has a live session",
                 "details": {
-                    "actor_id": "silicon-7",
+                    "actor_id": "si:silicon-7",
                     "session_id": "session-active",
                     "expires_at": "2026-09-04T12:00:00Z"
                 },
@@ -384,7 +384,7 @@ fn profile_busy_renders_structured_owner_session_and_expiry_details() {
         .stdout("")
         .stderr(
             predicate::str::contains("profile_busy: profile already has a live session")
-                .and(predicate::str::contains("actor_id: silicon-7"))
+                .and(predicate::str::contains("actor_id: si:silicon-7"))
                 .and(predicate::str::contains("session_id: session-active"))
                 .and(predicate::str::contains("expires_at: 2026-09-04T12:00:00Z")),
         );
@@ -412,7 +412,7 @@ fn profile_busy_renders_structured_owner_session_and_expiry_details() {
 fn connection_response() -> StubResponse {
     StubResponse::json(
         200,
-        json!({"data":{"session_id":"session-1","principal_id":"immutable-actor","cdp_url":"wss://direct.example/secret-cdp","expires_at":"2099-01-01T00:00:00Z"}}),
+        json!({"data":{"session_id":"session-1","principal_id":"si:immutable-actor","cdp_url":"wss://direct.example/secret-cdp","expires_at":"2099-01-01T00:00:00Z"}}),
     )
 }
 fn report_response() -> StubResponse {
@@ -515,6 +515,7 @@ fn a_sole_org_derived_from_stored_auth_is_persisted_owner_only() {
             "backend_url": server.base_url,
             "access_token": "oat_stored_contract",
             "refresh_token": "ort_stored_contract",
+            "identity_id": "si:stored-contract",
             "token_expires_at": "2030-03-17T17:46:40Z"
         }))
         .unwrap(),
@@ -547,14 +548,14 @@ fn setup_exchanges_an_environment_slt_without_letting_it_shadow_the_oat() {
             "access_token": "oat_from_exchange",
             "refresh_token": "ort_from_exchange",
             "expires_at": "2030-03-17T17:46:40Z",
-            "identity": {"id": "silicon-7", "name": "Ada Browser", "kind": "silicon"},
+            "identity": {"id": "si:silicon-7", "name": "Ada Browser", "kind": "silicon"},
             "org": {"id": "org-contract", "name": "Contract Org"},
             "services": ["remote-browser", "search-and-fetch"]
         }
     });
     let setup_server = StubServer::start(vec![
         StubResponse::json(200, auth),
-        StubResponse::json(200, json!({"data": {"id": "silicon-7", "name": "Ada Browser", "kind": "silicon"}})),
+        StubResponse::json(200, json!({"data": {"id": "si:silicon-7", "name": "Ada Browser", "kind": "silicon"}})),
         StubResponse::json(200, json!({"data": ["remote-browser", "search-and-fetch"]})),
         StubResponse::json(200, json!({"data": []})),
     ]);
@@ -571,7 +572,7 @@ fn setup_exchanges_an_environment_slt_without_letting_it_shadow_the_oat() {
         .args(["setup", "--org-id", "org-contract"])
         .assert()
         .success()
-        .stdout(predicate::str::contains("ready: @silicon-7 in org-contract"));
+        .stdout(predicate::str::contains("ready: @si:silicon-7 in org-contract"));
 
     let state_bytes = fs::read(partition_state(&state_home, &exchanged_backend)).unwrap();
     let state_text = String::from_utf8(state_bytes).unwrap();
@@ -612,7 +613,7 @@ fn setup_with_environment_oat_preserves_the_stored_identity_binding() {
         StubResponse::json(
             200,
             json!({"data": {
-                "id": "silicon-temporary", "name": "Temporary", "kind": "silicon"
+                "id": "si:silicon-temporary", "name": "Temporary", "kind": "silicon"
             }}),
         ),
         StubResponse::json(200, json!({"data": ["search-and-fetch"]})),
@@ -640,7 +641,7 @@ fn setup_with_environment_oat_preserves_the_stored_identity_binding() {
         .args(["setup", "--org", "org-temporary"])
         .assert()
         .success()
-        .stdout(predicate::str::contains("ready: @silicon-temporary in org-temporary"));
+        .stdout(predicate::str::contains("ready: @si:silicon-temporary in org-temporary"));
 
     let _backend_url = server.base_url.clone();
     let requests = server.finish();
@@ -706,7 +707,8 @@ fn run_help_falls_back_offline_and_still_succeeds() {
 fn session_logs_emit_shell_replayable_commands_and_keep_json_metadata() {
     let home = tempfile::tempdir().unwrap();
     let command = "fill @e1 'hello; $(false)'";
-    let logs = json!([{"sequence":1,"at":"2026-09-05T00:00:00Z","actor_id":"actor","command":command,"exit_code":0}]);
+    let logs =
+        json!([{"sequence":1,"at":"2026-09-05T00:00:00Z","actor_id":"si:actor","command":command,"exit_code":0}]);
     let server = StubServer::start(vec![
         StubResponse::json(200, json!({"data":logs.clone()})),
         StubResponse::json(200, json!({"data":logs})),
@@ -748,9 +750,9 @@ fn setup_enrolls_a_separate_delivery_token_and_reuses_active_authorization() {
     let home = root.path().join("state");
     let runner = root.path().join("bin");
     install_fake_runner(&runner);
-    let identity = json!({"data":{"id":"actor","name":"Actor","kind":"silicon"}});
+    let identity = json!({"data":{"id":"si:actor","name":"Actor","kind":"silicon"}});
     let services = json!({"data":["recording_delivery"]});
-    let status = |state: &str, enabled: bool| json!({"data":{"configured":true,"enabled":enabled,"state":state,"actor_id":"actor"}});
+    let status = |state: &str, enabled: bool| json!({"data":{"configured":true,"enabled":enabled,"state":state,"actor_id":"si:actor"}});
     let server = StubServer::start(vec![
         StubResponse::json(200, identity.clone()),
         StubResponse::json(200, services.clone()),
@@ -792,11 +794,11 @@ fn setup_enrolls_a_separate_delivery_token_and_reuses_active_authorization() {
 fn setup_reports_missing_delivery_authorization_without_claiming_ready() {
     let root = tempfile::tempdir().unwrap();
     let server = StubServer::start(vec![
-        StubResponse::json(200, json!({"data":{"id":"actor","name":"Actor","kind":"silicon"}})),
+        StubResponse::json(200, json!({"data":{"id":"si:actor","name":"Actor","kind":"silicon"}})),
         StubResponse::json(200, json!({"data":["recording_delivery"]})),
         StubResponse::json(
             200,
-            json!({"data":{"configured":true,"enabled":false,"state":"needs_auth","actor_id":"actor"}}),
+            json!({"data":{"configured":true,"enabled":false,"state":"needs_auth","actor_id":"si:actor"}}),
         ),
     ]);
     isolated_sb(&root.path().join("state"), &server.base_url)
@@ -817,10 +819,10 @@ fn test_setup_enrolls_recording_delivery_with_its_authenticated_actor() {
     install_fake_runner(&runner);
     let id = "11111111-1111-4111-8111-111111111111";
     let secret = format!("ask_{}", "S".repeat(43));
-    let status = |state: &str, enabled: bool| json!({"data":{"configured":true,"enabled":enabled,"state":state,"actor_id":"worker:tos"}});
+    let status = |state: &str, enabled: bool| json!({"data":{"configured":true,"enabled":enabled,"state":state,"actor_id":"si:worker"}});
     let server = StubServer::start(vec![
-        StubResponse::json(200, json!({"data":{"environment_id":id,"app_id":"tos>browser","name":"Recording checks"}})),
-        StubResponse::json(200, json!({"data":{"id":"worker:tos","name":"Worker","kind":"silicon"}})),
+        StubResponse::json(200, json!({"data":{"environment_id":id,"app_id":"browser","name":"Recording checks"}})),
+        StubResponse::json(200, json!({"data":{"id":"si:worker","name":"Worker","kind":"silicon"}})),
         StubResponse::json(200, json!({"data":["recording_delivery"]})),
         StubResponse::json(200, status("needs_auth", false)),
         StubResponse::json(200, status("active", true)),
@@ -840,7 +842,7 @@ fn test_setup_enrolls_recording_delivery_with_its_authenticated_actor() {
         .stdout(predicate::str::contains("\"state\": \"active\"").and(predicate::str::contains(&secret).not()));
     let requests = server.finish();
     assert_eq!(requests[4].path, format!("/testing/{id}/api/v1/auth/delivery"));
-    assert_eq!(requests[4].json(), json!({"short_lived_token":"worker:tos"}));
+    assert_eq!(requests[4].json(), json!({"short_lived_token":"si:worker"}));
     assert_eq!(requests[4].headers["authorization"], "Bearer oat_binary_contract");
     assert_eq!(requests[4].headers["x-sb-test-app-secret"], secret);
     assert_eq!(requests[4].headers["x-sb-test-briefcase-key"], format!("ask_{}", "B".repeat(43)));
@@ -853,7 +855,7 @@ fn failed_recording_does_not_claim_pending_delivery() {
         200,
         json!({"data":{
             "session_id":"s1","incognito":true,"session_name":"Failed recording","session_description":"test",
-            "owner_id":"actor","briefcase_path":"private/actor/apps/tos>browser/file.mp4",
+            "owner_id":"si:actor","briefcase_path":"private/actor/apps/browser/file.mp4",
             "duration_seconds":1,"size_bytes":0,"status":"failed","created_at":"2026-09-05T00:00:00Z",
         "delivery_error":"authorization_required","command_log_link":"https://briefcase.example/files/log-1"
         }}),
@@ -877,7 +879,7 @@ fn recording_send_queues_delivery_and_surfaces_non_retryable_errors() {
             200,
             json!({"data":{
                 "session_id":"s1","incognito":true,"session_name":"Retry recording","session_description":"test",
-                "owner_id":"actor","briefcase_path":"private/actor/file.mp4","duration_seconds":30,
+                "owner_id":"si:actor","briefcase_path":"private/actor/file.mp4","duration_seconds":30,
                 "size_bytes":0,"status":"pending","created_at":"2026-09-05T00:00:00Z",
                 "command_log_link":"https://briefcase.example/existing-log"
             }}),
@@ -916,7 +918,7 @@ fn stored_recovery_home(home: &Path, backend: &str) {
     fs::create_dir(home).unwrap();
     fs::set_permissions(home, fs::Permissions::from_mode(0o700)).unwrap();
     let state = json!({"backend_url":backend,"access_token":"oat_rejected","refresh_token":"ort_owned",
-        "token_expires_at":"2099-01-01T00:00:00Z","org_id":"org-contract","identity_id":"actor"});
+        "token_expires_at":"2099-01-01T00:00:00Z","org_id":"org-contract","identity_id":"si:actor"});
     fs::write(home.join("state.json"), serde_json::to_vec(&state).unwrap()).unwrap();
     fs::set_permissions(home.join("state.json"), fs::Permissions::from_mode(0o600)).unwrap();
 }
@@ -929,9 +931,46 @@ fn refreshed_session_response() -> StubResponse {
     StubResponse::json(
         200,
         json!({"data":{"access_token":"oat_recovered","refresh_token":"ort_rotated",
-        "expires_at":"2099-01-01T00:00:00Z","identity":{"id":"actor","name":"Actor","kind":"silicon"},
+        "expires_at":"2099-01-01T00:00:00Z","identity":{"id":"si:actor","name":"Actor","kind":"silicon"},
         "org":{"id":"org-contract","name":"Org"},"services":[]}}),
     )
+}
+
+#[cfg(unix)]
+#[test]
+fn legacy_identity_refreshes_before_unexpired_access_is_used_in_each_world() {
+    let environment = "11111111-1111-4111-8111-111111111111";
+    for testing in [false, true] {
+        let server = StubServer::start(vec![refreshed_session_response(), StubResponse::json(200, json!({"data":[]}))]);
+        let root = tempfile::tempdir().unwrap();
+        let home = root.path().join("state");
+        let backend =
+            if testing { format!("{}/testing/{environment}", server.base_url) } else { server.base_url.clone() };
+        stored_recovery_home(&home, &backend);
+        let path = home.join("state.json");
+        let mut state: Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+        state["identity_id"] = json!("actor:org-contract");
+        if testing {
+            state["testing"] = json!({"app_secret":"ask_testing"});
+        }
+        fs::write(&path, serde_json::to_vec(&state).unwrap()).unwrap();
+        let mut command = isolated_sb(&home, &server.base_url);
+        command.env_remove("SB_AUTHTOKEN");
+        if testing {
+            command.args(["--test", environment]);
+        }
+        command.args(["profile", "ls"]).assert().success();
+        let requests = server.finish();
+        let prefix = if testing { format!("/testing/{environment}") } else { String::new() };
+        assert_eq!(requests[0].path, format!("{prefix}/api/v1/auth/refresh"));
+        assert_eq!(requests[0].json(), json!({"refresh_token":"ort_owned","org_id":"org-contract"}));
+        assert_eq!(requests[1].path, format!("{prefix}/api/v1/profiles"));
+        assert_eq!(requests[1].headers.get("authorization").unwrap(), "Bearer oat_recovered");
+        assert_eq!(requests[0].headers.contains_key("x-sb-test-app-secret"), testing);
+        let saved: Value = serde_json::from_slice(&fs::read(partition_state(&home, &backend)).unwrap()).unwrap();
+        assert_eq!(saved["identity_id"], "si:actor");
+        assert_eq!(saved["refresh_token"], "ort_rotated");
+    }
 }
 
 #[cfg(unix)]
@@ -957,7 +996,7 @@ fn marked_pre_handler_rejection_recovers_owned_auth_once_for_control_plane_reque
     assert_eq!(requests[2].headers.get("authorization").unwrap(), "Bearer oat_recovered");
     let saved: Value = serde_json::from_slice(&fs::read(partition_state(&home, &_backend_url)).unwrap()).unwrap();
     assert_eq!(saved["refresh_token"], "ort_rotated");
-    assert_eq!(saved["identity_id"], "actor");
+    assert_eq!(saved["identity_id"], "si:actor");
 }
 
 #[cfg(unix)]
@@ -1001,7 +1040,7 @@ fn one_cli_invocation_reuses_its_own_recovery_for_later_metadata_requests() {
     let server = StubServer::start(vec![
         rejected_response(true),
         refreshed_session_response(),
-        StubResponse::json(200, json!({"data":{"id":"actor","name":"Actor","kind":"silicon"}})),
+        StubResponse::json(200, json!({"data":{"id":"si:actor","name":"Actor","kind":"silicon"}})),
         StubResponse::json(200, json!({"data":["remote-browser"]})),
     ]);
     let root = tempfile::tempdir().unwrap();

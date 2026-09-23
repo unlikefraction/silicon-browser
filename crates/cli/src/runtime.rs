@@ -88,6 +88,7 @@ impl Runtime {
         if let Some(cached) = read_json::<CachedConnection>(&file)? {
             let age = Utc::now().signed_duration_since(cached.fetched_at);
             if cached.connection.session_id == session
+                && actor_id(&cached.connection.principal_id, "principal_id").is_ok()
                 && age >= chrono::Duration::zero()
                 && age < chrono::Duration::seconds(60)
                 && cached.connection.expires_at > Utc::now()
@@ -213,6 +214,51 @@ pub fn controller_binary() -> PathBuf {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn stale_connection_identity_is_refetched_without_touching_the_report_spool() {
+        struct ConnectionTransport(SessionConnection);
+        impl silicon_browser::Transport for ConnectionTransport {
+            fn send(
+                &self,
+                request: silicon_browser::Request,
+            ) -> Result<silicon_browser::Response, silicon_browser::Error> {
+                assert!(request.url.ends_with("/sessions/session/connection"));
+                Ok(silicon_browser::Response {
+                    status: 200,
+                    body: serde_json::to_vec(&Envelope::new(self.0.clone())).unwrap(),
+                })
+            }
+        }
+        let root = tempfile::tempdir().unwrap();
+        let directory = root.path().join("runtime");
+        state::secure_home(&directory, true).unwrap();
+        let report = directory.join("report-pending.json");
+        fs::write(&report, b"exact original command report bytes").unwrap();
+        let canonical = SessionConnection {
+            session_id: "session".into(),
+            principal_id: "c:alice0".into(),
+            cdp_url: "wss://provider.example/cdp".into(),
+            expires_at: Utc::now() + chrono::Duration::minutes(5),
+        };
+        let client = Client::with_transport(
+            "https://backend.example",
+            silicon_browser::Auth::new("oat_current").unwrap(),
+            std::sync::Arc::new(ConnectionTransport(canonical.clone())),
+        )
+        .unwrap()
+        .org("tos")
+        .unwrap();
+        let runtime = Runtime { directory };
+        let file = runtime.directory.join(format!("connection-{}.json", hash(&["session"])));
+        for old in ["alice0", "00000000-0000-0000-0000-000000000000"] {
+            let mut legacy = canonical.clone();
+            legacy.principal_id = old.into();
+            write_json(&file, &CachedConnection { fetched_at: Utc::now(), connection: legacy }).unwrap();
+            assert_eq!(runtime.connection(&client, "session").unwrap(), canonical);
+            assert_eq!(fs::read(&report).unwrap(), b"exact original command report bytes");
+        }
+    }
 
     #[test]
     fn runtime_records_replace_existing_values_and_flush_portably() {

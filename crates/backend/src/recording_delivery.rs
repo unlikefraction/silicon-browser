@@ -543,7 +543,7 @@ mod tests {
             assert_eq!(hex::encode(Sha256::digest(&body)), digest);
             let reply = serde_json::json!({"id":"00000000-0000-0000-0000-000000000001", "org_id":"org", "type":"file", "name":"local-commands.jsonl",
                 "path":"private/actor/browser/local-commands.jsonl", "size":size,
-                "permanent_url":"https://briefcase.example/entry", "origin_app_id":"org>browser"})
+                "permanent_url":"https://briefcase.example/entry", "origin_app_id":"browser"})
             .to_string();
             socket
                 .write_all(
@@ -557,7 +557,7 @@ mod tests {
                 .unwrap();
         });
         let receipt = worker
-            .upload(staged, &OnBehalfOfGrant::new("obo_supplied-proof").unwrap(), "org", "org>browser")
+            .upload(staged, &OnBehalfOfGrant::new("obo_supplied-proof").unwrap(), "org", "browser")
             .await
             .unwrap();
         assert_eq!(receipt.size, expected_size);

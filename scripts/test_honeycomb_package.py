@@ -90,6 +90,10 @@ class PackageTests(unittest.TestCase):
                 receipt_path.write_text(json.dumps(receipt))
                 with self.assertRaisesRegex(ValueError, "version"):
                     package.pack(root, output)
+                (root / "honeycomb.yaml").write_bytes(manifest.replace(b"app_id: browser", b"app_id: tos>browser"))
+                with self.assertRaisesRegex(ValueError, "app_id"):
+                    package.pack(root, output)
+                (root / "honeycomb.yaml").write_bytes(manifest)
                 directory.rename(root / "missing-target")
                 with self.assertRaisesRegex(ValueError, "target directory"):
                     package.pack(root, output)

@@ -4,6 +4,7 @@ use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::path::Path;
 
+use silicon_browser_shared::app_id;
 use url::Url;
 
 use crate::url_policy::is_https_or_loopback_http;
@@ -61,6 +62,12 @@ impl Config {
             .map(|value| http_url(&value, "BRIEFCASE_URL"))
             .transpose()?;
         let briefcase_app_id = var("BRIEFCASE_APP_ID").filter(|value| !value.trim().is_empty());
+        let iam_app_id = need("IAM_APP_ID")?;
+        for (name, value) in [("IAM_APP_ID", Some(&iam_app_id)), ("BRIEFCASE_APP_ID", briefcase_app_id.as_ref())] {
+            if value.is_some_and(|value| app_id(value, name).is_err()) {
+                return Err(format!("{name} must be a bare application ID; migrate configuration before startup"));
+            }
+        }
         if briefcase_url.is_some() != briefcase_app_id.is_some() {
             return Err("BRIEFCASE_URL and BRIEFCASE_APP_ID must be configured together".into());
         }
@@ -85,7 +92,7 @@ impl Config {
             database_url: var("SB_DATABASE_URL").unwrap_or_else(|| "sqlite://silicon-browser.db?mode=rwc".into()),
             encryption_key,
             iam_url,
-            iam_app_id: need("IAM_APP_ID")?,
+            iam_app_id,
             iam_app_secret: need("IAM_APP_SECRET")?,
             iam_test_environment_key: var("IAM_TEST_ENVIRONMENT_KEY"),
             iam_webhook_secret: var("IAM_WEBHOOK_SECRET").filter(|value| !value.is_empty()),
@@ -146,7 +153,7 @@ mod tests {
             ("PORT", "8081"),
             ("SB_ORIGIN", "https://browser.example/"),
             ("SB_ENCRYPTION_KEY", "00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff"),
-            ("IAM_APP_ID", "tos>browser"),
+            ("IAM_APP_ID", "browser"),
             ("IAM_APP_SECRET", "ask_secret"),
             ("BROWSER_USE_API_KEY", "bu_secret"),
             ("TINYFISH_API_KEYS", "first, second"),
@@ -221,7 +228,17 @@ mod tests {
         values.insert("SB_ORIGIN", "http://localhost:3000");
         values.insert("SILICON_IAM_URL", "http://127.0.0.1:8081");
         values.insert("BRIEFCASE_URL", "http://[::1]:8082");
-        values.insert("BRIEFCASE_APP_ID", "tos>briefcase");
+        values.insert("BRIEFCASE_APP_ID", "briefcase");
         assert!(Config::from_vars(|key| values.get(key).map(ToString::to_string)).is_ok());
+    }
+
+    #[test]
+    fn legacy_application_configuration_requires_migration() {
+        for name in ["IAM_APP_ID", "BRIEFCASE_APP_ID"] {
+            let mut values = values();
+            values.insert(name, "tos>browser");
+            let error = Config::from_vars(|key| values.get(key).map(ToString::to_string)).err().unwrap();
+            assert_eq!(error, format!("{name} must be a bare application ID; migrate configuration before startup"));
+        }
     }
 }

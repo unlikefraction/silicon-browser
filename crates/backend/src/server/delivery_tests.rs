@@ -8,8 +8,8 @@ async fn configured_delivery_fixture() -> Fixture {
         .clone()
         .with_recording_delivery(
             BriefcaseClient::new("http://127.0.0.1:1", None).unwrap(),
-            "org-1>browser".into(),
-            "org-1>briefcase".into(),
+            "browser".into(),
+            "briefcase".into(),
         )
         .unwrap();
     fixture.app = router(fixture.state.clone());
@@ -27,7 +27,7 @@ fn allow_delivery_exchange(fixture: &Fixture, slt: &str, identity: PrincipalIden
             access_token: "oat_backend_delivery_secret".into(),
             refresh_token: "ort_backend_delivery_secret".into(),
             identity,
-            scope: "self.identity.read self.membership.read obo:org-1>briefcase:briefcase.files.create".into(),
+            scope: "self.identity.read self.membership.read obo:briefcase:briefcase.files.create".into(),
         },
     );
 }
@@ -67,7 +67,7 @@ async fn expired_recording_access_refreshes_its_owned_family_before_session_crea
     fixture.identity.allow_identity("oat_renewed_delivery", expected.clone());
     fixture.identity.allow_refresh("ort_backend_delivery_secret", "org-1", ExchangedAuth {
         access_token: "oat_renewed_delivery".into(), refresh_token: "ort_renewed_delivery".into(),
-        identity: expected, scope: "self.identity.read self.membership.read obo:org-1>briefcase:briefcase.files.create".into(),
+        identity: expected, scope: "self.identity.read self.membership.read obo:briefcase:briefcase.files.create".into(),
     });
     let (status, _, body) = request(
         &fixture.app, "POST", "/api/v1/sessions", Some(("oat_owner", "org-1")),
@@ -123,7 +123,7 @@ async fn delivery_routes_require_authentication_and_same_slt_replays_one_enrollm
     let (status, _, body) =
         request(&fixture.app, "GET", "/api/v1/auth/delivery", Some(("oat_owner", "org-1")), None).await;
     assert_eq!(status, StatusCode::OK);
-    assert_eq!(data(&body)["actor_id"], "owner-1");
+    assert_eq!(data(&body)["actor_id"], "si:owner-1");
     assert_eq!(data(&body)["enabled"], true);
     let (status, _, body) =
         request(&fixture.app, "POST", "/api/v1/auth/delivery/end", Some(("oat_owner", "org-1")), None).await;
@@ -187,7 +187,7 @@ async fn configured_session_start_requires_delivery_before_provider_creation_the
             .unwrap();
     assert_eq!(binding, (Some(expected.principal_id.to_string()), Some(expected.membership_id.to_string())));
     let mut replaced_membership = expected;
-    replaced_membership.membership_id = Uuid::new_v4();
+    replaced_membership.membership_id = "si:owner-1[another-org]".into();
     fixture.identity.allow_identity("oat_owner", replaced_membership);
     let (status, _, body) = request(
         &fixture.app,
@@ -197,40 +197,32 @@ async fn configured_session_start_requires_delivery_before_provider_creation_the
         Some(delivery_session_request()),
     )
     .await;
-    assert_eq!(status, StatusCode::CONFLICT, "{}", String::from_utf8_lossy(&body));
-    assert_eq!(serde_json::from_slice::<Value>(&body).unwrap()["error"]["code"], "recording_authorization_required");
+    assert_eq!(status, StatusCode::BAD_GATEWAY, "{}", String::from_utf8_lossy(&body));
+    assert_eq!(serde_json::from_slice::<Value>(&body).unwrap()["error"]["code"], "iam_contract");
     assert_eq!(fixture.browser.state.lock().unwrap().browsers.len(), 1);
 }
 
 #[tokio::test]
-async fn reused_public_name_cannot_adopt_or_disable_historical_delivery_authority_through_http() {
+async fn inconsistent_actor_cannot_adopt_or_disable_historical_delivery_authority_through_http() {
     let fixture = configured_delivery_fixture().await;
     let old = fixture.identity.identify("oat_owner", "org-1").await.unwrap();
     let slt = delivery_slt('D');
     allow_delivery_exchange(&fixture, &slt, old.clone());
     assert_eq!(enroll_delivery(&fixture, "oat_owner", &slt).await.0, StatusCode::OK);
-    // Simulate IAM assigning the former public name to another immutable principal,
-    // while an old delivery family remains in Browser's durable outbox/store.
-    sqlx::query("DELETE FROM identity_projection WHERE org_id=? AND principal_id=?")
-        .bind("org-1")
-        .bind(old.principal_id.to_string())
-        .execute(fixture.store.pool())
-        .await
-        .unwrap();
     let mut replacement = old.clone();
-    replacement.principal_id = Uuid::new_v4();
-    replacement.membership_id = Uuid::new_v4();
+    replacement.principal_id = "si:replacement".into();
+    replacement.membership_id = "si:replacement[org-1]".into();
     fixture.identity.allow_identity("oat_replacement", replacement);
     let auth = Some(("oat_replacement", "org-1"));
-    let (status, _, body) = request(&fixture.app, "GET", "/api/v1/auth/delivery", auth, None).await;
-    assert_eq!(status, StatusCode::OK, "{}", String::from_utf8_lossy(&body));
-    assert_eq!(data(&body)["enabled"], false);
-    let (status, _, body) =
-        request(&fixture.app, "POST", "/api/v1/sessions", auth, Some(delivery_session_request())).await;
-    assert_eq!(status, StatusCode::CONFLICT, "{}", String::from_utf8_lossy(&body));
+    for (method, route, body) in [
+        ("GET", "/api/v1/auth/delivery", None),
+        ("POST", "/api/v1/sessions", Some(delivery_session_request())),
+        ("POST", "/api/v1/auth/delivery/end", None),
+    ] {
+        let (status, _, body) = request(&fixture.app, method, route, auth, body).await;
+        assert_eq!(status, StatusCode::BAD_GATEWAY, "{}", String::from_utf8_lossy(&body));
+    }
     assert!(fixture.browser.state.lock().unwrap().browsers.is_empty());
-    let (status, _, _) = request(&fixture.app, "POST", "/api/v1/auth/delivery/end", auth, None).await;
-    assert_eq!(status, StatusCode::OK);
     let enabled: bool = sqlx::query_scalar("SELECT enabled FROM delivery_credentials WHERE principal_id=?")
         .bind(old.principal_id.to_string())
         .fetch_one(fixture.store.pool())
@@ -252,7 +244,7 @@ async fn failed_retry_fixture(reason: &'static str) -> (Fixture, String) {
     let id = data(&body)["id"].as_str().unwrap().to_owned();
     fixture
         .store
-        .associate_participant("org-1", &id, "viewer-1", crate::store::ParticipantRole::Viewer, Utc::now())
+        .associate_participant("org-1", &id, "c:viewer-1", crate::store::ParticipantRole::Viewer, Utc::now())
         .await
         .unwrap();
     let (status, _, body) = request(

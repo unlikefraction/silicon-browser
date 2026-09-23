@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 use url::Url;
 
 use crate::validation::{bounded, collection_len, identifier, purpose, required};
-use crate::{AccessList, ApiError, IdentityId, OrgId, ProfileId, SessionId, Validate, ValidationError};
+use crate::{AccessList, ApiError, IdentityId, OrgId, ProfileId, SessionId, Validate, ValidationError, actor_id};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -38,6 +38,18 @@ impl Identity {
 
     pub fn principal_ids(&self) -> impl Iterator<Item = &str> {
         std::iter::once(self.id.as_str()).chain(self.verified_aliases.iter().map(String::as_str))
+    }
+}
+
+impl Validate for Identity {
+    fn validate(&self) -> Result<(), ValidationError> {
+        if actor_id(&self.id, "identity.id")? != self.kind {
+            return Err(ValidationError::Invalid {
+                field: "identity.kind",
+                reason: "must match the complete actor ID namespace".into(),
+            });
+        }
+        Ok(())
     }
 }
 
@@ -174,18 +186,7 @@ impl AuthExchangeRequest {
         if self.short_lived_token.starts_with("oac_") {
             return self.validate();
         }
-        let actor = &self.short_lived_token;
-        if actor.is_empty()
-            || actor.len() > 256
-            || ["ask_", "oat_", "ort_", "iat_", "irt_", "cat_", "sat_", "crt_", "srt_"]
-                .iter()
-                .any(|prefix| actor.starts_with(prefix))
-            || !actor.bytes().all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-' | b'.' | b':'))
-            || actor.split(':').count() > 2
-            || actor.split(':').any(str::is_empty)
-        {
-            return Err(ValidationError::Invalid { field: "short_lived_token", reason: "test login expects an IAM oac_ token or an actor ID (1-256 ASCII letters/digits/_/./-, optionally one nonempty :org suffix); other credential families are not actor IDs".into() });
-        }
+        actor_id(&self.short_lived_token, "short_lived_token")?;
         if let Some(org) = &self.org_id {
             identifier(org, "org_id")?;
         }
@@ -196,7 +197,7 @@ impl AuthExchangeRequest {
 #[cfg(test)]
 #[test]
 fn actor_login_requires_testing_and_rejects_other_credentials() {
-    for actor in ["worker", "worker:tos", "worker-1.example", "oac_one_use"] {
+    for actor in ["c:worker0", "si:worker", "si:worker-1", "oac_one_use"] {
         let request = AuthExchangeRequest { short_lived_token: actor.into(), org_id: Some("tos".into()) };
         assert!(request.validate_testing().is_ok(), "{actor}");
         assert_eq!(request.validate().is_ok(), actor.starts_with("oac_"));
@@ -281,7 +282,7 @@ impl Validate for AuthSession {
     fn validate(&self) -> Result<(), ValidationError> {
         opaque_auth_token(&self.access_token, "oat_", "access_token")?;
         opaque_auth_token(&self.refresh_token, "ort_", "refresh_token")?;
-        identifier(&self.identity.id, "identity.id")?;
+        self.identity.validate()?;
         identifier(&self.org.id, "org.id")?;
         for service in &self.services {
             identifier(service, "services")?;
@@ -1201,7 +1202,7 @@ mod model_tests {
             name: "research".into(),
             description: "test".into(),
             status: SessionStatus::Expired,
-            initiator_id: "silicon-1".into(),
+            initiator_id: "si:silicon-1".into(),
             participant_ids: Vec::new(),
             ttl: SessionTtl::Minutes15,
             started_at: expires - chrono::Duration::minutes(15),
@@ -1266,7 +1267,7 @@ mod model_tests {
             refresh_token: "ort_refresh".into(),
             expires_at: Utc.timestamp_opt(1_800_000_000, 0).unwrap(),
             identity: Identity {
-                id: "silicon-1".into(),
+                id: "si:silicon-1".into(),
                 name: "Silicon".into(),
                 kind: IdentityKind::Silicon,
                 tags: vec![],
@@ -1275,6 +1276,10 @@ mod model_tests {
             org: Org { id: "tos".into(), name: "TOS".into() },
             services: vec!["session".into()],
         };
+        assert!(session.validate().is_ok());
+        session.identity.kind = IdentityKind::Carbon;
+        assert!(session.validate().is_err());
+        session.identity.id = "c:alice0".into();
         assert!(session.validate().is_ok());
         session.access_token = "oat_bad\nheader".into();
         assert!(session.validate().is_err());
@@ -1391,7 +1396,7 @@ mod model_tests {
     /// Test group: Briefcase paths cannot escape the initiating principal's private root.
     #[test]
     fn recording_path_is_safe_and_deterministic() {
-        assert_eq!(Recording::private_path("silicon-1", "session-1").unwrap(), "private/silicon-1/sb/session-1");
+        assert_eq!(Recording::private_path("si:silicon-1", "session-1").unwrap(), "private/si:silicon-1/sb/session-1");
         assert!(Recording::private_path("../other", "session-1").is_err());
     }
 
@@ -1404,9 +1409,9 @@ mod model_tests {
             "incognito": false,
             "session_name": "Market scan",
             "session_description": "Research browser vendors",
-            "owner_id": "silicon-1",
-            "participant_ids": ["silicon-1", "carbon-1"],
-            "briefcase_path": "private/silicon-1/sb/session-1/recording.mp4",
+            "owner_id": "si:silicon-1",
+            "participant_ids": ["si:silicon-1", "c:carbon-1"],
+            "briefcase_path": "private/si:silicon-1/sb/session-1/recording.mp4",
             "briefcase_link": null,
             "duration_seconds": 60,
             "size_bytes": 100,
@@ -1416,12 +1421,12 @@ mod model_tests {
         .unwrap();
         assert_eq!(recording.profile_id.as_deref(), Some("profile-1"));
         assert!(!recording.incognito);
-        assert_eq!(recording.participant_ids, ["silicon-1", "carbon-1"]);
+        assert_eq!(recording.participant_ids, ["si:silicon-1", "c:carbon-1"]);
 
         let value = serde_json::to_value(recording).unwrap();
         assert_eq!(value["profile_id"], "profile-1");
         assert_eq!(value["incognito"], false);
-        assert_eq!(value["participant_ids"], json!(["silicon-1", "carbon-1"]));
+        assert_eq!(value["participant_ids"], json!(["si:silicon-1", "c:carbon-1"]));
     }
 
     /// Test group: usage conversions expose minutes and decimal GB without changing stored integers.

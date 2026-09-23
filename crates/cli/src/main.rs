@@ -81,7 +81,7 @@ struct Cli {
 enum Command {
     /// Enroll and verify IAM test environments, isolated from production credentials.
     #[command(
-        long_about = "Enroll an IAM test environment using explicit developer credentials.\n\n  browser testing login --credentials-stdin < test-credentials.json\n  browser --test <environment-uuid> login worker:tos --org-id tos\n  browser --test <environment-uuid> testing status --json\n\nEvery ordinary command accepts --test. Production and each test environment keep separate credentials and browser state. Credentials JSON requires app_secret; iam_test_key and briefcase_test_environment_key are optional; keep this file private. Test keys are developer configuration; normal login still accepts only an IAM short-lived token."
+        long_about = "Enroll an IAM test environment using explicit developer credentials.\n\n  browser testing login --credentials-stdin < test-credentials.json\n  browser --test <environment-uuid> login si:worker --org-id tos\n  browser --test <environment-uuid> testing status --json\n\nEvery ordinary command accepts --test. Production and each test environment keep separate credentials and browser state. Credentials JSON requires app_secret; iam_test_key and briefcase_test_environment_key are optional; keep this file private. Test keys are developer configuration; normal login still accepts only an IAM short-lived token."
     )]
     Testing(Service<TestingCommand>),
     /// Print this application's IAM identifier.
@@ -148,7 +148,7 @@ enum LoginCommand {
 enum TestingCommand {
     /// Verify and securely store test configuration; reports the environment UUID.
     #[command(
-        long_about = "Verify explicit developer credentials with IAM, then store them in an owner-only test partition.\n\n  browser testing login --credentials-stdin < test-credentials.json\n\nWithout --credentials-stdin, reads SB_TEST_APP_SECRET, plus optional SB_IAM_TEST_KEY and SB_BRIEFCASE_TEST_KEY. Then run browser --test <environment-uuid> login worker:tos --org-id tos, or use an IAM test short-lived token. Re-enrollment clears that environment's saved login."
+        long_about = "Verify explicit developer credentials with IAM, then store them in an owner-only test partition.\n\n  browser testing login --credentials-stdin < test-credentials.json\n\nWithout --credentials-stdin, reads SB_TEST_APP_SECRET, plus optional SB_IAM_TEST_KEY and SB_BRIEFCASE_TEST_KEY. Then run browser --test <environment-uuid> login si:worker --org-id tos, or use an IAM test short-lived token. Re-enrollment clears that environment's saved login."
     )]
     Login {
         /// Read credentials JSON from standard input; never pass test secrets as arguments.
@@ -744,7 +744,8 @@ fn login_status(
     json: bool,
     org_override: Option<&str>,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let (_, mut state) = load_selected_state(backend, environment)?;
+    let (home, mut state) = load_selected_state(backend, environment)?;
+    refresh_if_needed(&mut state, &home)?;
     if let Some(org) = org_override {
         state.org_id = Some(org.to_owned());
     }
@@ -1455,9 +1456,9 @@ fn refresh_if_needed(state: &mut State, home: &std::path::Path) -> Result<(), Bo
     }
     let refresh_token = current
         .refresh_token()
-        .ok_or("the auth token expired and has no refresh token; run `browser setup` with a new IAM short-lived token")?
+        .ok_or("the saved login expired or needs identifier migration and has no refresh token; run `browser setup` with a new IAM short-lived token")?
         .to_owned();
-    let org_id = current.org_id.clone().ok_or("the auth token expired without an organization; run `browser setup`")?;
+    let org_id = current.org_id.clone().ok_or("the saved login has no organization; run `browser setup`")?;
     // Exactly one attempt while holding the process-wide refresh lock. An ambiguous transport
     // failure is deliberately not retried because IAM refresh tokens rotate on use.
     let session = Client::refresh_with_transport(
@@ -1465,11 +1466,17 @@ fn refresh_if_needed(state: &mut State, home: &std::path::Path) -> Result<(), Bo
         &AuthRefreshRequest { refresh_token: refresh_token.clone(), org_id },
         std::sync::Arc::new(transport(&current)?),
     )?;
+    if current.identity_id.as_deref().is_some_and(|id| actor_id(id, "identity").is_ok() && id != session.identity.id) {
+        return Err("refresh returned a different identity; sign in again".into());
+    }
     let mut applied = false;
     let latest = State::update(home, |latest| {
         // A concurrent setup may have replaced the credential while this HTTP request was in
         // flight. Never overwrite that newer credential with this response.
-        if latest.refresh_token() == Some(refresh_token.as_str()) {
+        if latest.refresh_token() == Some(refresh_token.as_str())
+            && latest.backend_url == current.backend_url
+            && latest.org_id == current.org_id
+        {
             latest.set_tokens(session.access_token, Some(session.refresh_token), Some(session.expires_at.to_rfc3339()));
             latest.identity_id = Some(session.identity.id);
             latest.org_id = Some(session.org.id);
@@ -1489,6 +1496,7 @@ fn needs_refresh(state: &State) -> bool {
         return false;
     }
     state.stored_token().is_none()
+        || state.identity_id.as_deref().is_none_or(|id| actor_id(id, "identity").is_err())
         || state
             .token_expires_at
             .as_deref()
@@ -1604,7 +1612,9 @@ fn parse_access(value: &str) -> Result<AccessList, ValidationError> {
     if value.trim().is_empty() {
         return AccessList::new::<[&str; 0], &str>([]);
     }
-    AccessList::new(value.split(',').map(str::trim))
+    let access = AccessList::new(value.split(',').map(str::trim))?;
+    access.validate()?;
+    Ok(access)
 }
 
 fn parse_urls(values: Vec<String>) -> Result<Vec<String>, Box<dyn std::error::Error>> {
@@ -1726,7 +1736,7 @@ mod tests {
                 Ok(Response {
                     status: 200,
                     body: serde_json::to_vec(&Envelope::new(Identity {
-                        id: "public-silicon".into(),
+                        id: "si:public-silicon".into(),
                         name: "Silicon".into(),
                         kind: IdentityKind::Silicon,
                         tags: vec![],
@@ -1775,9 +1785,9 @@ mod tests {
     /// Test group: access arguments accept both documented brackets and plain comma lists.
     #[test]
     fn access_list_cli_shape_is_normalized() {
-        assert_eq!(parse_access("[@alice,@bot:tos,growth]").unwrap().as_slice(), ["@alice", "@bot:tos", "growth"]);
-        assert_eq!(parse_access("@alice,growth").unwrap().as_slice(), ["@alice", "growth"]);
-        assert!(parse_access("[@alice,]").is_err());
+        assert_eq!(parse_access("[@c:alice,@si:bot,growth]").unwrap().as_slice(), ["@c:alice", "@si:bot", "growth"]);
+        assert_eq!(parse_access("@c:alice,growth").unwrap().as_slice(), ["@c:alice", "growth"]);
+        assert!(parse_access("[@c:alice,]").is_err());
     }
 
     /// Test group: fetch accepts bracketed, comma-separated, and repeated URL inputs in order.
@@ -1825,7 +1835,7 @@ mod tests {
                 "recording",
                 "ls",
                 "--filter",
-                "profile:p1 -> for:@silicon-1 -> name:market* -> description:^research -> is:shared",
+                "profile:p1 -> for:@si:silicon-1 -> name:market* -> description:^research -> is:shared",
             ],
             vec!["browser", "recording", "rm", "s1"],
             vec!["browser", "usage", "show", "--org"],
@@ -1895,7 +1905,7 @@ mod tests {
         let auth = serde_json::from_value(serde_json::json!({
             "access_token": "oat_new", "refresh_token": "ort_new",
             "expires_at": "2030-03-17T17:46:40Z",
-            "identity": {"id":"silicon-1","name":"Silicon","kind":"silicon"},
+            "identity": {"id":"si:silicon-1","name":"Silicon","kind":"silicon"},
             "org": {"id":"new-org","name":"New"}, "services": ["session"]
         }))
         .unwrap();
@@ -1937,6 +1947,10 @@ mod tests {
         state.token_expires_at = Some("not-a-timestamp".into());
         assert!(needs_refresh(&state));
         state.token_expires_at = Some((chrono::Utc::now() + chrono::Duration::hours(1)).to_rfc3339());
+        assert!(needs_refresh(&state));
+        state.identity_id = Some("old:tos".into());
+        assert!(needs_refresh(&state));
+        state.identity_id = Some("si:canonical".into());
         assert!(!needs_refresh(&state));
     }
 
@@ -1997,7 +2011,7 @@ mod tests {
                 .unwrap()
                 .org("org-allowed")
                 .unwrap();
-        assert_eq!(validate_setup_client(&allowed).unwrap().id, "public-silicon");
+        assert_eq!(validate_setup_client(&allowed).unwrap().id, "si:public-silicon");
 
         let denied =
             Client::with_transport("https://backend.example", Auth::new("oat_test").unwrap(), transport.clone())

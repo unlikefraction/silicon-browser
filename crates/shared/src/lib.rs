@@ -19,7 +19,7 @@ pub use filter::{
     TextPattern, UsageFilter, UsagePredicate,
 };
 pub use model::*;
-pub use validation::{Validate, ValidationError};
+pub use validation::{Validate, ValidationError, actor_id, app_id};
 
 pub type IdentityId = String;
 pub type OrgId = String;

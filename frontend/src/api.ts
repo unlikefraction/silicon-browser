@@ -1,4 +1,5 @@
 import type { AuthSession } from './types';
+import { IAM_APP_ID } from './auth';
 
 export interface TestingCredentials { app_secret: string; iam_test_key?: string; briefcase_test_environment_key?: string }
 export interface TestingContext { environment_id: string; app_id: string; name: string }
@@ -13,9 +14,14 @@ export function publicError(value: unknown): string {
 export function acceptAuth(value: AuthSession, org?: string, identity?: string): AuthSession {
   if (!/^oat_[^\s\x00-\x1f\x7f]{1,16380}$/.test(value?.access_token || '') ||
       !/^ort_[^\s\x00-\x1f\x7f]{1,16380}$/.test(value?.refresh_token || '') ||
-      !value.org?.id || (org !== undefined && value.org.id !== org) || !value.identity?.id || (identity && value.identity.id !== identity) ||
+      !value.org?.id || (org !== undefined && value.org.id !== org) || !validIdentity(value.identity) || (identity && value.identity.id !== identity) ||
       !Number.isFinite(Date.parse(value.expires_at))) throw new Error('Sign-in did not match your organization or identity. Please sign in again.');
   return value;
+}
+function validIdentity(value: AuthSession['identity']): boolean {
+  return typeof value?.name === 'string' && typeof value.id === 'string' &&
+    ((value.kind === 'carbon' && /^c:[a-z0-9_-]{3,30}$/.test(value.id)) ||
+     (value.kind === 'silicon' && /^si:[a-z0-9_-]{3,50}$/.test(value.id)));
 }
 export class BrowserApi {
   private session: AuthSession | null = null;
@@ -24,20 +30,20 @@ export class BrowserApi {
   private closed = false;
   constructor(readonly origin: string, private fetcher: typeof fetch = fetch.bind(globalThis), private persist?: (session: AuthSession | null) => void, private testing?: TestingCredentials) {}
   async startTesting(credentials: TestingCredentials, token: string, org: string, expectedEnvironmentId?: string): Promise<{ api: BrowserApi; context: TestingContext }> {
-    if (!/^[^\s\x00-\x1f\x7f]{1,16384}$/.test(token)) throw new ApiError('Enter an existing IAM test actor ID or an IAM-issued test short-lived token (oac_) without whitespace.');
+    if (!/^(?:c:[a-z0-9_-]{3,30}|si:[a-z0-9_-]{3,50}|oac_[^\s\x00-\x1f\x7f]{1,16380})$/.test(token)) throw new ApiError('Enter a canonical IAM test actor ID (c:handle or si:handle) or an IAM-issued test short-lived token (oac_). Migrate old selectors before signing in.');
     if (!org.trim()) throw new ApiError('Enter the organization granted to the test token.');
     for (const [name, value] of Object.entries(credentials)) {
       if (typeof value !== 'string' || !/^[^\s\x00-\x1f\x7f]{1,16384}$/.test(value)) throw new ApiError(`Enter a valid ${name.replaceAll('_', ' ')} without whitespace.`);
     }
     if (!credentials.app_secret) throw new ApiError('Browser test app secret is required.');
     const context = await this.request<TestingContext>('/testing/context', 'POST', credentials, null);
-    if (context?.app_id !== 'tos>browser' || !/^[a-f\d]{8}(?:-[a-f\d]{4}){3}-[a-f\d]{12}$/i.test(context.environment_id) || typeof context.name !== 'string') throw new ApiError('The server returned an invalid Browser testing environment. Your current workspace has not changed.');
+    if (context?.app_id !== IAM_APP_ID || !/^[a-f\d]{8}(?:-[a-f\d]{4}){3}-[a-f\d]{12}$/i.test(context.environment_id) || typeof context.name !== 'string') throw new ApiError('The server returned an invalid Browser testing environment. Your current workspace has not changed.');
     context.environment_id = context.environment_id.toLowerCase();
     if (expectedEnvironmentId && context.environment_id.toLowerCase() !== expectedEnvironmentId.toLowerCase()) throw new ApiError(`This invitation requires testing environment ${expectedEnvironmentId}. The supplied app secret selects a different environment.`);
     // A separate client keeps test credentials and renewals out of production storage.
     const api = new BrowserApi(`${this.origin}/testing/${context.environment_id}`, this.fetcher, undefined, { ...credentials });
     try {
-      api.setSession(acceptAuth(await api.request<AuthSession>('/auth/exchange', 'POST', { short_lived_token: token, org_id: org.trim() }, null), org.trim()));
+      api.setSession(acceptAuth(await api.request<AuthSession>('/auth/exchange', 'POST', { short_lived_token: token, org_id: org.trim() }, null), org.trim(), token.startsWith('oac_') ? undefined : token));
       return { api, context };
     } catch (error) { api.close(); throw error; }
   }

@@ -59,7 +59,7 @@ let credentials = TestingCredentials {
 let environment = Client::testing_context(root, &credentials)?;
 let base = format!("{root}/testing/{}", environment.environment_id);
 let session = Client::exchange_testing(&base, &AuthExchangeRequest {
-    short_lived_token: "worker:tos".into(),
+    short_lived_token: "si:worker".into(),
     org_id: Some("tos".into()),
 }, credentials.clone())?;
 let transport = Arc::new(HttpTransport::default().with_testing(&base, credentials)?);

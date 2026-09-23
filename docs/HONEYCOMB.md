@@ -1,6 +1,7 @@
 # Honeycomb distribution
 
-Honeycomb distributes the `browser` CLI as `tos>browser`. It does not host the API or
+The updated manifest identifies the `browser` CLI application as `browser`.
+Honeycomb does not host the API or
 website: the existing AWS backend, Vercel frontend, SQLite storage, IAM login,
 and Briefcase recording delivery retain their current architecture.
 
@@ -49,6 +50,11 @@ while that wording change is reviewed.
 
 ## Build a release
 
+The identifier migration is source preparation. Complete the [coordinated
+cutover](PUBLIC-IDENTIFIER-MIGRATION.md) before deploying these builds. The
+already published 0.2.4 archives stay immutable; choose a new unused release
+version before packaging or uploading the changed manifest and binaries.
+
 Keep `Cargo.toml`, workspace versions in `Cargo.lock`, and `honeycomb.yaml` in
 sync. The **Honeycomb package** GitHub Actions workflow builds and checks every
 target on its native operating system and architecture. It runs when CLI source,
@@ -80,11 +86,11 @@ Use the existing application for subsequent releases. Do not recreate it or
 rotate its credentials as part of an ordinary package update.
 
 ```sh
-honeycomb apps get 'tos>browser' --json
+honeycomb apps get 'browser' --json
 honeycomb --idempotency-key silicon-browser-honeycomb-0.2.4-upload-20260917 \
-  releases upload 'tos>browser' target/honeycomb-browser-0.2.4.tar.gz --revision REVISION
-honeycomb releases list 'tos>browser'
-honeycomb install 'tos>browser' --version 0.2.4
+  releases upload 'browser' target/honeycomb-browser-0.2.4.tar.gz --channel prod --revision REVISION
+honeycomb releases list 'browser'
+honeycomb install 'browser' --version 0.2.4
 browser --version
 browser --help
 browser setup
@@ -105,7 +111,7 @@ IAM's fresh verification for `application.webhook.approve` and the exact pending
 endpoint; a stored login is insufficient.
 
 Browser requests identity, membership and tags for authorization, plus
-`obo:tos>briefcase:briefcase.files.create` for user-authorized recording delivery.
+`obo:briefcase:briefcase.files.create` for user-authorized recording delivery.
 Honeycomb itself needs its own Briefcase upload/download/publication grants; a
 missing Honeycomb grant must be repaired in that platform, not added to Browser.
 

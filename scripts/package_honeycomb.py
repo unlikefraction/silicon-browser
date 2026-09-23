@@ -130,6 +130,8 @@ def pack(targets, output, standalone_output=None):
     manifest = regular_bytes(ROOT / "honeycomb.yaml")
     if re.findall(rb"^version: (.+)$", manifest, re.MULTILINE) != [version().encode()]:
         raise ValueError("honeycomb.yaml version does not match Cargo.toml")
+    if re.findall(rb"^app_id: (.+)$", manifest, re.MULTILINE) != [b"browser"]:
+        raise ValueError("honeycomb.yaml app_id must be browser")
     files = [("honeycomb.yaml", manifest, 0o644)]
     for target in TARGETS:
         directory = targets / target

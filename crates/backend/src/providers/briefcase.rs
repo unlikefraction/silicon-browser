@@ -188,8 +188,8 @@ impl BriefcaseClient {
     ) -> ProviderResult<BriefcaseEntry> {
         let organization = identifier_header(org_id)?;
         let application = identifier_header(app_id)?;
-        if !canonical_application_id(app_id) {
-            return Err(invalid("Briefcase OBO requires a canonical org>application ID"));
+        if silicon_browser_shared::app_id(app_id, "app_id").is_err() {
+            return Err(invalid("Briefcase OBO requires a canonical bare application ID"));
         }
         // The issuer's owning organization is independent of the represented
         // member's storage organization. IAM's request-bound proof and Briefcase
@@ -278,18 +278,6 @@ fn identifier_header(value: &str) -> ProviderResult<HeaderValue> {
     HeaderValue::from_str(value).map_err(|_| invalid("invalid Briefcase identifier header"))
 }
 
-fn canonical_application_id(value: &str) -> bool {
-    let Some((organization, application)) = value.split_once('>') else {
-        return false;
-    };
-    let canonical = |byte: u8| byte.is_ascii_lowercase() || byte.is_ascii_digit() || matches!(byte, b'_' | b'-');
-    (3..=50).contains(&organization.len())
-        && organization.bytes().all(canonical)
-        && (3..=80).contains(&application.len())
-        && application.as_bytes().first().is_some_and(u8::is_ascii_lowercase)
-        && application.bytes().all(canonical)
-}
-
 fn secret_header(value: &str) -> ProviderResult<HeaderValue> {
     let mut header = HeaderValue::from_str(value).map_err(|_| invalid("invalid Briefcase secret header"))?;
     header.set_sensitive(true);
@@ -313,10 +301,10 @@ mod tests {
     fn entry(size: usize) -> serde_json::Value {
         json!({
             "id":"018f156c-0276-7000-8000-000000000001", "org_id":"test-org", "type":"file",
-            "name":"recording.bin", "path":"private/actor/apps/test-org>browser/recording.bin",
+            "name":"recording.bin", "path":"private/actor/apps/browser/recording.bin",
             "content_type":"video/mp4", "size":size,
             "permanent_url":"https://briefcase.example/test-org/private/actor/apps/test-org%3Ebrowser/recording.bin",
-            "origin_app_id":"test-org>browser"
+            "origin_app_id":"browser"
         })
     }
 
@@ -370,7 +358,7 @@ mod tests {
                 .await
                 .unwrap();
         });
-        assert_eq!(client.upload_file("test-org", "test-org>browser", &proof(), file, size).await.unwrap().size, size);
+        assert_eq!(client.upload_file("test-org", "browser", &proof(), file, size).await.unwrap().size, size);
         server.await.unwrap();
     }
 
@@ -383,7 +371,7 @@ mod tests {
         let (_, size) = client.hash_file(&mut file).await.unwrap();
         staged.as_file().set_len(4).unwrap();
         assert!(matches!(
-            client.upload_file("test-org", "test-org>browser", &proof(), file, size).await,
+            client.upload_file("test-org", "browser", &proof(), file, size).await,
             Err(ProviderError::InvalidInput(_))
         ));
     }
@@ -399,7 +387,7 @@ mod tests {
                 client.body_sha256(b"abc").unwrap(),
                 "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
             );
-            let result = client.upload_raw("test-org", "test-org>browser", &proof(), bytes.clone()).await.unwrap();
+            let result = client.upload_raw("test-org", "browser", &proof(), bytes.clone()).await.unwrap();
             assert_eq!(result.size, bytes.len() as u64);
             let request = requests.recv().await.unwrap();
             server.await.unwrap();
@@ -409,7 +397,7 @@ mod tests {
             let headers = request.headers.to_ascii_lowercase();
             assert!(headers.contains(concat!("user-agent: silicon-browser/", env!("CARGO_PKG_VERSION"))));
             for expected in [
-                "x-app-id: test-org>browser",
+                "x-app-id: browser",
                 "x-org-id: test-org",
                 "x-iam-obo-access-proof: obo_request-bound-secret",
                 "content-type: application/octet-stream",
@@ -459,17 +447,17 @@ mod tests {
         let client = BriefcaseClient::with_upload_limit("http://127.0.0.1:1", None, 3).unwrap();
         assert_eq!(client.max_upload_bytes(), 3);
         assert!(client.body_sha256(b"four").is_err());
-        let error = client.upload_raw("test-org", "test-org>browser", &proof(), b"four".to_vec()).await.unwrap_err();
+        let error = client.upload_raw("test-org", "browser", &proof(), b"four".to_vec()).await.unwrap_err();
         assert!(matches!(error, ProviderError::InvalidInput(_)));
         for (org, app, grant) in [
             ("test-org", ">browser", proof()),
             ("test-org", "tos>", proof()),
             ("test-org", "tos>Browser", proof()),
-            ("test-org", "tos>browser>other", proof()),
+            ("test-org", "tos>browser", proof()),
             ("test-org", "tos>2browser", proof()),
-            ("test-org", "browser", proof()),
-            ("test-org\r\n", "test-org>browser", proof()),
-            ("test-org", "test-org>browser", OnBehalfOfGrant::new("invalid-proof-secret").unwrap()),
+            ("test-org", "Browser", proof()),
+            ("test-org\r\n", "browser", proof()),
+            ("test-org", "browser", OnBehalfOfGrant::new("invalid-proof-secret").unwrap()),
         ] {
             assert!(matches!(client.upload_raw(org, app, &grant, vec![]).await, Err(ProviderError::InvalidInput(_))));
         }
@@ -481,18 +469,18 @@ mod tests {
         for testing_key in [None, Some(app_secret.as_str())] {
             let mut response = entry(3);
             response["org_id"] = json!("interface-client");
-            response["path"] = json!("private/worker/apps/tos>browser/recording.bin");
-            response["origin_app_id"] = json!("tos>browser");
+            response["path"] = json!("private/worker/apps/browser/recording.bin");
+            response["origin_app_id"] = json!("browser");
             response["permanent_url"] =
                 json!("https://briefcase.example/interface-client/private/worker/apps/tos%3Ebrowser/recording.bin");
             let (base, mut requests, server) = spawn_json_server(vec![(201, response.to_string())]).await;
             let client = BriefcaseClient::new(&base, testing_key).unwrap();
-            let result = client.upload_raw("interface-client", "tos>browser", &proof(), b"abc".to_vec()).await.unwrap();
+            let result = client.upload_raw("interface-client", "browser", &proof(), b"abc".to_vec()).await.unwrap();
             assert_eq!(result.org_id, "interface-client");
-            assert_eq!(result.origin_app_id.as_deref(), Some("tos>browser"));
+            assert_eq!(result.origin_app_id.as_deref(), Some("browser"));
             let request = requests.recv().await.unwrap();
             server.await.unwrap();
-            assert!(request.headers.contains("x-app-id: tos>browser\r\n"));
+            assert!(request.headers.contains("x-app-id: browser\r\n"));
             assert!(request.headers.contains("x-org-id: interface-client\r\n"));
             assert!(request.headers.contains("x-iam-obo-access-proof: obo_request-bound-secret\r\n"));
             assert_eq!(request.body, b"abc");
@@ -504,8 +492,7 @@ mod tests {
         for (status, response) in [(403, "private rejection".into()), (201, entry(3).to_string())] {
             let (base, mut requests, server) = spawn_json_server(vec![(status, response)]).await;
             let client = BriefcaseClient::new(&base, Some(&app_secret)).unwrap();
-            let error =
-                client.upload_raw("interface-client", "tos>browser", &proof(), b"abc".to_vec()).await.unwrap_err();
+            let error = client.upload_raw("interface-client", "browser", &proof(), b"abc".to_vec()).await.unwrap_err();
             assert!(matches!(error, ProviderError::Http { status: 403, .. } | ProviderError::InvalidResponse { .. }));
             requests.recv().await.unwrap();
             server.await.unwrap();
@@ -519,7 +506,7 @@ mod tests {
         let (base, _requests, server) =
             spawn_json_server(vec![(403, "obo_request-bound-secret upstream-private-detail".into())]).await;
         let client = BriefcaseClient::new(&base, None).unwrap();
-        let error = client.upload_raw("test-org", "test-org>browser", &proof(), vec![]).await.unwrap_err();
+        let error = client.upload_raw("test-org", "browser", &proof(), vec![]).await.unwrap_err();
         server.await.unwrap();
         assert!(matches!(error, ProviderError::Http { status: 403, .. }));
         assert!(!format!("{error:?}").contains("upstream-private-detail"));
@@ -528,7 +515,7 @@ mod tests {
             spawn_header_only_server(307, vec![("Location".into(), "http://127.0.0.1:1/proof-must-not-follow".into())])
                 .await;
         let client = BriefcaseClient::new(&base, None).unwrap();
-        let error = client.upload_raw("test-org", "test-org>browser", &proof(), vec![]).await.unwrap_err();
+        let error = client.upload_raw("test-org", "browser", &proof(), vec![]).await.unwrap_err();
         server.await.unwrap();
         assert!(matches!(error, ProviderError::Http { status: 307, .. }));
     }
@@ -541,14 +528,14 @@ mod tests {
             response["origin_app_id"] = json!(origin);
             let (base, mut requests, server) = spawn_json_server(vec![(201, response.to_string())]).await;
             let client = BriefcaseClient::new(&base, None).unwrap();
-            let uploaded = client.upload_raw("test-org", "test-org>browser", &proof(), bytes.clone()).await.unwrap();
+            let uploaded = client.upload_raw("test-org", "browser", &proof(), bytes.clone()).await.unwrap();
             let request = requests.recv().await.unwrap();
             server.await.unwrap();
             assert_eq!(uploaded.origin_app_id.as_deref(), origin);
             assert_eq!(uploaded.org_id, "test-org");
             assert_eq!(uploaded.size, bytes.len() as u64);
             assert_eq!(request.body, bytes);
-            assert!(request.headers.contains("x-app-id: test-org>browser"));
+            assert!(request.headers.contains("x-app-id: browser"));
         }
     }
 
@@ -557,7 +544,7 @@ mod tests {
         let (base, server) =
             spawn_header_only_server(201, vec![("Content-Length".into(), (MAX_RESPONSE_BYTES + 1).to_string())]).await;
         let client = BriefcaseClient::new(&base, None).unwrap();
-        let error = client.upload_raw("test-org", "test-org>browser", &proof(), vec![]).await.unwrap_err();
+        let error = client.upload_raw("test-org", "browser", &proof(), vec![]).await.unwrap_err();
         server.await.unwrap();
         assert!(matches!(error, ProviderError::InvalidResponse { .. }));
         for (field, value) in [
@@ -570,7 +557,7 @@ mod tests {
             response[field] = value;
             let (base, _requests, server) = spawn_json_server(vec![(201, response.to_string())]).await;
             let client = BriefcaseClient::new(&base, None).unwrap();
-            let error = client.upload_raw("test-org", "test-org>browser", &proof(), vec![]).await.unwrap_err();
+            let error = client.upload_raw("test-org", "browser", &proof(), vec![]).await.unwrap_err();
             server.await.unwrap();
             assert!(matches!(error, ProviderError::InvalidResponse { .. }), "field {field}");
             assert!(!error.to_string().contains("hidden"));

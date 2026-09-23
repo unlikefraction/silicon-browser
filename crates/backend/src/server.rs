@@ -700,6 +700,12 @@ impl FromRequestParts<AppState> for Bearer {
 }
 
 async fn resolve_identity(state: &AppState, principal: &PrincipalIdentity) -> Result<Identity, ApiFailure> {
+    if silicon_browser_shared::actor_id(&principal.principal_id, "public_id").ok() != Some(principal.kind)
+        || principal.public_id.as_deref().is_some_and(|id| id != principal.principal_id)
+        || principal.membership_id != format!("{}[{}]", principal.principal_id, principal.org_id)
+    {
+        return Err(ApiFailure::bad_gateway("iam_contract", "IAM returned an inconsistent actor or membership"));
+    }
     let principal_id = principal.principal_id.to_string();
     let projected = state
         .store
@@ -2582,8 +2588,8 @@ mod tests {
     async fn fixture() -> Fixture {
         let store = Store::in_memory().await.unwrap();
         let identity = FakeIdentityProvider::new();
-        identity.allow_identity("oat_owner", principal("owner-1", IdentityKind::Silicon, true));
-        identity.allow_identity("oat_viewer", principal("viewer-1", IdentityKind::Carbon, true));
+        identity.allow_identity("oat_owner", principal("si:owner-1", IdentityKind::Silicon, true));
+        identity.allow_identity("oat_viewer", principal("c:viewer-1", IdentityKind::Carbon, true));
         identity.allow_orgs("oat_owner", vec![OrganizationAccess { id: "org-1".into(), name: Some("The Org".into()) }]);
         let browser = Arc::new(FakeBrowser::default());
         let search_provider: Arc<dyn SearchProvider> = Arc::new(FakeSearch);
@@ -2602,8 +2608,8 @@ mod tests {
 
     fn owner() -> Identity {
         Identity {
-            id: "owner-1".into(),
-            name: "owner-1".into(),
+            id: "si:owner-1".into(),
+            name: "si:owner-1".into(),
             kind: IdentityKind::Silicon,
             tags: Vec::new(),
             verified_aliases: Vec::new(),
@@ -2678,17 +2684,17 @@ mod tests {
 
     fn principal(id: &str, kind: IdentityKind, public: bool) -> PrincipalIdentity {
         PrincipalIdentity {
-            principal_id: Uuid::new_v4(),
+            principal_id: id.into(),
             public_id: public.then(|| id.into()),
             tags: None,
             org_role: Some("member".into()),
-            scopes: "self.identity.read self.membership.read obo:org-1>briefcase:briefcase.files.create"
+            scopes: "self.identity.read self.membership.read obo:briefcase:briefcase.files.create"
                 .split_whitespace()
                 .map(str::to_owned)
                 .collect(),
             kind,
             org_id: "org-1".into(),
-            membership_id: Uuid::new_v4(),
+            membership_id: format!("{id}[org-1]"),
             authorization_epoch: 1,
             expires_at: Utc::now() + TimeDelta::hours(1),
         }
@@ -2952,7 +2958,7 @@ mod tests {
     #[tokio::test]
     async fn auth_exchange_persists_public_identity_projection_without_exposing_secrets() {
         let fixture = fixture().await;
-        let exchanged_principal = principal("public-owner", IdentityKind::Silicon, true);
+        let exchanged_principal = principal("si:public-owner", IdentityKind::Silicon, true);
         fixture.identity.allow_exchange(
             "oac_single_use",
             "org-1",
@@ -2973,7 +2979,7 @@ mod tests {
         .await;
         assert_eq!(status, StatusCode::OK);
         assert_eq!(headers["cache-control"], "no-store");
-        assert_eq!(data(&body)["identity"]["id"], "public-owner");
+        assert_eq!(data(&body)["identity"]["id"], "si:public-owner");
         assert_eq!(
             data(&body)["services"],
             json!(["profile", "proxy", "session", "recording", "usage", "search", "fetch"])
@@ -2985,7 +2991,7 @@ mod tests {
         let (status, _, body) =
             request(&fixture.app, "GET", "/api/v1/me", Some(("oat_projected", "org-1")), None).await;
         assert_eq!(status, StatusCode::OK);
-        assert_eq!(data(&body)["id"], "public-owner");
+        assert_eq!(data(&body)["id"], "si:public-owner");
         let encoded = String::from_utf8(body).unwrap();
         assert!(!encoded.contains("oat_projected"));
         assert!(!encoded.contains("ort_projected"));
@@ -3003,14 +3009,14 @@ mod tests {
         )
         .await;
         assert_eq!(status, StatusCode::OK);
-        let mut viewer = principal("tagged-viewer", IdentityKind::Silicon, true);
+        let mut viewer = principal("si:tagged-viewer", IdentityKind::Silicon, true);
         for (tags, expected_count) in [
             (None, 0),
             (Some(vec!["growth".into()]), 1),
             (Some(Vec::new()), 0),
             (Some(vec!["growth".into()]), 1),
             (None, 0),
-            (Some(vec!["@owner-1".into()]), 0),
+            (Some(vec!["@si:owner-1".into()]), 0),
         ] {
             viewer.tags = tags;
             fixture.identity.allow_identity("oat_tagged", viewer.clone());
@@ -3164,8 +3170,8 @@ mod tests {
     async fn retained_profile_provisioning_is_reconciled_from_exact_provider_user_id() {
         let fixture = fixture().await;
         let owner = Identity {
-            id: "owner-1".into(),
-            name: "owner-1".into(),
+            id: "si:owner-1".into(),
+            name: "si:owner-1".into(),
             kind: IdentityKind::Silicon,
             tags: Vec::new(),
             verified_aliases: Vec::new(),
@@ -3705,8 +3711,8 @@ mod tests {
         // Provisioning placeholders are internal and are not advertised as
         // active profiles while background reconciliation is pending.
         let owner = Identity {
-            id: "owner-1".into(),
-            name: "owner-1".into(),
+            id: "si:owner-1".into(),
+            name: "si:owner-1".into(),
             kind: IdentityKind::Silicon,
             tags: Vec::new(),
             verified_aliases: Vec::new(),
@@ -3719,8 +3725,8 @@ mod tests {
     async fn failed_local_session_activation_holds_slot_until_provider_stop_is_confirmed() {
         let fixture = fixture().await;
         let owner = Identity {
-            id: "owner-1".into(),
-            name: "owner-1".into(),
+            id: "si:owner-1".into(),
+            name: "si:owner-1".into(),
             kind: IdentityKind::Silicon,
             tags: Vec::new(),
             verified_aliases: Vec::new(),
@@ -3975,8 +3981,8 @@ mod tests {
 
         let fixture = fixture().await;
         let hidden_owner = Identity {
-            id: "hidden-owner".into(),
-            name: "hidden-owner".into(),
+            id: "si:hidden-owner".into(),
+            name: "si:hidden-owner".into(),
             kind: IdentityKind::Silicon,
             tags: Vec::new(),
             verified_aliases: Vec::new(),
@@ -4005,7 +4011,7 @@ mod tests {
         assert_eq!(data(&body)["sessions"], 2);
 
         let (status, _, body) =
-            request(&fixture.app, "GET", "/api/v1/usage/org?filter=for:%40hidden-owner", auth, None).await;
+            request(&fixture.app, "GET", "/api/v1/usage/org?filter=for:%40si:hidden-owner", auth, None).await;
         assert_eq!(status, StatusCode::BAD_REQUEST);
         let error: Value = serde_json::from_slice(&body).unwrap();
         assert_eq!(error["error"]["code"], "invalid_filter");

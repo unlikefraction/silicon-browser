@@ -12,7 +12,7 @@ makes no production deployment claim.
 Configure `BRIEFCASE_URL` and `BRIEFCASE_APP_ID` together, alongside Browser's IAM
 application credentials. Issuer and audience must be canonical application IDs.
 The issuer’s owning organization may differ from the client’s storage organization:
-for example, `tos>browser` can deliver into an authorized `interface-client` workspace.
+for example, `browser` can deliver into an authorized `interface-client` workspace.
 Browser preserves the issuer in `X-App-ID` and the storage organization in `X-Org-ID`;
 IAM’s request-bound proof and Briefcase’s authorization still enforce the exact actor,
 organization, destination, bytes, and selected testing environment.
@@ -23,7 +23,7 @@ Briefcase IAM application secret (`ask_` plus 43 base64url characters) from the 
 world. Browser sends it only as `X-Briefcase-App-Secret`; the old Briefcase root-key
 header and 32-character credential are rejected. Ordinary shared-backend enrollment
 uses `briefcase_test_environment_key` / `SB_BRIEFCASE_TEST_KEY` for that same app secret.
-These existing names remain for compatibility. Import `tos>briefcase` into the
+These existing names remain for compatibility. Import `briefcase` into the
 Browser test world and use its returned `app_secret`; no separate legacy Briefcase
 root key is needed. These compatibility changes are covered with local HTTP fixtures;
 a new hosted recording walkthrough remains a separate check.
@@ -33,7 +33,7 @@ paid browser session. `BRIEFCASE_URL` alone is insufficient.
 Recording authorization requires the current IAM grants `self.identity.read`,
 `self.membership.read`, and the exact external endpoint grant
 `obo:<BRIEFCASE_APP_ID>:briefcase.files.create` (for example,
-`obo:tos>briefcase:briefcase.files.create`). IAM application approval and the
+`obo:briefcase:briefcase.files.create`). IAM application approval and the
 Carbon/Silicon's actual consent must authorize those grants for the selected
 organization. This release does not add permissions or consent automatically.
 Both the native scope and the corresponding identity/role disclosure must be

@@ -6,9 +6,12 @@ Browser commands execute on the caller's machine and connect directly to the rem
 
 ## Try the CLI
 
-For the six-platform Honeycomb package (`tos>browser`), including Windows and
+For the public identifier cutover and retained SQLite data, see
+[the migration procedure](docs/PUBLIC-IDENTIFIER-MIGRATION.md).
+
+For the six-platform Honeycomb package (`browser`), including Windows and
 bundled browser controllers, see [Honeycomb distribution](docs/HONEYCOMB.md).
-The application is public; install it with `honeycomb install 'tos>browser'`.
+After the identifier cutover, install the public application with `honeycomb install 'browser'`.
 
 Run this in a macOS or Linux terminal:
 
@@ -40,7 +43,7 @@ for telemetry, updates, and versioning limits.
 
 For installation without interactive setup, use `curl -fsSL https://raw.githubusercontent.com/unlikefraction/silicon-browser/managed-v0.2.4/scripts/install.sh | sh -s -- --no-setup`, then run `~/.local/bin/browser setup` when ready. You can also [download prebuilt binaries](https://github.com/unlikefraction/silicon-browser/releases/tag/managed-v0.2.4) or use `cargo install silicon-browser-cli --version 0.2.4 --locked` with Rust 1.98 or later. For a source checkout, use `cargo install --path crates/cli`.
 
-`browser login <SLT>` exchanges a short-lived IAM token; use `--org-id` when the IAM CLI token authorizes multiple workspaces. For example, `iam login --app-id 'tos>browser' --grant-org tos -o json | jq -r .slt` followed by `browser --org-id tos login '<SLT>'`. `browser login status --json` reports the current session, and `browser iam --json` prints the canonical application ID.
+`browser login <SLT>` exchanges a short-lived IAM token; use `--org-id` when the IAM CLI token authorizes multiple workspaces. For example, `iam login --app-id 'browser' --grant-org tos -o json | jq -r .slt` followed by `browser --org-id tos login '<SLT>'`. `browser login status --json` reports the current session, and `browser iam --json` prints the canonical application ID.
 
 The dashboard is live at [browser.teamofsilicons.com](https://browser.teamofsilicons.com). The CLI uses its production API by default. The published [Rust client](https://crates.io/crates/silicon-browser) is available with `cargo add silicon-browser@0.2.4`.
 
@@ -75,7 +78,7 @@ These requests use the backend's shared search-provider key pool, batching and f
 Recording discovery covers profiles, session actors, incognito runs and name/description metadata:
 
 ```sh
-browser recording ls --filter "profile:PROFILE_ID -> for:@silicon-id -> name:^research"
+browser recording ls --filter "profile:PROFILE_ID -> for:@si:assistant -> name:^research"
 browser recording ls --filter "is:incognito -> contains:checkout"
 ```
 
@@ -97,7 +100,7 @@ Create a Browser test app and actors in IAM, then enroll its `ask_` app secret:
 browser testing login --credentials-stdin < test-credentials.json
 
 # Use the environment UUID returned by enrollment on every test command.
-browser --test <environment-uuid> --org-id tos login worker:tos
+browser --test <environment-uuid> --org-id tos login si:worker
 browser --test <environment-uuid> login status --json
 browser --test <environment-uuid> testing status --json
 browser --test <environment-uuid> profile ls
@@ -105,7 +108,7 @@ browser --test <environment-uuid> profile ls
 
 `browser testing login` also reads `SB_TEST_APP_SECRET`. The app secret alone selects
 and verifies the IAM environment; an IAM root key is optional. Test login accepts
-an existing test actor ID such as `alice` or `worker:tos`, or an IAM test `oac_`
+an existing test actor ID such as `c:alice` or `si:worker`, or an IAM test `oac_`
 short-lived token. Production login still requires a short-lived token. See
 [`browser testing` configuration](docs/CLI.md#iam-test-environments) for optional keys
 and the full command flow.
@@ -113,7 +116,7 @@ and the full command flow.
 **Creating browser sessions requires a Briefcase test application secret and recording
 authorization.** Add `briefcase_test_environment_key` to the enrollment JSON, or
 set `SB_BRIEFCASE_TEST_KEY` when enrolling through environment variables. This is
-the `app_secret` returned when importing `tos>briefcase` into the same IAM test world:
+the `app_secret` returned when importing `briefcase` into the same IAM test world:
 `ask_` followed by 43 base64url characters, not a 32-character root key.
 Run `browser --test <environment-uuid> setup` to install/check the local controller
 and authorize a separate recording token family using the signed-in test actor.
@@ -208,7 +211,7 @@ This low-level auth harness targets a separately configured test backend;
 it does not enroll an environment or verify browser-provider sessions:
 
 ```sh
-slt=$(iam --test <environment-uuid> login --app-id 'tos>browser' --grant-org tos -o json | jq -r .slt)
+slt=$(iam --test <environment-uuid> login --app-id 'browser' --grant-org tos -o json | jq -r .slt)
 SB_TEST_BACKEND=https://browser-test.example SB_TEST_ORG=tos SB_TEST_SLT="$slt" \
   SB_TEST_CLI=/absolute/path/to/browser python3 scripts/test_live_auth.py
 ```
