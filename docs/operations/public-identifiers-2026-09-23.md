@@ -1,5 +1,7 @@
 # Public identifier cutover — 2026-09-23
 
+Historical 0.3.0 deployment record. The subsequent [0.3.1 release](browser-0.3.1-2026-09-24.md) supersedes the version and registry-publication status below.
+
 Browser 0.3.0 backend is live at `a3aac933708718110efbecde52012b85deb346dc`, executable SHA256 `9611f2161350e59750ee981ecbefa270b254636f76df3d009a2bcf45aa7f16f4`. Public health returned 200. The systemd service and backup timer are active; the durable current symlink selects `/opt/silicon-browser/releases/20260923-a3aac93-public-ids`. Prior release and configuration/key backups remain retained.
 
 A fresh frozen SQLite backup plus environment, mapping, manifest and units were independently verified offhost with AES256, length and SHA256 checks. After copy rehearsal, the offline converter verified the original complete database dump had not changed, mapped the 10 projections using IAM's authoritative subset and preserved every non-identity ledger field. Credentials were rebound using the existing key. SSM apply `3842ca4c-1da1-4c4a-bf1d-356e4ba90810` and activation `c6208a0e-b15e-4e4a-9438-5fb86a8e8ddc` succeeded. Only app-ID configuration fields changed; all other runtime secret values and environment bytes were retained.
