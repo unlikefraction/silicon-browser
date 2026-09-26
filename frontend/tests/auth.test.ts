@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { loginUrl, readEntry, requireLiveEnvironment, matchingCallback, IAM_AUTH_ORIGIN } from '../src/auth';
+import { loginUrl, readEntry, requireLiveEnvironment, liveOrganization, matchingCallback, IAM_AUTH_ORIGIN } from '../src/auth';
 
 test('IAM popup uses canonical application without an organization, with a nonce in callback', () => {
   const url = new URL(loginUrl('https://browser.teamofsilicons.com', 'random-nonce'));
@@ -12,6 +12,19 @@ test('callback credentials and live grant are stripped from displayed entry URL'
   assert.equal(callback.cleanPath, '/auth/callback'); assert.equal(callback.callback?.token, 'oac_private');
   const live = readEntry(new URL('https://browser.teamofsilicons.com/sessions/session%201/live#grant=private'));
   assert.deepEqual(live.pending, {id:'session 1',grant:'private'}); assert.equal(live.cleanPath, '/sessions/session%201/live');
+});
+test('live invitations open in their issuing organization among those one sign-in reaches', () => {
+  const entry = readEntry(new URL('https://browser.teamofsilicons.com/sessions/session-1/live#grant=private&org=tos'));
+  assert.deepEqual(entry.pending, { id: 'session-1', grant: 'private', orgId: 'tos' });
+  for (const org of ['', 'TOS', 'a/b', 'tos&org=bricks']) {
+    const invalid = readEntry(new URL(`https://browser.teamofsilicons.com/sessions/session-1/live#grant=private&org=${org}`));
+    assert.equal(invalid.pending, null); assert.match(invalid.error, /invalid organization/);
+  }
+  const reachable = [{ id: 'bricks', name: 'Bricks' }, { id: 'tos', name: 'Team of Silicons' }];
+  assert.deepEqual(liveOrganization(entry.pending!, 'bricks', reachable), { id: 'tos', name: 'Team of Silicons' });
+  assert.equal(liveOrganization(entry.pending!, 'tos', reachable), null);
+  assert.equal(liveOrganization({ id: 'session-1', grant: 'legacy' }, 'bricks', reachable), null);
+  assert.throws(() => liveOrganization(entry.pending!, 'bricks', [reachable[0]]), /belongs to organization tos/);
 });
 test('unrelated and malformed routes cannot create a live handoff', () => {
   for (const path of ['/other#grant=x', '/sessions/%zz/live#grant=x', '/sessions/id/live']) assert.equal(readEntry(new URL(`https://browser.teamofsilicons.com${path}`)).pending, null);

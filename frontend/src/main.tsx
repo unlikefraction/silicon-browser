@@ -7,7 +7,7 @@ import '@fontsource/ibm-plex-mono/latin-400.css';
 import './styles.css';
 import brandMark from './assets/mark.svg';
 import { BrowserApi, acceptAuth, publicError, safeHttps, segment, shellQuote, dateForApi, type TestingContext } from './api';
-import { readEntry, requireLiveEnvironment, completeCallback, signInPopup } from './auth';
+import { readEntry, requireLiveEnvironment, liveOrganization, completeCallback, signInPopup } from './auth';
 import { recordingRecovery } from './recordings';
 import { TabSession } from './session';
 import type { AuthSession, Organization, Profile, Session, Recording, Usage, UsageLimits, Location, Delivery, SessionLog } from './types';
@@ -119,7 +119,15 @@ function App() {
   async function enterWorkspace() {
     if (pendingLive) requireLiveEnvironment(pendingLive, testing()?.environment_id);
     await loadOrganizations();
-    if (pendingLive) { const link = pendingLive; pendingLive = null; await openLive(link.id, link.grant); }
+    if (pendingLive) {
+      const link = pendingLive, current = api.currentSession();
+      let target: Organization | null = null;
+      // Keep the invitation for Attach organization, but show the current organization's data.
+      try { target = current && liveOrganization(link, current.org.id, organizations()); }
+      catch (error) { await navigate('sessions'); throw error; }
+      if (current && target) { api.setSession({ ...current, org: target }); setAuth(api.currentSession()); }
+      pendingLive = null; await openLive(link.id, link.grant);
+    }
     else await navigate('sessions');
   }
   async function switchOrganization(next: Organization) {

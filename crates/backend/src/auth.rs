@@ -200,6 +200,10 @@ pub enum IdentityError {
     #[error("the authenticated principal is not authorized for this organization")]
     Forbidden,
 
+    /// A live token whose IAM sign-in selected no active organization membership.
+    #[error("the IAM sign-in authorized no organization")]
+    NoOrganization,
+
     #[error("identity capability is unavailable: {0:?}")]
     CapabilityUnavailable(IdentityCapability),
 
@@ -768,17 +772,17 @@ impl SiliconIamIdentityProvider {
         // Do not trust exchange metadata alone. Verify that IAM considers the
         // new OAT active in an organization already authorized by the SLT.
         let claims = self.introspect(&response.access_token, required_org_id).await?;
-        let org_id = required_org_id
-            .map(str::to_owned)
-            .or_else(|| response.org_id.clone())
-            .or_else(|| {
-                let mut organizations = organizations_from_claims(&claims, &self.app_id, Utc::now()).ok()?;
-                (organizations.len() == 1).then(|| organizations.remove(0).id)
-            })
-            .ok_or(IdentityError::Contract {
-                operation,
-                reason: "select an explicit organization when IAM authorizes zero or multiple organizations",
-            })?;
+        let org_id = match required_org_id.map(str::to_owned).or_else(|| response.org_id.clone()) {
+            Some(org_id) => org_id,
+            // IAM never binds a hosted-login token to one organization: it reaches every
+            // organization the user selected. Start in the lowest; `/orgs` lists the rest and
+            // each scoped request re-introspects with its own X-Org-ID.
+            None => organizations_from_claims(&claims, &self.app_id, Utc::now())?
+                .into_iter()
+                .next()
+                .map(|organization| organization.id)
+                .ok_or(IdentityError::NoOrganization)?,
+        };
         let selected_claims = if claims.org_id.as_deref() == Some(org_id.as_str()) {
             claims
         } else {
@@ -1793,6 +1797,111 @@ mod tests {
         unbound.membership_id = None;
         unbound.authorizations = Some(Vec::new());
         assert_eq!(organizations_from_claims(&unbound, APP, Utc::now()).unwrap(), Vec::<OrganizationAccess>::new());
+
+        assert_eq!(
+            organizations_from_claims(&unscoped_claims(&["tos", "bricks", "unlikefraction"]), APP, Utc::now()).unwrap(),
+            ["bricks", "tos", "unlikefraction"].map(|id| OrganizationAccess { id: id.into(), name: None }).to_vec()
+        );
+    }
+
+    /// Introspection of an unscoped token without X-Org-ID: one snapshot per selected organization.
+    fn unscoped_claims(orgs: &[&str]) -> TokenIntrospection {
+        let mut unscoped = claims();
+        let template = unscoped.authorization.take().unwrap();
+        unscoped.org_id = None;
+        unscoped.membership_id = None;
+        unscoped.authorizations = Some(
+            orgs.iter()
+                .map(|org| silicon_iam_client::models::ApplicationAuthorization {
+                    org_id: (*org).into(),
+                    membership_id: format!("si:silicon-1[{org}]"),
+                    ..template.clone()
+                })
+                .collect(),
+        );
+        unscoped
+    }
+
+    /// Introspection of the same token with `X-Org-ID: org`.
+    fn selected_claims(org: &str) -> TokenIntrospection {
+        let mut selected = claims();
+        selected.org_id = Some(org.into());
+        selected.membership_id = Some(format!("si:silicon-1[{org}]"));
+        let snapshot = selected.authorization.as_mut().unwrap();
+        snapshot.org_id = org.into();
+        snapshot.membership_id = format!("si:silicon-1[{org}]");
+        selected
+    }
+
+    async fn serve_iam(bodies: Vec<serde_json::Value>) -> (Url, tokio::task::JoinHandle<Vec<String>>) {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let base = Url::parse(&format!("http://{}", listener.local_addr().unwrap())).unwrap();
+        let server = tokio::spawn(async move {
+            let mut requests = Vec::new();
+            for body in bodies {
+                let (mut stream, _) = listener.accept().await.unwrap();
+                requests.push(read_request_head(&mut stream).await);
+                write_test_response(&mut stream, "200 OK", &[], &body.to_string()).await;
+            }
+            requests
+        });
+        (base, server)
+    }
+
+    /// IAM's hosted login never binds an SLT to one organization, and it keeps every
+    /// organization already authorized in the IAM session selected. Web login sends no
+    /// organization, so it must start somewhere instead of reporting an IAM contract failure.
+    #[tokio::test]
+    async fn unscoped_exchange_starts_in_the_lowest_selected_organization() {
+        let unscoped_token = json!({"access_token": oat('A'), "refresh_token": format!("ort_{}", "R".repeat(43)),
+            "token_type": "Bearer", "expires_in": 1800, "scope": "self.identity.read self.tags.read",
+            "actor": {"type": "silicon", "public_id": "si:silicon-1"}});
+        let mut drifted = unscoped_claims(&["tos", "bricks"]);
+        drifted.authorizations.as_mut().unwrap()[1].scopes.push("self.membership.read".into());
+        let cases: [(TokenIntrospection, Option<TokenIntrospection>, Result<&str, IdentityError>); 5] = [
+            (unscoped_claims(&["tos", "bricks", "unlikefraction"]), Some(selected_claims("bricks")), Ok("bricks")),
+            (unscoped_claims(&["tos"]), Some(selected_claims("tos")), Ok("tos")),
+            (unscoped_claims(&[]), None, Err(IdentityError::NoOrganization)),
+            (
+                TokenIntrospection { active: false, ..unscoped_claims(&["tos"]) },
+                None,
+                Err(IdentityError::Unauthenticated),
+            ),
+            (
+                drifted,
+                None,
+                Err(IdentityError::Contract {
+                    operation: "token introspection",
+                    reason: "authorization snapshot was absent or did not match the live token",
+                }),
+            ),
+        ];
+        for (listing, selected, expected) in cases {
+            let mut bodies = vec![unscoped_token.clone(), serde_json::to_value(listing).unwrap()];
+            bodies.extend(selected.map(|claims| serde_json::to_value(claims).unwrap()));
+            let request_count = bodies.len();
+            let (base, server) = serve_iam(bodies).await;
+            let provider =
+                SiliconIamIdentityProvider::from_parts(reqwest::Client::new(), base, APP.into(), "app-secret".into())
+                    .unwrap();
+            let result = provider
+                .exchange_short_lived_token(ExchangeRequest {
+                    short_lived_token: oac('C'),
+                    required_org_id: None,
+                    idempotency_key: "0123456789abcdef".into(),
+                })
+                .await
+                .map(|auth| auth.identity.org_id);
+            assert_eq!(result.as_deref().map_err(Clone::clone), expected);
+            let requests = server.await.unwrap();
+            assert_eq!(requests.len(), request_count);
+            assert!(requests[0].starts_with("POST /api/v1/app-auth/tokens "));
+            assert!(requests[1].starts_with("POST /api/v1/oauth/introspect "));
+            assert!(!requests[1].contains("x-org-id:"), "the organization listing must be unscoped");
+            if let Ok(org) = expected {
+                assert!(requests[2].contains(&format!("x-org-id: {org}\r\n")), "identity must be read in {org}");
+            }
+        }
     }
 
     #[test]

@@ -704,7 +704,12 @@ async fn resolve_identity(state: &AppState, principal: &PrincipalIdentity) -> Re
         || principal.public_id.as_deref().is_some_and(|id| id != principal.principal_id)
         || principal.membership_id != format!("{}[{}]", principal.principal_id, principal.org_id)
     {
-        return Err(ApiFailure::bad_gateway("iam_contract", "IAM returned an inconsistent actor or membership"));
+        return Err(ApiFailure::bad_gateway("iam_contract", "IAM returned an inconsistent actor or membership")
+            .with_diagnostic(FailureDiagnostic {
+                operation: Some("identity resolution"),
+                reason: Some("IAM returned an inconsistent actor or membership"),
+                ..Default::default()
+            }));
     }
     let principal_id = principal.principal_id.to_string();
     let projected = state
@@ -791,7 +796,10 @@ async fn refresh_auth(
     let exchanged = state
         .identity
         .refresh(RefreshRequest {
-            idempotency_key: stable_idempotency("refresh", &request.refresh_token, &request.org_id),
+            // IAM rotates the family regardless of organization; one retry key per token
+            // lets the same rotation replay under any selected organization instead of
+            // tripping refresh-token reuse detection.
+            idempotency_key: stable_idempotency("refresh", &request.refresh_token, "any-organization"),
             refresh_token: request.refresh_token,
             required_org_id: request.org_id,
         })
@@ -1240,9 +1248,12 @@ async fn live_session(
         // Fragments are never sent in HTTP requests. The authenticated web UI
         // can explicitly redeem this TTL-bounded grant later without putting a
         // provider URL or IAM bearer in browser history and access logs.
+        // The grant opens only in its issuing organization. One IAM sign-in can reach
+        // several, so the link names it for the web UI to select before redeeming.
         url: format!(
-            "{}/sessions/{session_id}/live#grant={grant}{}",
+            "{}/sessions/{session_id}/live#grant={grant}&org={}{}",
             state.public_origin,
+            url::form_urlencoded::byte_serialize(scope.org_id.as_bytes()).collect::<String>(),
             state.testing_environment.map(|id| format!("&test={id}")).unwrap_or_default()
         ),
         expires_at: session.expires_at,
@@ -2009,11 +2020,22 @@ async fn method_not_allowed() -> ApiFailure {
 pub struct ApiFailure {
     status: StatusCode,
     code: String,
-    message: String,
+    message: Box<str>,
     fields: Vec<FieldError>,
     details: BTreeMap<String, String>,
     retry_after_ms: Option<u64>,
     auth_rejected_before_handler: bool,
+    /// Server-log context only; never serialized into the response.
+    diagnostic: Option<Box<FailureDiagnostic>>,
+}
+
+/// Fixed strings and sanitized upstream identifiers that let an operator match a
+/// server failure's public request id to its cause. It never holds credentials.
+#[derive(Debug, Default)]
+struct FailureDiagnostic {
+    operation: Option<&'static str>,
+    reason: Option<&'static str>,
+    upstream_request_id: Option<String>,
 }
 
 impl ApiFailure {
@@ -2021,12 +2043,18 @@ impl ApiFailure {
         Self {
             status,
             code: code.into(),
-            message: message.into(),
+            message: message.into().into_boxed_str(),
             fields: Vec::new(),
             details: BTreeMap::new(),
             retry_after_ms: None,
             auth_rejected_before_handler: false,
+            diagnostic: None,
         }
+    }
+
+    fn with_diagnostic(mut self, diagnostic: FailureDiagnostic) -> Self {
+        self.diagnostic = Some(Box::new(diagnostic));
+        self
     }
 
     // Only extractor rejection proves that retrying a mutation cannot repeat
@@ -2074,7 +2102,7 @@ impl ApiFailure {
     fn into_api_error(self) -> ApiError {
         ApiError {
             code: self.code,
-            message: self.message,
+            message: self.message.into(),
             fields: self.fields,
             details: self.details,
             request_id: Some(Uuid::now_v7().to_string()),
@@ -2084,12 +2112,24 @@ impl ApiFailure {
 }
 
 impl IntoResponse for ApiFailure {
-    fn into_response(self) -> Response {
+    fn into_response(mut self) -> Response {
         let status = self.status;
         let retry_after_ms = self.retry_after_ms;
         let auth_rejected_before_handler = self.auth_rejected_before_handler;
+        let diagnostic = self.diagnostic.take().map(|diagnostic| *diagnostic).unwrap_or_default();
         let error = self.into_api_error();
         let request_id = error.request_id.clone().expect("API failures always carry a request id");
+        if status.is_server_error() {
+            tracing::warn!(
+                request_id = %request_id,
+                status = status.as_u16(),
+                code = %error.code,
+                operation = diagnostic.operation,
+                reason = diagnostic.reason,
+                upstream_request_id = diagnostic.upstream_request_id,
+                "API request failed"
+            );
+        }
         let mut response = (status, Json(ApiErrorEnvelope { error })).into_response();
         if let Ok(value) = HeaderValue::from_str(&request_id) {
             response.headers_mut().insert("x-request-id", value);
@@ -2112,13 +2152,18 @@ impl From<IdentityError> for ApiFailure {
         match error {
             IdentityError::Unauthenticated => Self::unauthenticated(),
             IdentityError::Forbidden => Self::forbidden("not authorized for this organization"),
+            IdentityError::NoOrganization => Self::new(
+                StatusCode::FORBIDDEN,
+                "organization_required",
+                "your IAM sign-in did not give Browser access to any organization; sign in again and choose at least one",
+            ),
             IdentityError::CapabilityUnavailable(_) => Self::new(
                 StatusCode::NOT_IMPLEMENTED,
                 "identity_capability_unavailable",
                 "IAM cannot provide that identity operation for this token",
             ),
             IdentityError::InvalidInput { field, reason } => Self::field(field, reason),
-            IdentityError::Rejected { status, code, .. } => {
+            IdentityError::Rejected { status, code, request_id } => {
                 let status = StatusCode::from_u16(status).unwrap_or(StatusCode::BAD_GATEWAY);
                 let public_status = match status {
                     StatusCode::UNAUTHORIZED => StatusCode::UNAUTHORIZED,
@@ -2127,20 +2172,27 @@ impl From<IdentityError> for ApiFailure {
                     _ => StatusCode::BAD_GATEWAY,
                 };
                 Self::new(public_status, "iam_rejected", format!("IAM rejected authentication ({code})"))
+                    .with_diagnostic(FailureDiagnostic { upstream_request_id: request_id, ..Default::default() })
             }
-            IdentityError::Upstream { kind, retry_after, .. } => {
+            IdentityError::Upstream { kind, retry_after, request_id } => {
                 let status = if kind == UpstreamFailure::RateLimited {
                     StatusCode::TOO_MANY_REQUESTS
                 } else {
                     StatusCode::SERVICE_UNAVAILABLE
                 };
-                let mut failure = Self::new(status, "iam_unavailable", "identity service is temporarily unavailable");
+                let mut failure = Self::new(status, "iam_unavailable", "identity service is temporarily unavailable")
+                    .with_diagnostic(FailureDiagnostic { upstream_request_id: request_id, ..Default::default() });
                 failure.retry_after_ms =
                     retry_after.map(|duration| duration.as_millis().min(u128::from(u64::MAX)) as u64);
                 failure
             }
-            IdentityError::Contract { .. } => {
+            IdentityError::Contract { operation, reason } => {
                 Self::new(StatusCode::BAD_GATEWAY, "iam_contract", "identity service returned an invalid response")
+                    .with_diagnostic(FailureDiagnostic {
+                        operation: Some(operation),
+                        reason: Some(reason),
+                        ..Default::default()
+                    })
             }
         }
     }
@@ -2953,6 +3005,42 @@ mod tests {
         )
         .await;
         assert_eq!(status, StatusCode::UNAUTHORIZED);
+    }
+
+    #[tokio::test]
+    async fn auth_exchange_without_any_selected_organization_is_actionable_not_an_iam_contract_failure() {
+        let fixture = fixture().await;
+        fixture.identity.fail_exchange("oac_single_use", "", IdentityError::NoOrganization);
+        let (status, _, body) = request(
+            &fixture.app,
+            "POST",
+            "/api/v1/auth/exchange",
+            None,
+            Some(json!({"short_lived_token":"oac_single_use"})),
+        )
+        .await;
+        assert_eq!(status, StatusCode::FORBIDDEN);
+        assert_eq!(serde_json::from_slice::<Value>(&body).unwrap()["error"]["code"], "organization_required");
+    }
+
+    #[test]
+    fn identity_failures_keep_public_errors_and_carry_only_fixed_diagnostics() {
+        let contract = ApiFailure::from(IdentityError::Contract { operation: "token introspection", reason: "why" });
+        assert_eq!((contract.status, contract.code.as_str()), (StatusCode::BAD_GATEWAY, "iam_contract"));
+        assert_eq!(&*contract.message, "identity service returned an invalid response");
+        let diagnostic = contract.diagnostic.as_ref().unwrap();
+        assert_eq!((diagnostic.operation, diagnostic.reason), (Some("token introspection"), Some("why")));
+
+        let rejected = ApiFailure::from(IdentityError::Rejected {
+            status: 422,
+            code: "invalid_request".into(),
+            request_id: Some("iam-request".into()),
+        });
+        assert_eq!(rejected.diagnostic.unwrap().upstream_request_id.as_deref(), Some("iam-request"));
+
+        let response = contract.into_response();
+        assert_eq!(response.status(), StatusCode::BAD_GATEWAY);
+        assert!(response.headers().contains_key("x-request-id"));
     }
 
     #[tokio::test]
@@ -3865,7 +3953,10 @@ mod tests {
         let public_live = data(&body)["url"].as_str().unwrap().to_owned();
         assert!(public_live.starts_with(&format!("https://browser.example/sessions/{}/live#grant=", session.id)));
         assert!(!public_live.contains("provider.invalid"));
-        let grant = public_live.split_once("#grant=").unwrap().1;
+        let fragment: HashMap<String, String> =
+            url::form_urlencoded::parse(public_live.split_once('#').unwrap().1.as_bytes()).into_owned().collect();
+        assert_eq!(fragment.get("org").map(String::as_str), Some("org-1"));
+        let grant = fragment["grant"].as_str();
 
         let (status, headers, body) = request(
             &fixture.app,
