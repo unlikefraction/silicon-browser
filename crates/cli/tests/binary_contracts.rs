@@ -152,6 +152,7 @@ fn write_response(stream: &mut TcpStream, response: StubResponse) {
     let reason = match response.status {
         200 => "OK",
         401 => "Unauthorized",
+        400 => "Bad Request",
         409 => "Conflict",
         503 => "Service Unavailable",
         status => panic!("unsupported stub status {status}"),
@@ -744,9 +745,13 @@ fn usage_session_filter_is_rejected_instead_of_silently_ignored() {
         .stderr(predicate::str::contains("cannot be used"));
 }
 
+fn consent_response(status: &str) -> Value {
+    json!({"data":{"authorization_id":"aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa","consent_url":"https://auth.iam.example/obo/consent","state":"a".repeat(64),"status":status,"expires_at":"2099-01-01T00:00:00Z"}})
+}
+
 #[cfg(unix)]
 #[test]
-fn setup_enrolls_a_separate_delivery_token_and_reuses_active_authorization() {
+fn setup_requires_separate_consent_then_reuses_active_authorization() {
     let root = tempfile::tempdir().unwrap();
     let home = root.path().join("state");
     let runner = root.path().join("bin");
@@ -758,36 +763,47 @@ fn setup_enrolls_a_separate_delivery_token_and_reuses_active_authorization() {
         StubResponse::json(200, identity.clone()),
         StubResponse::json(200, services.clone()),
         StubResponse::json(200, status("needs_auth", false)),
-        StubResponse::json(200, status("active", true)),
+        StubResponse::json(200, consent_response("pending")),
+        StubResponse::json(200, consent_response("completed")),
         StubResponse::json(200, identity),
         StubResponse::json(200, services),
         StubResponse::json(200, status("active", true)),
     ]);
-    let separate = "oac_delivery_single_use";
     isolated_sb(&home, &server.base_url)
         .env("PATH", &runner)
-        .env("SB_RECORDING_SLT", separate)
+        .env("SB_RECORDING_SLT", "oac_retired_must_not_be_consumed")
         .args(["--json", "setup"])
         .assert()
-        .success()
-        .stdout(predicate::str::contains("\"state\": \"active\""))
-        .stdout(predicate::str::contains(separate).not());
-    // A stale exported token must not be consumed again when authorization is already active.
+        .failure()
+        .stderr(predicate::str::contains("recording-access complete"))
+        .stdout(predicate::str::contains("ready:").not());
+    let code_file = root.path().join("approval");
+    fs::write(&code_file, "obc_fixture_code").unwrap();
     isolated_sb(&home, &server.base_url)
-        .env("PATH", &runner)
-        .env("SB_RECORDING_SLT", separate)
-        .args(["setup"])
+        .args([
+            "recording-access",
+            "complete",
+            "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+            "--code-file",
+            code_file.to_str().unwrap(),
+            "--state",
+            &"a".repeat(64),
+        ])
         .assert()
-        .success();
+        .success()
+        .stdout(predicate::str::contains("obc_fixture_code").not());
+    isolated_sb(&home, &server.base_url).env("PATH", &runner).args(["setup"]).assert().success();
     let requests = server.finish();
-    assert_eq!(requests.len(), 7);
-    assert_eq!(requests[3].method, "POST");
-    assert_eq!(requests[3].path, "/api/v1/auth/delivery");
-    assert_eq!(requests[3].json(), json!({"short_lived_token":separate}));
-    assert_eq!(requests[3].headers.get("authorization").unwrap(), "Bearer oat_binary_contract");
-    assert_eq!(requests[3].headers.get("x-org-id").unwrap(), "org-contract");
+    assert_eq!(requests.len(), 8);
+    assert_eq!(requests[3].path, "/api/v1/auth/delivery/authorizations");
+    assert_eq!(requests[3].json(), json!({}));
+    assert!(requests[3].headers.contains_key("idempotency-key"));
+    assert_eq!(requests[4].json(), json!({"code":"obc_fixture_code","state":"a".repeat(64)}));
+    assert_eq!(requests[4].headers["x-org-id"], "org-contract");
+    assert_eq!(requests[4].headers["authorization"], "Bearer oat_binary_contract");
     if let Ok(state) = fs::read_to_string(home.join("state.json")) {
-        assert!(!state.contains(separate));
+        assert!(!state.contains("obc_fixture_code"));
+        assert!(!state.contains("oac_retired"));
     }
 }
 
@@ -801,37 +817,41 @@ fn setup_reports_missing_delivery_authorization_without_claiming_ready() {
             200,
             json!({"data":{"configured":true,"enabled":false,"state":"needs_auth","actor_id":"si:actor"}}),
         ),
+        StubResponse::json(200, consent_response("pending")),
     ]);
     isolated_sb(&root.path().join("state"), &server.base_url)
         .args(["setup"])
         .assert()
         .failure()
-        .stderr(predicate::str::contains("SB_RECORDING_SLT"))
+        .stderr(predicate::str::contains("recording-access complete"))
         .stdout(predicate::str::contains("ready:").not());
-    assert_eq!(server.finish().len(), 3);
+    assert_eq!(server.finish().len(), 4);
 }
 
 #[cfg(unix)]
 #[test]
-fn test_setup_enrolls_recording_delivery_with_its_authenticated_actor() {
+fn testing_recording_consent_keeps_the_test_route_and_credentials() {
     let root = tempfile::tempdir().unwrap();
     let home = root.path().join("state");
     let runner = root.path().join("bin");
     install_fake_runner(&runner);
     let id = "11111111-1111-4111-8111-111111111111";
     let secret = format!("ask_{}", "S".repeat(43));
-    let status = |state: &str, enabled: bool| json!({"data":{"configured":true,"enabled":enabled,"state":state,"actor_id":"si:worker"}});
     let server = StubServer::start(vec![
         StubResponse::json(200, json!({"data":{"environment_id":id,"app_id":"browser","name":"Recording checks"}})),
         StubResponse::json(200, json!({"data":{"id":"si:worker","name":"Worker","kind":"silicon"}})),
         StubResponse::json(200, json!({"data":["recording_delivery"]})),
-        StubResponse::json(200, status("needs_auth", false)),
-        StubResponse::json(200, status("active", true)),
+        StubResponse::json(
+            200,
+            json!({"data":{"configured":true,"enabled":false,"state":"needs_auth","actor_id":"si:worker"}}),
+        ),
+        StubResponse::json(200, consent_response("pending")),
+        StubResponse::json(200, consent_response("completed")),
     ]);
     isolated_sb(&home, &server.base_url)
         .args(["testing", "login", "--credentials-stdin"])
         .write_stdin(
-            json!({"app_secret":secret,"briefcase_test_environment_key":format!("ask_{}", "B".repeat(43))}).to_string(),
+            json!({"app_secret":secret,"briefcase_test_environment_key":format!("ask_{}","B".repeat(43))}).to_string(),
         )
         .assert()
         .success();
@@ -839,14 +859,33 @@ fn test_setup_enrolls_recording_delivery_with_its_authenticated_actor() {
         .env("PATH", &runner)
         .args(["--test", id, "--json", "setup"])
         .assert()
+        .failure()
+        .stderr(predicate::str::contains("recording-access complete"));
+    isolated_sb(&home, &server.base_url)
+        .args([
+            "--test",
+            id,
+            "recording-access",
+            "complete",
+            "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+            "--code-file",
+            "-",
+            "--state",
+            &"a".repeat(64),
+        ])
+        .write_stdin("obc_test_code")
+        .assert()
         .success()
-        .stdout(predicate::str::contains("\"state\": \"active\"").and(predicate::str::contains(&secret).not()));
+        .stdout(predicate::str::contains(&secret).not());
     let requests = server.finish();
-    assert_eq!(requests[4].path, format!("/testing/{id}/api/v1/auth/delivery"));
-    assert_eq!(requests[4].json(), json!({"short_lived_token":"si:worker"}));
-    assert_eq!(requests[4].headers["authorization"], "Bearer oat_binary_contract");
-    assert_eq!(requests[4].headers["x-sb-test-app-secret"], secret);
-    assert_eq!(requests[4].headers["x-sb-test-briefcase-key"], format!("ask_{}", "B".repeat(43)));
+    assert_eq!(requests[4].path, format!("/testing/{id}/api/v1/auth/delivery/authorizations"));
+    assert_eq!(requests[4].json(), json!({}));
+    assert!(requests[4].headers.contains_key("idempotency-key"));
+    for r in [&requests[4], &requests[5]] {
+        assert_eq!(r.headers["authorization"], "Bearer oat_binary_contract");
+        assert_eq!(r.headers["x-sb-test-app-secret"], secret);
+        assert_eq!(r.headers["x-sb-test-briefcase-key"], format!("ask_{}", "B".repeat(43)));
+    }
 }
 
 #[test]
@@ -1136,4 +1175,57 @@ fn backend_override_never_reuses_another_issuers_stored_credentials() {
         serde_json::from_slice(&fs::read(partition_state(&home, "http://127.0.0.1:9")).unwrap()).unwrap();
     assert_eq!(original["access_token"], "oat_rejected");
     assert!(other.get("access_token").is_none());
+}
+
+#[test]
+fn recording_consent_retains_retry_key_and_bad_code_does_not_refresh_login() {
+    let root = tempfile::tempdir().unwrap();
+    let home = root.path().join("state");
+    let file = root.path().join("approval");
+    fs::write(&file, "obc_wrong").unwrap();
+    let server = StubServer::start(vec![
+        StubResponse::json(503, json!({"error":{"code":"upstream","message":"Retry same request"}})),
+        StubResponse::json(200, consent_response("pending")),
+        StubResponse::json(
+            400,
+            json!({"error":{"code":"invalid_recording_consent","message":"Invalid approval code"}}),
+        ),
+        StubResponse::json(200, consent_response("completed")),
+    ]);
+    let key = "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee";
+    isolated_sb(&home, &server.base_url)
+        .args(["recording-access", "start", "--idempotency-key", key])
+        .assert()
+        .failure();
+    isolated_sb(&home, &server.base_url)
+        .args(["recording-access", "start", "--idempotency-key", key])
+        .assert()
+        .success();
+    let args = [
+        "recording-access",
+        "complete",
+        "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+        "--code-file",
+        file.to_str().unwrap(),
+        "--state",
+        &"a".repeat(64),
+    ];
+    isolated_sb(&home, &server.base_url)
+        .args(args)
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("Invalid approval code"));
+    fs::write(&file, "obc_correct").unwrap();
+    isolated_sb(&home, &server.base_url)
+        .args(args)
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("obc_correct").not());
+    let requests = server.finish();
+    assert_eq!(requests.len(), 4);
+    assert_eq!(requests[0].headers["idempotency-key"], key);
+    assert_eq!(requests[1].headers["idempotency-key"], key);
+    assert_eq!(requests[2].json()["code"], "obc_wrong");
+    assert_eq!(requests[3].json()["code"], "obc_correct");
+    assert!(requests.iter().all(|r| !r.path.ends_with("/refresh")));
 }

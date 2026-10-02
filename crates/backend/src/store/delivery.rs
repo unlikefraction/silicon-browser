@@ -185,6 +185,18 @@ impl Store {
             .bind(&claim.org_id).bind(&claim.actor_id).execute(&self.pool).await?.rows_affected() == 1)
     }
 
+    /// Pin the approved destination before the first network mutation. A later
+    /// reapproval cannot redirect an uncertain, already-published operation.
+    pub async fn bind_recording_destination(
+        &self,
+        claim: &RecordingDeliveryClaim,
+        org: &str,
+        actor: &str,
+    ) -> StoreResult<bool> {
+        Ok(sqlx::query("UPDATE recording_artifacts SET storage_org_id=?,storage_actor_id=? WHERE session_id=? AND kind=? AND lease_id=? AND state='working' AND (storage_org_id IS NULL OR (storage_org_id=? AND storage_actor_id=?))")
+            .bind(org).bind(actor).bind(&claim.session_id).bind(claim.kind.as_str()).bind(&claim.lease_id).bind(org).bind(actor).execute(&self.pool).await?.rows_affected()==1)
+    }
+
     pub async fn complete_recording_delivery(
         &self,
         claim: &RecordingDeliveryClaim,
@@ -192,7 +204,16 @@ impl Store {
         secrets: &SecretBox,
         now: DateTime<Utc>,
     ) -> StoreResult<bool> {
-        if entry.org_id != claim.org_id || entry.entry_type != "file" {
+        let selected_org: Option<String> = sqlx::query_scalar(
+            "SELECT storage_org_id FROM recording_artifacts WHERE session_id=? AND kind=? AND lease_id=?",
+        )
+        .bind(&claim.session_id)
+        .bind(claim.kind.as_str())
+        .bind(&claim.lease_id)
+        .fetch_optional(&self.pool)
+        .await?
+        .flatten();
+        if entry.org_id != selected_org.as_deref().unwrap_or(&claim.org_id) || entry.entry_type != "file" {
             return Err(StoreError::Invalid("recording receipt belongs to a different scope".into()));
         }
         let expected_name = match claim.kind {

@@ -86,9 +86,10 @@ accepts an actor ID in that environment or an IAM test `oac_` token.
 Production login continues to require a short-lived token.
 
 With test recording storage configured, `browser --test <environment-uuid> setup`
-authorizes background recording delivery as the authenticated test actor using
-its own IAM token family. `SB_RECORDING_SLT` can explicitly supply that actor ID
-or a fresh test SLT for the same actor. Production setup still requires a separate fresh SLT.
+starts separate recording consent in IAM. Open the returned approval URL, review
+the Briefcase account and organization, then complete it with the returned code.
+Keep `--test`, the account and organization unchanged throughout. A login SLT or
+an actor ID cannot serve as the approval code; `SB_RECORDING_SLT` is retired.
 
 Pass `--test` on every command. Test calls use the same API routes under
 `/testing/<environment-uuid>` and the same exchange/refresh flow. Credentials,
@@ -113,6 +114,7 @@ browser
 ├── session {new,ls,show,live,logs,sync,end}
 ├── run <session-id> <browser-command> [args...]
 ├── recording {ls,show,send,rm}
+├── recording-access {start,status,complete,disable}
 ├── usage {limits,ls,show}
 ├── search <query> --purpose <text>
 ├── fetch <url[,url...]> --purpose <text>
@@ -183,3 +185,29 @@ Install the CLI without authentication; then use `browser login` and `browser se
 ```sh
 curl -fsSL https://raw.githubusercontent.com/unlikefraction/silicon-browser/managed-v0.3.1/scripts/install.sh | sh -s -- --no-setup && export PATH="$HOME/.local/bin:$PATH"
 ```
+
+## Recording feature approval
+
+Sign-in and Briefcase recording approval are separate. `browser setup` shows the
+IAM approval page and requests a code through a masked prompt in an interactive
+terminal. In a script, it returns a clear pending-approval error and the request
+ID and state; it does not claim setup is ready. Approving storage never starts a
+paid browser session. Existing pending recording deliveries may resume.
+
+```sh
+browser --org-id tos recording-access start --idempotency-key YOUR_RETAINED_UUID
+browser --org-id tos recording-access status AUTHORIZATION_ID
+browser --org-id tos recording-access complete AUTHORIZATION_ID --state RETURNED_STATE --code-file /private/path/approval-code
+browser --org-id tos recording-access status
+```
+
+Use `--code-file -` to read the code from standard input. Do not pass it in argv or
+commit it. The start command prints its retry key before contacting the server;
+reuse it after a lost response. Completion binds to the exact code and original
+state, so an identical retry is safe and a corrected code is a separate attempt.
+An invalid approval code leaves your ordinary login intact. Access and refresh
+credentials stay encrypted on the backend and never appear in command output.
+
+`recording-access disable` erases Browser's local delegated credentials and stops
+its recording storage. Manage the underlying durable grant in IAM to revoke
+authority there. Ordinary account logout does not revoke the feature grant.

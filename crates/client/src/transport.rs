@@ -51,6 +51,10 @@ impl std::fmt::Debug for Response {
 /// Injectable transport keeps the package stateless and makes its exact HTTP contract testable.
 pub trait Transport: Send + Sync {
     fn send(&self, request: Request) -> Result<Response, Error>;
+    /// A mutation whose retry identity must reach the server unchanged.
+    fn send_idempotent(&self, _request: Request, _key: &str) -> Result<Response, Error> {
+        Err(Error::Local("this custom transport does not support idempotency headers".into()))
+    }
 
     /// Send an operation with a caller-selected finite end-to-end timeout. Existing custom
     /// transports remain compatible; transports with their own timeout controls should override
@@ -115,14 +119,15 @@ impl HttpTransport {
         self
     }
 
-    fn send_bounded(&self, request: Request, timeout: Duration) -> Result<Response, Error> {
-        read_response(self.response_with_recovery(request, timeout)?)
+    fn send_bounded(&self, request: Request, timeout: Duration, key: Option<&str>) -> Result<Response, Error> {
+        read_response(self.response_with_recovery(request, timeout, key)?)
     }
 
     fn response_with_recovery(
         &self,
         mut request: Request,
         timeout: Duration,
+        key: Option<&str>,
     ) -> Result<ureq::http::Response<ureq::Body>, Error> {
         let original = request.bearer.clone();
         let origin = url::Url::parse(&request.url)
@@ -142,7 +147,7 @@ impl HttpTransport {
                 request.bearer = Some(recovered.replacement.clone());
             }
         }
-        let response = self.perform(&request, timeout)?;
+        let response = self.perform(&request, timeout, key)?;
         if response.status().as_u16() == 401
             && response.headers().get("x-sb-auth-rejected").is_some_and(|value| value == "1")
             && request.bearer.is_some()
@@ -159,12 +164,17 @@ impl HttpTransport {
                     origin,
                 });
             request.bearer = Some(token);
-            return self.perform(&request, timeout);
+            return self.perform(&request, timeout, key);
         }
         Ok(response)
     }
 
-    fn perform(&self, request: &Request, timeout: Duration) -> Result<ureq::http::Response<ureq::Body>, Error> {
+    fn perform(
+        &self,
+        request: &Request,
+        timeout: Duration,
+        key: Option<&str>,
+    ) -> Result<ureq::http::Response<ureq::Body>, Error> {
         if let Some((base, _)) = &self.testing {
             let target = url::Url::parse(&request.url).map_err(|_| Error::Local("invalid request URL".into()))?;
             let path = target.path().to_ascii_lowercase();
@@ -183,21 +193,29 @@ impl HttpTransport {
         match request.method {
             Method::Get => {
                 let built = self.agent.get(&request.url).config().timeout_global(Some(timeout)).build();
-                self.headers(built, request).call()
+                self.headers(built, request, key).call()
             }
             Method::Post => {
                 let built = self.agent.post(&request.url).config().timeout_global(Some(timeout)).build();
-                self.headers(built, request).send_json(request.body.as_ref().unwrap_or(&Value::Null))
+                self.headers(built, request, key).send_json(request.body.as_ref().unwrap_or(&Value::Null))
             }
             Method::Patch => {
                 let built = self.agent.patch(&request.url).config().timeout_global(Some(timeout)).build();
-                self.headers(built, request).send_json(request.body.as_ref().unwrap_or(&Value::Null))
+                self.headers(built, request, key).send_json(request.body.as_ref().unwrap_or(&Value::Null))
             }
         }
         .map_err(|error| Error::Transport(redact_url(error.to_string(), &request.url)))
     }
 
-    fn headers<B>(&self, mut built: ureq::RequestBuilder<B>, request: &Request) -> ureq::RequestBuilder<B> {
+    fn headers<B>(
+        &self,
+        mut built: ureq::RequestBuilder<B>,
+        request: &Request,
+        key: Option<&str>,
+    ) -> ureq::RequestBuilder<B> {
+        if let Some(key) = key {
+            built = built.header("Idempotency-Key", key);
+        }
         if let Some(token) = &request.bearer {
             built = built.header("Authorization", format!("Bearer {token}"));
         }
@@ -218,12 +236,19 @@ impl HttpTransport {
 }
 
 impl Transport for HttpTransport {
+    fn send_idempotent(&self, request: Request, key: &str) -> Result<Response, Error> {
+        if !(16..=255).contains(&key.len()) || !key.bytes().all(|b| b.is_ascii_graphic()) {
+            return Err(Error::Local("invalid idempotency key".into()));
+        }
+        self.send_bounded(request, DEFAULT_REQUEST_TIMEOUT, Some(key))
+    }
+
     fn send(&self, request: Request) -> Result<Response, Error> {
-        self.send_bounded(request, DEFAULT_REQUEST_TIMEOUT)
+        self.send_bounded(request, DEFAULT_REQUEST_TIMEOUT, None)
     }
 
     fn send_with_timeout(&self, request: Request, timeout: Duration) -> Result<Response, Error> {
-        self.send_bounded(request, timeout)
+        self.send_bounded(request, timeout, None)
     }
 }
 

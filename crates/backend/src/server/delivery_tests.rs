@@ -1,8 +1,22 @@
 use super::*;
+use crate::delivery_auth::obo::ENDPOINTS;
 use crate::providers::BriefcaseClient;
+use wiremock::{Mock, MockServer, ResponseTemplate, matchers::path};
 
-async fn configured_delivery_fixture() -> Fixture {
+fn pair(endpoint: &str, testing: bool) -> Value {
+    json!({"grant_id":Uuid::new_v4(),"token_id":Uuid::new_v4(),"access_token":format!("oba_{endpoint}"),"refresh_token":format!("obr_{endpoint}"),"token_type":"Bearer","expires_in":1800,"expires_at":"2099-01-01T00:00:00Z","audience":"briefcase","endpoint_id":endpoint,"org_id":"chosen-storage","actor":{"type":"silicon","public_id":"si:chosen"},"scope":"","testing_context":testing.then(||json!({"app_id":"briefcase","app_secret":format!("ask_{}","B".repeat(43)),"iam_test_key":"I".repeat(32)}))})
+}
+async fn configured_delivery_fixture() -> (Fixture, MockServer) {
     let mut fixture = fixture().await;
+    let iam = MockServer::start().await;
+    fixture.identity.allow_recording_client(
+        silicon_iam_client::Client::builder(&iam.uri())
+            .unwrap()
+            .credential(silicon_iam_client::Credential::application("browser", "test-secret"))
+            .build()
+            .unwrap(),
+        None,
+    );
     fixture.state = fixture
         .state
         .clone()
@@ -13,145 +27,206 @@ async fn configured_delivery_fixture() -> Fixture {
         )
         .unwrap();
     fixture.app = router(fixture.state.clone());
-    fixture
+    Mock::given(path("/api/v1/obo-access/tokens"))
+        .respond_with(|request: &wiremock::Request| {
+            let body: Value = serde_json::from_slice(&request.body).unwrap();
+            let endpoint = body["refresh_token"].as_str().unwrap_or("").strip_prefix("obr_").unwrap_or("");
+            if ENDPOINTS.contains(&endpoint) {
+                ResponseTemplate::new(200).set_body_json(json!({"items":[pair(endpoint,false)]}))
+            } else {
+                ResponseTemplate::new(400).set_body_json(json!({"error":{"code":"invalid_grant","message":"invalid"}}))
+            }
+        })
+        .mount(&iam)
+        .await;
+    (fixture, iam)
 }
-fn delivery_slt(letter: char) -> String {
-    format!("oac_{}", letter.to_string().repeat(43))
-}
-fn allow_delivery_exchange(fixture: &Fixture, slt: &str, identity: PrincipalIdentity) {
-    fixture.identity.allow_identity("oat_backend_delivery_secret", identity.clone());
-    fixture.identity.allow_exchange(
-        slt,
-        "org-1",
-        ExchangedAuth {
-            access_token: "oat_backend_delivery_secret".into(),
-            refresh_token: "ort_backend_delivery_secret".into(),
-            identity,
-            scope: "self.identity.read self.membership.read obo:briefcase:briefcase.files.create".into(),
-        },
+async fn seed_grant(fixture: &Fixture, expected: &PrincipalIdentity, testing: bool) {
+    let context = format!(
+        "recording-obo/{}/{}/{}/{}/tokens",
+        fixture.identity.recording_environment().map_or_else(|| "production".into(), |id| id.to_string()),
+        expected.org_id,
+        expected.principal_id,
+        expected.membership_id
     );
-}
-
-#[tokio::test]
-async fn stale_active_recording_grant_is_checked_before_any_paid_browser_is_created() {
-    let fixture = configured_delivery_fixture().await;
-    let expected = fixture.identity.identify("oat_owner", "org-1").await.unwrap();
-    let slt = delivery_slt('S');
-    allow_delivery_exchange(&fixture, &slt, expected);
-    assert_eq!(enroll_delivery(&fixture, "oat_owner", &slt).await.0, StatusCode::OK);
-    // A later IAM login can invalidate an existing family while our stored
-    // row still says active. The owned refresh is also rejected in this case.
-    fixture.identity.deny_identity("oat_backend_delivery_secret", "org-1");
-    fixture.identity.fail_refresh("ort_backend_delivery_secret", "org-1", IdentityError::Unauthenticated);
-    let (status, _, body) = request(
-        &fixture.app, "POST", "/api/v1/sessions", Some(("oat_owner", "org-1")),
-        Some(delivery_session_request()),
-    ).await;
-    assert_eq!(status, StatusCode::CONFLICT, "{}", String::from_utf8_lossy(&body));
-    assert_eq!(serde_json::from_slice::<Value>(&body).unwrap()["error"]["code"], "recording_authorization_required");
-    assert!(fixture.browser.state.lock().unwrap().browsers.is_empty());
-    let (status, _, body) = request(&fixture.app, "GET", "/api/v1/auth/delivery", Some(("oat_owner", "org-1")), None).await;
-    assert_eq!(status, StatusCode::OK);
-    assert_eq!(data(&body)["state"], "needs_auth");
-}
-
-#[tokio::test]
-async fn expired_recording_access_refreshes_its_owned_family_before_session_creation() {
-    let fixture = configured_delivery_fixture().await;
-    let expected = fixture.identity.identify("oat_owner", "org-1").await.unwrap();
-    let slt = delivery_slt('T');
-    allow_delivery_exchange(&fixture, &slt, expected.clone());
-    assert_eq!(enroll_delivery(&fixture, "oat_owner", &slt).await.0, StatusCode::OK);
-    sqlx::query("UPDATE delivery_credentials SET access_expires_at=0")
-        .execute(fixture.store.pool()).await.unwrap();
-    fixture.identity.allow_identity("oat_renewed_delivery", expected.clone());
-    fixture.identity.allow_refresh("ort_backend_delivery_secret", "org-1", ExchangedAuth {
-        access_token: "oat_renewed_delivery".into(), refresh_token: "ort_renewed_delivery".into(),
-        identity: expected, scope: "self.identity.read self.membership.read obo:briefcase:briefcase.files.create".into(),
-    });
-    let (status, _, body) = request(
-        &fixture.app, "POST", "/api/v1/sessions", Some(("oat_owner", "org-1")),
-        Some(delivery_session_request()),
-    ).await;
-    assert_eq!(status, StatusCode::OK, "{}", String::from_utf8_lossy(&body));
-    assert_eq!(fixture.browser.state.lock().unwrap().browsers.len(), 1);
-    let state: String = sqlx::query_scalar("SELECT state FROM delivery_credentials").fetch_one(fixture.store.pool()).await.unwrap();
-    assert_eq!(state, "active");
-}
-async fn enroll_delivery(fixture: &Fixture, bearer: &str, slt: &str) -> (StatusCode, Value) {
-    let (status, _, body) = request(
-        &fixture.app,
-        "POST",
-        "/api/v1/auth/delivery",
-        Some((bearer, "org-1")),
-        Some(json!({"short_lived_token":slt})),
+    let cipher = fixture
+        .state
+        .secrets
+        .seal_for(&context, &json!(ENDPOINTS.map(|endpoint| pair(endpoint, testing))).to_string())
+        .unwrap();
+    sqlx::query(
+        "INSERT INTO recording_obo_grants(org_id,principal_id,membership_id,actor_id,tokens_cipher) VALUES(?,?,?,?,?)",
     )
-    .await;
-    let raw = String::from_utf8_lossy(&body);
-    assert!(!raw.contains("oat_backend_delivery_secret"));
-    assert!(!raw.contains("ort_backend_delivery_secret"));
-    assert!(!raw.contains(slt));
-    (status, serde_json::from_slice(&body).unwrap())
+    .bind(&expected.org_id)
+    .bind(&expected.principal_id)
+    .bind(&expected.membership_id)
+    .bind(expected.public_id.as_deref().unwrap())
+    .bind(cipher)
+    .execute(fixture.store.pool())
+    .await
+    .unwrap();
 }
 fn delivery_session_request() -> Value {
     json!({"incognito":true,"name":"Delivery integration","description":"synthetic local test only","ttl":"15m"})
 }
-
-#[tokio::test]
-async fn delivery_routes_require_authentication_and_same_slt_replays_one_enrollment() {
-    let fixture = configured_delivery_fixture().await;
-    for (method, path, payload) in [
-        ("GET", "/api/v1/auth/delivery", None),
-        ("POST", "/api/v1/auth/delivery", Some(json!({"short_lived_token":delivery_slt('A')}))),
-        ("POST", "/api/v1/auth/delivery/end", None),
-    ] {
-        let (status, _, _) = request(&fixture.app, method, path, None, payload).await;
-        assert_eq!(status, StatusCode::UNAUTHORIZED);
-    }
-    let expected = fixture.identity.identify("oat_owner", "org-1").await.unwrap();
-    let slt = delivery_slt('A');
-    allow_delivery_exchange(&fixture, &slt, expected);
-    for _ in 0..2 {
-        let (status, value) = enroll_delivery(&fixture, "oat_owner", &slt).await;
-        assert_eq!(status, StatusCode::OK, "{value}");
-        assert_eq!(value["data"]["state"], "active");
-        assert_eq!(value["data"]["enabled"], true);
-    }
-    let count: i64 =
-        sqlx::query_scalar("SELECT count(*) FROM delivery_credentials").fetch_one(fixture.store.pool()).await.unwrap();
-    assert_eq!(count, 1);
-    let (status, _, body) =
-        request(&fixture.app, "GET", "/api/v1/auth/delivery", Some(("oat_owner", "org-1")), None).await;
-    assert_eq!(status, StatusCode::OK);
-    assert_eq!(data(&body)["actor_id"], "si:owner-1");
-    assert_eq!(data(&body)["enabled"], true);
-    let (status, _, body) =
-        request(&fixture.app, "POST", "/api/v1/auth/delivery/end", Some(("oat_owner", "org-1")), None).await;
-    assert_eq!(status, StatusCode::OK);
-    assert_eq!(data(&body)["enabled"], false);
-    assert_eq!(data(&body)["state"], "revoking");
+async fn consent_call(fixture: &Fixture, path: &str, body: Value) -> (StatusCode, Value) {
+    use tower::ServiceExt as _;
+    let response = fixture
+        .app
+        .clone()
+        .oneshot(
+            axum::http::Request::builder()
+                .method("POST")
+                .uri(path)
+                .header("authorization", "Bearer oat_owner")
+                .header("x-org-id", "org-1")
+                .header("idempotency-key", "browser-feature-consent-stable")
+                .header("content-type", "application/json")
+                .body(axum::body::Body::from(body.to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let status = response.status();
+    let bytes = axum::body::to_bytes(response.into_body(), 65536).await.unwrap();
+    (status, serde_json::from_slice(&bytes).unwrap())
 }
-
 #[tokio::test]
-async fn delivery_enrollment_rejects_another_principal_and_queues_only_that_new_family_for_revocation() {
-    let fixture = configured_delivery_fixture().await;
-    let wrong = fixture.identity.identify("oat_viewer", "org-1").await.unwrap();
-    let slt = delivery_slt('B');
-    allow_delivery_exchange(&fixture, &slt, wrong);
-    let (status, value) = enroll_delivery(&fixture, "oat_owner", &slt).await;
-    assert_eq!(status, StatusCode::FORBIDDEN, "{value}");
-    let row: (i64, String, String) = sqlx::query_as("SELECT enabled,state,operation FROM delivery_credentials")
+async fn feature_consent_is_explicit_bound_encrypted_and_bad_code_does_not_log_out() {
+    let (fixture, iam) = configured_delivery_fixture().await;
+    let id = Uuid::new_v4();
+    Mock::given(path("/api/v1/obo-access/authorizations")).respond_with(ResponseTemplate::new(201).set_body_json(json!({"id":id,"app_id":"browser","app_name":"Browser","actor":{"type":"silicon","public_id":"si:owner-1"},"org_id":"org-1","status":"pending","version":1,"expires_at":"2099-01-01T00:00:00Z","endpoints":[],"authorization_url":format!("{}/obo/consent?request={id}",iam.uri())}))).expect(1).mount(&iam).await;
+    let (status, started) = consent_call(&fixture, "/api/v1/auth/delivery/authorizations", json!({})).await;
+    assert_eq!(status, StatusCode::OK, "{started}");
+    assert_eq!(consent_call(&fixture, "/api/v1/auth/delivery/authorizations", json!({})).await.1, started);
+    assert!(!started.to_string().contains("oat_"));
+    let route = format!(
+        "/api/v1/auth/delivery/authorizations/{}/complete",
+        started["data"]["authorization_id"].as_str().unwrap()
+    );
+    let state = &started["data"]["state"];
+    let requests = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let captured = requests.clone();
+    Mock::given(path("/api/v1/obo-access/tokens"))
+        .respond_with(move |request: &wiremock::Request| {
+            let body: Value = serde_json::from_slice(&request.body).unwrap();
+            captured.lock().unwrap().push(request.headers["idempotency-key"].to_str().unwrap().to_owned());
+            if body["authorization_code"] == "obc_wrong" {
+                ResponseTemplate::new(401).set_body_json(json!({"error":{"code":"invalid_grant","message":"bad code"}}))
+            } else {
+                ResponseTemplate::new(200).set_body_json(json!({"items":ENDPOINTS.map(|endpoint|pair(endpoint,false))}))
+            }
+        })
+        .with_priority(1)
+        .expect(3)
+        .mount(&iam)
+        .await;
+    for _ in 0..2 {
+        let (status, error) = consent_call(&fixture, &route, json!({"code":"obc_wrong","state":state})).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        assert_eq!(error["error"]["code"], "invalid_recording_consent");
+    }
+    let (status, completed) = consent_call(&fixture, &route, json!({"code":"obc_correct","state":state})).await;
+    assert_eq!(status, StatusCode::OK, "{completed}");
+    assert_eq!(consent_call(&fixture, &route, json!({"code":"obc_correct","state":state})).await.1, completed);
+    {
+        let keys = requests.lock().unwrap();
+        assert_eq!(keys[0], keys[1]);
+        assert_ne!(keys[1], keys[2]);
+    }
+    let cipher: String = sqlx::query_scalar("SELECT tokens_cipher FROM recording_obo_grants")
         .fetch_one(fixture.store.pool())
         .await
         .unwrap();
-    assert_eq!(row, (0, "revoking".into(), "revoke".into()));
-    assert!(fixture.browser.state.lock().unwrap().browsers.is_empty());
+    assert!(!cipher.contains("obr_"));
+    assert!(!cipher.contains("oba_"));
+    let route = route.trim_end_matches("/complete");
+    assert_eq!(request(&fixture.app, "GET", route, Some(("oat_viewer", "org-1")), None).await.0, StatusCode::FORBIDDEN);
+    assert_eq!(request(&fixture.app, "GET", "/api/v1/me", Some(("oat_owner", "org-1")), None).await.0, StatusCode::OK);
+    assert_eq!(
+        request(
+            &fixture.app,
+            "POST",
+            "/api/v1/auth/delivery",
+            Some(("oat_owner", "org-1")),
+            Some(json!({"short_lived_token":"oac_legacy"}))
+        )
+        .await
+        .0,
+        StatusCode::GONE
+    );
 }
-
 #[tokio::test]
-async fn configured_session_start_requires_delivery_before_provider_creation_then_persists_identity_binding() {
-    let fixture = configured_delivery_fixture().await;
-    let (status, _, body) = request(
+async fn feature_consent_rejects_misbound_or_expired_iam_response_before_saving_it() {
+    for (field, invalid) in [
+        ("id", json!(Uuid::nil())),
+        ("app_id", json!("other-app")),
+        ("org_id", json!("other-org")),
+        ("actor", json!({"type":"silicon","public_id":"si:other"})),
+        ("actor", json!({"type":"carbon","public_id":"si:owner-1"})),
+        ("expires_at", json!("2000-01-01T00:00:00Z")),
+    ] {
+        let (fixture, iam) = configured_delivery_fixture().await;
+        let id = Uuid::new_v4();
+        let mut detail = json!({"id":id,"app_id":"browser","actor":{"type":"silicon","public_id":"si:owner-1"},"org_id":"org-1","status":"pending","version":1,"expires_at":"2099-01-01T00:00:00Z","endpoints":[],"authorization_url":format!("{}/obo/consent?request={id}",iam.uri())});
+        detail[field] = invalid;
+        Mock::given(path("/api/v1/obo-access/authorizations"))
+            .respond_with(ResponseTemplate::new(201).set_body_json(detail))
+            .expect(1)
+            .mount(&iam)
+            .await;
+        let (status, error) = consent_call(&fixture, "/api/v1/auth/delivery/authorizations", json!({})).await;
+        assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{field}: {error}");
+        let row: (Option<String>, Option<String>, String) =
+            sqlx::query_as("SELECT iam_id,consent_url,request_cipher FROM recording_obo_authorizations")
+                .fetch_one(fixture.store.pool())
+                .await
+                .unwrap();
+        assert_eq!(row.0, None, "{field}");
+        assert_eq!(row.1, None, "{field}");
+        assert!(!row.2.contains("oat_owner"));
+        let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM recording_obo_grants")
+            .fetch_one(fixture.store.pool())
+            .await
+            .unwrap();
+        assert_eq!(count, 0, "{field}");
+        assert_eq!(
+            request(&fixture.app, "GET", "/api/v1/me", Some(("oat_owner", "org-1")), None).await.0,
+            StatusCode::OK
+        );
+    }
+}
+#[tokio::test]
+async fn paid_session_revalidates_dedicated_storage_and_stops_on_revocation() {
+    let (fixture, iam) = configured_delivery_fixture().await;
+    let expected = fixture.identity.identify("oat_owner", "org-1").await.unwrap();
+    seed_grant(&fixture, &expected, false).await;
+    let auth = Some(("oat_owner", "org-1"));
+    assert_eq!(
+        request(&fixture.app, "POST", "/api/v1/sessions", auth, Some(delivery_session_request())).await.0,
+        StatusCode::OK
+    );
+    assert_eq!(fixture.browser.state.lock().unwrap().browsers.len(), 1);
+    iam.reset().await;
+    Mock::given(path("/api/v1/obo-access/tokens"))
+        .respond_with(
+            ResponseTemplate::new(401)
+                .set_body_json(json!({"error":{"code":"obo_access_token_invalid","message":"revoked"}})),
+        )
+        .expect(1)
+        .mount(&iam)
+        .await;
+    let (status, _, body) =
+        request(&fixture.app, "POST", "/api/v1/sessions", auth, Some(delivery_session_request())).await;
+    assert_eq!(status, StatusCode::CONFLICT, "{}", String::from_utf8_lossy(&body));
+    assert_eq!(fixture.browser.state.lock().unwrap().browsers.len(), 1);
+    let (_, _, body) = request(&fixture.app, "GET", "/api/v1/auth/delivery", auth, None).await;
+    assert_eq!(data(&body)["state"], "needs_auth");
+}
+#[tokio::test]
+async fn missing_feature_grant_is_not_a_login_failure() {
+    let (fixture, _iam) = configured_delivery_fixture().await;
+    let (status, headers, body) = request(
         &fixture.app,
         "POST",
         "/api/v1/sessions",
@@ -160,83 +235,23 @@ async fn configured_session_start_requires_delivery_before_provider_creation_the
     )
     .await;
     assert_eq!(status, StatusCode::CONFLICT, "{}", String::from_utf8_lossy(&body));
-    assert_eq!(serde_json::from_slice::<Value>(&body).unwrap()["error"]["code"], "recording_authorization_required");
+    assert!(headers.get("x-sb-auth-rejected").is_none());
     assert!(fixture.browser.state.lock().unwrap().browsers.is_empty());
-    let session_count: i64 =
-        sqlx::query_scalar("SELECT count(*) FROM sessions").fetch_one(fixture.store.pool()).await.unwrap();
-    assert_eq!(session_count, 0);
-    let expected = fixture.identity.identify("oat_owner", "org-1").await.unwrap();
-    let slt = delivery_slt('C');
-    allow_delivery_exchange(&fixture, &slt, expected.clone());
-    assert_eq!(enroll_delivery(&fixture, "oat_owner", &slt).await.0, StatusCode::OK);
-    let (status, _, body) = request(
+    let (status, headers, _) = request(
         &fixture.app,
         "POST",
         "/api/v1/sessions",
-        Some(("oat_owner", "org-1")),
+        Some(("oat_unknown", "org-1")),
         Some(delivery_session_request()),
     )
     .await;
-    assert_eq!(status, StatusCode::OK, "{}", String::from_utf8_lossy(&body));
-    assert_eq!(fixture.browser.state.lock().unwrap().browsers.len(), 1);
-    let binding: (Option<String>, Option<String>) =
-        sqlx::query_as("SELECT delivery_principal_id,delivery_membership_id FROM sessions WHERE id=?")
-            .bind(data(&body)["id"].as_str().unwrap())
-            .fetch_one(fixture.store.pool())
-            .await
-            .unwrap();
-    assert_eq!(binding, (Some(expected.principal_id.to_string()), Some(expected.membership_id.to_string())));
-    let mut replaced_membership = expected;
-    replaced_membership.membership_id = "si:owner-1[another-org]".into();
-    fixture.identity.allow_identity("oat_owner", replaced_membership);
-    let (status, _, body) = request(
-        &fixture.app,
-        "POST",
-        "/api/v1/sessions",
-        Some(("oat_owner", "org-1")),
-        Some(delivery_session_request()),
-    )
-    .await;
-    assert_eq!(status, StatusCode::BAD_GATEWAY, "{}", String::from_utf8_lossy(&body));
-    assert_eq!(serde_json::from_slice::<Value>(&body).unwrap()["error"]["code"], "iam_contract");
-    assert_eq!(fixture.browser.state.lock().unwrap().browsers.len(), 1);
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
+    assert_eq!(headers["x-sb-auth-rejected"], "1");
 }
-
-#[tokio::test]
-async fn inconsistent_actor_cannot_adopt_or_disable_historical_delivery_authority_through_http() {
-    let fixture = configured_delivery_fixture().await;
-    let old = fixture.identity.identify("oat_owner", "org-1").await.unwrap();
-    let slt = delivery_slt('D');
-    allow_delivery_exchange(&fixture, &slt, old.clone());
-    assert_eq!(enroll_delivery(&fixture, "oat_owner", &slt).await.0, StatusCode::OK);
-    let mut replacement = old.clone();
-    replacement.principal_id = "si:replacement".into();
-    replacement.membership_id = "si:replacement[org-1]".into();
-    fixture.identity.allow_identity("oat_replacement", replacement);
-    let auth = Some(("oat_replacement", "org-1"));
-    for (method, route, body) in [
-        ("GET", "/api/v1/auth/delivery", None),
-        ("POST", "/api/v1/sessions", Some(delivery_session_request())),
-        ("POST", "/api/v1/auth/delivery/end", None),
-    ] {
-        let (status, _, body) = request(&fixture.app, method, route, auth, body).await;
-        assert_eq!(status, StatusCode::BAD_GATEWAY, "{}", String::from_utf8_lossy(&body));
-    }
-    assert!(fixture.browser.state.lock().unwrap().browsers.is_empty());
-    let enabled: bool = sqlx::query_scalar("SELECT enabled FROM delivery_credentials WHERE principal_id=?")
-        .bind(old.principal_id.to_string())
-        .fetch_one(fixture.store.pool())
-        .await
-        .unwrap();
-    assert!(enabled);
-}
-
-async fn failed_retry_fixture(reason: &'static str) -> (Fixture, String) {
-    let fixture = configured_delivery_fixture().await;
+async fn failed_retry_fixture(reason: &'static str) -> (Fixture, String, wiremock::MockServer) {
+    let (fixture, iam) = configured_delivery_fixture().await;
     let expected = fixture.identity.identify("oat_owner", "org-1").await.unwrap();
-    let slt = delivery_slt('R');
-    allow_delivery_exchange(&fixture, &slt, expected);
-    assert_eq!(enroll_delivery(&fixture, "oat_owner", &slt).await.0, StatusCode::OK);
+    seed_grant(&fixture, &expected, false).await;
     let auth = Some(("oat_owner", "org-1"));
     let (status, _, body) =
         request(&fixture.app, "POST", "/api/v1/sessions", auth, Some(delivery_session_request())).await;
@@ -263,12 +278,12 @@ async fn failed_retry_fixture(reason: &'static str) -> (Fixture, String) {
         assert_eq!(claim.session_id, id);
         fixture.store.fail_recording_delivery(&claim, reason, now).await.unwrap();
     }
-    (fixture, id)
+    (fixture, id, iam)
 }
 
 #[tokio::test]
 async fn recording_retry_http_requires_owner_and_active_grant_then_preserves_claim_attempts() {
-    let (fixture, id) = failed_retry_fixture("delivery_attempts_exhausted").await;
+    let (fixture, id, _iam) = failed_retry_fixture("delivery_attempts_exhausted").await;
     let path = format!("/api/v1/recordings/{id}/retry");
     assert_eq!(request(&fixture.app, "POST", &path, None, None).await.0, StatusCode::UNAUTHORIZED);
     // Prove the viewer can see the exact recording but cannot write into its owner's Briefcase.
@@ -313,7 +328,7 @@ async fn recording_retry_http_rejects_historical_principal_or_membership_even_wi
         "UPDATE sessions SET delivery_principal_id=? WHERE id=?",
         "UPDATE sessions SET delivery_membership_id=? WHERE id=?",
     ] {
-        let (fixture, id) = failed_retry_fixture("recording_size_limit").await;
+        let (fixture, id, _iam) = failed_retry_fixture("recording_size_limit").await;
         // The current owner has an active grant, but this recording belongs to a previous
         // immutable IAM binding. A reused public identity is insufficient to adopt it.
         sqlx::query(query).bind(Uuid::new_v4().to_string()).bind(&id).execute(fixture.store.pool()).await.unwrap();
@@ -337,7 +352,7 @@ async fn recording_retry_http_rejects_historical_principal_or_membership_even_wi
 
 #[tokio::test]
 async fn recording_retry_http_keeps_permanent_source_failure_terminal() {
-    let (fixture, id) = failed_retry_fixture("native_recording_unavailable").await;
+    let (fixture, id, _iam) = failed_retry_fixture("native_recording_unavailable").await;
     let (status, _, body) =
         request(&fixture.app, "POST", &format!("/api/v1/recordings/{id}/retry"), Some(("oat_owner", "org-1")), None)
             .await;
@@ -346,13 +361,153 @@ async fn recording_retry_http_keeps_permanent_source_failure_terminal() {
 }
 
 #[tokio::test]
-async fn only_pre_handler_auth_rejections_permit_credential_refresh_and_retry() {
-    let fixture = configured_delivery_fixture().await;
-    let (status, headers, _) = request(&fixture.app, "POST", "/api/v1/sessions", Some(("oat_unknown", "org-1")), Some(delivery_session_request())).await;
-    assert_eq!(status, StatusCode::UNAUTHORIZED);
-    assert_eq!(headers.get("x-sb-auth-rejected").unwrap(), "1");
-    assert!(fixture.browser.state.lock().unwrap().browsers.is_empty());
-    let (status, headers, _) = request(&fixture.app, "POST", "/api/v1/auth/delivery", Some(("oat_owner", "org-1")), Some(json!({"short_lived_token":delivery_slt('Z')}))).await;
-    assert_eq!(status, StatusCode::UNAUTHORIZED);
-    assert!(headers.get("x-sb-auth-rejected").is_none(), "an exchange may have side effects; never retry this handler rejection automatically");
+async fn concurrent_refresh_survives_uncertain_response_and_ciphertext_cannot_cross_test_worlds() {
+    let (fixture, iam) = configured_delivery_fixture().await;
+    let expected = fixture.identity.identify("oat_owner", "org-1").await.unwrap();
+    let env = Uuid::new_v4();
+    let sdk = silicon_iam_client::Client::builder(&iam.uri())
+        .unwrap()
+        .credential(silicon_iam_client::Credential::application("browser", "test-secret"))
+        .build()
+        .unwrap()
+        .with_environment(silicon_iam_client::EnvironmentKey::new("T".repeat(32)).unwrap());
+    fixture.identity.allow_recording_client(sdk.clone(), Some(env));
+    let context = format!("recording-obo/{env}/org-1/{}/{}/tokens", expected.principal_id, expected.membership_id);
+    let expired = ENDPOINTS.map(|endpoint| {
+        let mut value = pair(endpoint, true);
+        value["expires_at"] = json!("2000-01-01T00:00:00Z");
+        value
+    });
+    let cipher = fixture.state.secrets.seal_for(&context, &json!(expired).to_string()).unwrap();
+    sqlx::query(
+        "INSERT INTO recording_obo_grants(org_id,principal_id,membership_id,actor_id,tokens_cipher) VALUES(?,?,?,?,?)",
+    )
+    .bind("org-1")
+    .bind(&expected.principal_id)
+    .bind(&expected.membership_id)
+    .bind("si:owner-1")
+    .bind(cipher)
+    .execute(fixture.store.pool())
+    .await
+    .unwrap();
+    let broker = crate::delivery_auth::DeliveryAuth::new(
+        fixture.store.clone(),
+        fixture.state.secrets.clone(),
+        Arc::new(fixture.identity.clone()),
+        "briefcase".into(),
+    );
+    iam.reset().await;
+    let keys = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let captured = keys.clone();
+    Mock::given(path("/api/v1/obo-access/tokens"))
+        .respond_with(move |request: &wiremock::Request| {
+            captured.lock().unwrap().push(request.headers["idempotency-key"].to_str().unwrap().to_owned());
+            ResponseTemplate::new(503).set_body_json(json!({"error":{"code":"unavailable","message":"lost response"}}))
+        })
+        .expect(1)
+        .mount(&iam)
+        .await;
+    assert!(
+        broker
+            .recording_tokens("org-1", "si:owner-1", &expected.principal_id, &expected.membership_id, false)
+            .await
+            .is_err()
+    );
+    assert!(
+        !sqlx::query_scalar::<_, bool>("SELECT needs_auth FROM recording_obo_grants")
+            .fetch_one(fixture.store.pool())
+            .await
+            .unwrap()
+    );
+    iam.reset().await;
+    let captured = keys.clone();
+    Mock::given(path("/api/v1/obo-access/tokens"))
+        .respond_with(move |request: &wiremock::Request| {
+            assert_eq!(request.headers["x-testing-environment-key"], "T".repeat(32));
+            captured.lock().unwrap().push(request.headers["idempotency-key"].to_str().unwrap().to_owned());
+            let body: Value = serde_json::from_slice(&request.body).unwrap();
+            let endpoint = body["refresh_token"].as_str().unwrap().strip_prefix("obr_").unwrap();
+            ResponseTemplate::new(200).set_body_json(json!({"items":[pair(endpoint,true)]}))
+        })
+        .with_priority(1)
+        .expect(3)
+        .mount(&iam)
+        .await;
+    let (one, two) = tokio::join!(
+        broker.recording_tokens("org-1", "si:owner-1", &expected.principal_id, &expected.membership_id, false),
+        broker.recording_tokens("org-1", "si:owner-1", &expected.principal_id, &expected.membership_id, false)
+    );
+    assert_eq!(one.unwrap().org_id, "chosen-storage");
+    assert_eq!(two.unwrap().actor_id, "si:chosen");
+    {
+        let keys = keys.lock().unwrap();
+        assert_eq!(keys.len(), 4);
+        assert_eq!(keys[0], keys[1]);
+    }
+    fixture.identity.allow_recording_client(sdk, Some(Uuid::new_v4()));
+    assert!(matches!(
+        broker.recording_tokens("org-1", "si:owner-1", &expected.principal_id, &expected.membership_id, false).await,
+        Err(crate::delivery_auth::DeliveryAuthError::Storage)
+    ));
+    assert!(matches!(
+        broker.recording_tokens("org-1", "si:owner-1", "other-principal", &expected.membership_id, false).await,
+        Err(crate::delivery_auth::DeliveryAuthError::NeedsAuthorization)
+    ));
+}
+
+#[tokio::test]
+async fn delayed_rejection_cannot_invalidate_a_replaced_approval() {
+    let (fixture, _iam) = configured_delivery_fixture().await;
+    let expected = fixture.identity.identify("oat_owner", "org-1").await.unwrap();
+    seed_grant(&fixture, &expected, false).await;
+    let broker = crate::delivery_auth::DeliveryAuth::new(
+        fixture.store.clone(),
+        fixture.state.secrets.clone(),
+        Arc::new(fixture.identity.clone()),
+        "briefcase".into(),
+    );
+    let old = broker
+        .recording_tokens("org-1", "si:owner-1", &expected.principal_id, &expected.membership_id, false)
+        .await
+        .unwrap();
+    // Simulate successful reapproval while the old provider request is in flight.
+    let replacement = ENDPOINTS.map(|endpoint| pair(endpoint, false));
+    let cipher = fixture
+        .state
+        .secrets
+        .seal_for(
+            &format!("recording-obo/production/org-1/{}/{}/tokens", expected.principal_id, expected.membership_id),
+            &json!(replacement).to_string(),
+        )
+        .unwrap();
+    sqlx::query("UPDATE recording_obo_grants SET tokens_cipher=?,credential_version='newly-approved',needs_auth=0")
+        .bind(cipher)
+        .execute(fixture.store.pool())
+        .await
+        .unwrap();
+    broker
+        .invalidate_storage("org-1", &expected.principal_id, &expected.membership_id, &old.credential_version)
+        .await
+        .unwrap();
+    assert!(
+        !sqlx::query_scalar::<_, bool>("SELECT needs_auth FROM recording_obo_grants")
+            .fetch_one(fixture.store.pool())
+            .await
+            .unwrap()
+    );
+    let current = broker
+        .recording_tokens("org-1", "si:owner-1", &expected.principal_id, &expected.membership_id, false)
+        .await
+        .unwrap();
+    assert_ne!(old.credential_version, current.credential_version);
+    broker
+        .invalidate_storage("org-1", &expected.principal_id, &expected.membership_id, &current.credential_version)
+        .await
+        .unwrap();
+    assert!(
+        sqlx::query_scalar::<_, bool>("SELECT needs_auth FROM recording_obo_grants")
+            .fetch_one(fixture.store.pool())
+            .await
+            .unwrap()
+    );
 }

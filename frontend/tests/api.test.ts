@@ -173,3 +173,9 @@ test('test invitations require matching verified context before exchange and tes
   assert.equal(calls, 3);
   api.close();
 });
+
+test('recording feature rejection preserves its code and does not refresh the login or replay session creation',async()=>{
+ let calls=0;const api=client(async()=>{calls++;return new Response(JSON.stringify({error:{code:'recording_authorization_required',message:'Approve storage before starting'}}),{status:409})});
+ await assert.rejects(api.call('/sessions','POST',{}),(error:unknown)=>{assert.equal((error as {code:string}).code,'recording_authorization_required');return true});
+ assert.equal(calls,1);assert.equal(api.currentSession()?.access_token,'oat_initial');
+});

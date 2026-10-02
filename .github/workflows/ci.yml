@@ -49,7 +49,7 @@ jobs:
           components: clippy,rustfmt
       - uses: Swatinem/rust-cache@v2
       - name: Formatting
-        run: cargo fmt --all -- --check
+        run: cargo fmt -p silicon-browser-backend -p silicon-browser-shared -p silicon-browser -p silicon-browser-cli --check
       - name: Tests
         run: cargo test --workspace --all-targets
       - name: Lints

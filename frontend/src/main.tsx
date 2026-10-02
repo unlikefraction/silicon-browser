@@ -6,9 +6,10 @@ import '@fontsource/ibm-plex-sans/latin-600.css';
 import '@fontsource/ibm-plex-mono/latin-400.css';
 import './styles.css';
 import brandMark from './assets/mark.svg';
-import { BrowserApi, acceptAuth, publicError, safeHttps, segment, shellQuote, dateForApi, type TestingContext } from './api';
+import { BrowserApi, ApiError, acceptAuth, publicError, safeHttps, segment, shellQuote, dateForApi, type TestingContext } from './api';
 import { readEntry, requireLiveEnvironment, completeCallback, signInPopup } from './auth';
 import { recordingRecovery } from './recordings';
+import { RecordingConsentFlow, type RecordingConsent } from './recording-consent';
 import { TabSession } from './session';
 import type { AuthSession, Organization, Profile, Session, Recording, Usage, UsageLimits, Location, Delivery, SessionLog } from './types';
 
@@ -55,6 +56,10 @@ function App() {
   const [total, setTotal] = createSignal<Usage>();
   const [limits, setLimits] = createSignal<UsageLimits>();
   const [delivery, setDelivery] = createSignal<Delivery>();
+  const [recordingConsent, setRecordingConsent] = createSignal<RecordingConsent>();
+  const recordingConsentFlow = new RecordingConsentFlow();
+  const resetRecordingConsent = () => { recordingConsentFlow.reset(); setRecordingConsent(undefined); };
+
   const [session, setSession] = createSignal<Session>();
   const [profile, setProfile] = createSignal<Profile>();
   const [liveUrl, setLiveUrl] = createSignal('');
@@ -70,7 +75,11 @@ function App() {
   async function perform(task: () => Promise<unknown>) {
     if (busy()) return;
     setBusy(true); setNotice('');
+    const originalApi = api, originalIdentity = auth()?.identity.id, originalOrg = auth()?.org.id;
     try { await task(); } catch (error) {
+      if (error instanceof ApiError && error.code === 'recording_authorization_required' && api === originalApi && auth()?.identity.id === originalIdentity && auth()?.org.id === originalOrg && api.currentSession()) {
+        try { setDelivery(await api.call<Delivery>('/auth/delivery')); } catch { setDelivery(undefined); }
+      }
       if (auth() && !api.currentSession()) logout();
       setNotice(publicError(error));
     } finally { setAuth(api.currentSession()); setBusy(false); }
@@ -107,7 +116,7 @@ function App() {
   async function login() {
     const token = await tokenFor();
     const result = acceptAuth(await api.request<AuthSession>('/auth/exchange', 'POST', { short_lived_token: token }, null));
-    api.setSession(result); setAuth(result);
+    resetRecordingConsent(); api.setSession(result); setAuth(result);
     await enterWorkspace();
   }
   async function loadOrganizations() {
@@ -125,6 +134,7 @@ function App() {
   async function switchOrganization(next: Organization) {
     const current = api.currentSession(); if (!current || current.org.id === next.id) return;
     const previous = current;
+    resetRecordingConsent();
     api.setSession({ ...current, org: next }); setAuth(api.currentSession());
     try { await api.call('/me'); await navigate(activeTab() as Tab); }
     catch (error) { api.setSession(previous); setAuth(previous); throw error; }
@@ -132,12 +142,12 @@ function App() {
   async function attachOrganizations() {
     const token = await tokenFor('organization access');
     const result = acceptAuth(await api.request<AuthSession>('/auth/exchange', 'POST', { short_lived_token: token }, null));
-    api.setSession(result); setAuth(result); await enterWorkspace();
+    resetRecordingConsent(); api.setSession(result); setAuth(result); await enterWorkspace();
     setNotice('Organization access updated.');
   }
   function clearWorkspace() {
     ++revision; setLiveUrl(''); setSession(undefined); setProfile(undefined); pendingLive = null;
-    setNotice(''); setLoading(false); setDelivery(undefined); setSessions([]); setProfiles([]); setRecordings([]); setUsage([]); setTotal(undefined); setLimits(undefined); setLogs([]); setOrganizations([]);
+    setNotice(''); setLoading(false); setDelivery(undefined); resetRecordingConsent(); setSessions([]); setProfiles([]); setRecordings([]); setUsage([]); setTotal(undefined); setLimits(undefined); setLogs([]); setOrganizations([]);
     setLocations([]); setView('sessions'); setFilter('');
     history.replaceState(null, '', '/');
   }
@@ -161,12 +171,26 @@ function App() {
     api.close(); api = productionApi; clearWorkspace(); setTesting(undefined); setShowTesting(false); setAuth(api.currentSession());
     if (api.currentSession()) await enterWorkspace();
   }
+  function recordingAccessAction() {
+    return <Show when={!recordingConsent()} fallback={<p class="fine">Complete the approval above, or cancel it to start again.</p>}>{button('Enable recording access', authorize, true)}</Show>;
+  }
   async function authorize() {
-    const current = auth(); if (!current) return;
-    const token = await tokenFor('recording access');
-    const result = await api.call<Delivery>('/auth/delivery', 'POST', { short_lived_token: token });
-    setDelivery(result);
-    setNotice('Recording access is ready. Your recordings will be saved after each session.');
+    if (!auth()) return;
+    const result = await recordingConsentFlow.start(() => api);
+    if (result.status === 'completed') {
+      resetRecordingConsent(); setDelivery(await api.call<Delivery>('/auth/delivery'));
+      setNotice('Recording access is already approved.'); return;
+    }
+    setRecordingConsent(result);
+    setNotice('Open the approval page, choose your Briefcase account and organization, then paste the returned code below.');
+  }
+  async function completeRecordingConsent(code: string) {
+    if (!recordingConsent()) return;
+    await recordingConsentFlow.complete(() => api, code);
+    setRecordingConsent(undefined);
+    setDelivery(await api.call<Delivery>('/auth/delivery'));
+    setNotice('Recording access is ready. Existing pending deliveries can resume; start a new browser session when you are ready.');
+    if (view() === 'recordings') await refreshRecordings();
   }
   async function refreshRecordings(ticket = revision, background = false) {
     if (background && recordingRefreshes) return;
@@ -179,7 +203,6 @@ function App() {
   async function reconnectRecording() {
     await authorize();
     await refreshRecordings();
-    setNotice('Recording access is ready. Pending recordings will resume delivery automatically.');
   }
   onMount(() => {
     if (restored && !pendingLive?.testEnvironmentId) void perform(enterWorkspace);
@@ -238,7 +261,7 @@ function App() {
       <div class="rail-label">WORKSPACE</div>
       <Show when={auth()} fallback={<p class="rail-note">A shared browser workspace for Carbons and Silicons.</p>}>
         <div class="rail-label org-label">ORGANIZATIONS</div>
-        <div class="org-list" aria-label="Organizations"><For each={organizations()}>{item => <button class="org-item" classList={{ selected: auth()?.org.id === item.id }} disabled={busy()} aria-current={auth()?.org.id === item.id ? 'page' : undefined} onClick={() => void perform(() => switchOrganization(item))}><span class="org-dot" aria-hidden="true">{item.name.slice(0, 1).toUpperCase()}</span><span>{item.name}</span></button>}</For><button class="org-add" disabled={busy()} title="Attach another organization" onClick={() => void perform(attachOrganizations)}><span aria-hidden="true">+</span><span>Attach organization</span></button></div>
+        <div class="org-list" aria-label="Organizations"><For each={organizations()}>{item => <button class="org-item" aria-label={`Switch to ${item.name}`} title={item.name} classList={{ selected: auth()?.org.id === item.id }} disabled={busy()} aria-current={auth()?.org.id === item.id ? 'page' : undefined} onClick={() => void perform(() => switchOrganization(item))}><span class="org-dot" aria-hidden="true">{item.name.slice(0, 1).toUpperCase()}</span><span>{item.name}</span></button>}</For><button class="org-add" disabled={busy()} title="Attach another organization" onClick={() => void perform(attachOrganizations)}><span aria-hidden="true">+</span><span>Attach organization</span></button></div>
         <div class="rail-label workspace-label">WORKSPACE</div>
         <nav aria-label="Workspace"><For each={tabs}>{tab => <button disabled={busy()} aria-current={activeTab() === tab ? 'page' : undefined} onClick={() => void perform(() => navigate(tab))}><span>{tab === 'settings' ? 'Settings' : tab[0].toUpperCase() + tab.slice(1)}</span><span aria-hidden="true">{activeTab() === tab ? '→' : ''}</span></button>}</For></nav>
       </Show>
@@ -248,6 +271,15 @@ function App() {
       <header class="topbar"><span class="breadcrumb">Browser <span>/</span> {showTesting() ? 'Testing environment' : auth() ? activeTab() : 'Welcome'}</span><div class="identity"><button class="quiet" disabled={busy()} aria-expanded={showTesting()} onClick={() => { setNotice(''); setShowTesting(!showTesting()); }}>Testing environment</button><Show when={auth()}>{current => <><span>{current().identity.name} <small>{current().org.id}</small></span><button class="quiet" disabled={busy()} onClick={logout}>Sign out</button></>}</Show></div></header>
       <main classList={{ 'live-main': view() === 'live' && !!auth() }}>
         <Show when={notice()}><div role="status" class="notice">{notice()}</div></Show>
+        <Show when={recordingConsent()}>{consent => <section class="panel form-panel" aria-label="Recording approval">
+          <h2>Approve Briefcase storage</h2><p>Choose where Browser may save recordings and command logs. This approval is separate from sign-in.</p>
+          <a class="button" href={consent().consent_url || undefined} target="_blank" rel="noopener noreferrer" referrerPolicy="no-referrer">Open IAM approval ↗</a>
+          <p class="fine">Expires {date(consent().expires_at)}. If you decline, no storage access is granted.</p>
+          <form autocomplete="off" onSubmit={event => {event.preventDefault(); const form=event.currentTarget; const code=String(new FormData(form).get('approval_code') || '').trim(); void perform(async()=>{await completeRecordingConsent(code);form.reset();});}}>
+            <label>Approval code<input name="approval_code" type="password" required maxlength={16384} autocomplete="off" spellcheck={false} placeholder="obc_…"/></label>
+            <div class="actions"><button class="primary" disabled={busy()}>Complete approval</button><button type="button" disabled={busy()} onClick={()=>{resetRecordingConsent();setNotice('');}}>Cancel</button></div>
+          </form>
+        </section>}</Show>
         <Show when={signingIn()}><div class="notice auth-wait" role="status"><span>Complete sign-in in the IAM window.</span><button onClick={() => signInAbort?.abort()}>Cancel sign-in</button></div></Show>
         <Show when={testing()}>{context => <div class="notice auth-wait" role="status"><span><strong>Test mode · {context().name}</strong><br/><span class="mono">{context().environment_id}</span><br/>Test credentials stay in memory and are cleared when you exit or reload.</span>{button('Exit test mode', exitTesting)}</div>}</Show>
         <Show when={testTokenRequest()}>{request => <form class="panel form-panel" autocomplete="off" onSubmit={event => { event.preventDefault(); const form = event.currentTarget; const token = String(new FormData(form).get('test_token') || '').trim(); if (!/^[^\s\x00-\x1f\x7f]{1,16384}$/.test(token)) { setNotice('Enter an existing IAM test actor ID or a test short-lived token without whitespace.'); return; } form.reset(); request().accept(token); }}>
@@ -263,7 +295,7 @@ function App() {
             <form autocomplete="off" onSubmit={event => { event.preventDefault(); const form = event.currentTarget; const data = new FormData(form); form.reset(); void perform(() => startTesting(data)); }}>
               <label>Browser test app secret<input name="app_secret" type="password" required maxlength={16384} autocomplete="off" spellcheck={false}/></label>
               <label>IAM test environment key (optional)<input name="iam_test_key" type="password" maxlength={16384} autocomplete="off" spellcheck={false}/><span class="fine">The test app secret selects the environment. Add its root key only when required by your setup.</span></label>
-              <label>Briefcase test environment key (optional)<input name="briefcase_test_environment_key" type="password" maxlength={16384} autocomplete="off" spellcheck={false}/><span class="fine">Required to create browser sessions and save recordings. Use the key paired with this IAM environment.</span></label>
+              <label>Briefcase test environment key (optional)<input name="briefcase_test_environment_key" type="password" maxlength={16384} autocomplete="off" spellcheck={false}/><span class="fine">Optional legacy configuration. Separate storage approval supplies the correct Briefcase testing context.</span></label>
               <label>Organization<input name="org" required maxlength={255} placeholder="tos" autocomplete="off" spellcheck={false}/></label>
               <label>Test actor ID or short-lived token<input name="token" type="password" required maxlength={16384} placeholder="c:alice, si:worker, or oac_…" autocomplete="off" spellcheck={false}/></label>
               <div class="actions"><button class="primary" disabled={busy()}>{busy() ? 'Verifying testing environment…' : 'Enter test mode'}</button><button type="button" disabled={busy()} onClick={() => setShowTesting(false)}>Cancel</button></div>
@@ -304,7 +336,7 @@ function App() {
           </Show>
           <Show when={view() === 'new-session'}>
             <div class="page-heading"><div><h1>{profile() ? `Start ${profile()!.name}` : 'New session'}</h1><p class="muted">{profile() ? 'Continue with your saved browser identity.' : 'A fresh browser with no saved profile.'}</p></div>{button('Back to sessions', () => navigate('sessions'))}</div>
-            <Show when={!ready()}><section class="panel form-panel"><h2>Save your recordings</h2><p>Allow Browser to save recordings in your Briefcase after the session ends. This separate authorization keeps delivery working when you close this tab.</p><Show when={delivery()?.configured} fallback={<p role="status">Recording access is being configured. Please try again shortly.</p>}>{button('Enable recording access', authorize, true)}</Show></section></Show>
+            <Show when={!ready()}><section class="panel form-panel"><h2>Save your recordings</h2><p>Allow Browser to save recordings in your Briefcase after the session ends. This separate authorization keeps delivery working when you close this tab.</p><Show when={delivery()?.configured} fallback={<p role="status">Recording access is being configured. Please try again shortly.</p>}>{recordingAccessAction()}</Show></section></Show>
             <form class="panel form-panel" onSubmit={event => submit(event, async data => { const selected = profile(); const created = await api.call<Session>('/sessions', 'POST', { name: String(data.get('name')).trim(), description: String(data.get('description')).trim(), ttl: data.get('ttl'), incognito: !selected, ...(selected ? { profile_id: selected.id } : {}) }); await detail(created.id); })}>
               <label>Session name<input name="name" required maxlength={120} placeholder="What are you working on?"/></label><label>Description<textarea name="description" required maxlength={2000} placeholder="A little context for you and your collaborators."/></label><label>Session length<select name="ttl"><For each={[15, 30, 45, 60, 120, 240]}>{minutes => <option value={`${minutes}m`}>{minutes} minutes</option>}</For></select></label><p class="fine">Usage starts when the browser opens. The session ends automatically at its time limit.</p><button class="primary" disabled={busy() || !ready()}>Start session</button>
             </form>
@@ -337,7 +369,7 @@ function App() {
             }}</For></div></Show>
           </Show>
           <Show when={view() === 'usage'}><div class="page-heading"><div><span class="eyebrow">WORKSPACE ACTIVITY</span><h1>Usage</h1><p class="muted">Browser time and network usage across your organization.</p></div>{button('Refresh', () => navigate('usage'))}</div><Show when={total()}>{sum => <div class="stats"><div><span>Browser time</span><strong>{(sum().browser_seconds / 60).toFixed(1)} <small>min</small></strong></div><div><span>Proxy traffic</span><strong>{bytes(sum().proxy_bytes_in + sum().proxy_bytes_out + (sum().proxy_bytes_unclassified || 0))}</strong></div><div><span>Organization total</span><strong>{cost(sum())}</strong></div></div>}</Show><Show when={limits()} fallback={<p class="muted">Service capacity is temporarily unavailable.</p>}>{capacity => <p class="muted"><strong>{capacity().concurrent_browser_limit} concurrent browsers</strong> · Shared service limit · Checked {date(capacity().checked_at)}</p>}</Show><div class="table-wrap"><table><thead><tr><th>Session</th><th>Browser time</th><th>Usage</th></tr></thead><tbody><For each={usage()}>{item => <tr><td class="mono">{item.session_id}</td><td>{(item.browser_seconds / 60).toFixed(1)} min</td><td>{cost(item)}</td></tr>}</For></tbody></table><Show when={!usage().length}><Empty>No session usage yet.</Empty></Show></div></Show>
-          <Show when={view() === 'settings'}><div class="page-heading"><div><h1>Settings</h1><p class="muted">Your identity and recording access.</p></div></div><section class="panel form-panel"><h2>Signed in</h2><dl><dt>Identity</dt><dd>{auth()?.identity.name}</dd><dt>Organization</dt><dd>{auth()?.org.id}</dd></dl><p class="fine">{testing() ? 'This test sign-in exists only in memory. Reload or exit test mode to clear it and return to production.' : 'You stay signed in when you refresh this tab. Sign out to clear this tab’s saved sign-in.'}</p></section><section class="panel form-panel"><div class="card-top"><h2>Recording access</h2><Show when={delivery()}><Badge state={delivery()!.state}/></Show></div><p>Browser saves recordings to your private Briefcase after sessions end, even when this tab is closed.</p><div class="actions"><Show when={ready()} fallback={button('Enable recording access', authorize, true)}>{button('Disable recording access', async () => { await api.call('/auth/delivery/end', 'POST'); await navigate('settings'); })}</Show>{button('Refresh status', () => navigate('settings'))}</div></section></Show>
+          <Show when={view() === 'settings'}><div class="page-heading"><div><h1>Settings</h1><p class="muted">Your identity and recording access.</p></div></div><section class="panel form-panel"><h2>Signed in</h2><dl><dt>Identity</dt><dd>{auth()?.identity.name}</dd><dt>Organization</dt><dd>{auth()?.org.id}</dd></dl><p class="fine">{testing() ? 'This test sign-in exists only in memory. Reload or exit test mode to clear it and return to production.' : 'You stay signed in when you refresh this tab. Sign out to clear this tab’s saved sign-in.'}</p></section><section class="panel form-panel"><div class="card-top"><h2>Recording access</h2><Show when={delivery()}><Badge state={delivery()!.state}/></Show></div><p>Browser saves recordings to your private Briefcase after sessions end, even when this tab is closed.</p><div class="actions"><Show when={ready()} fallback={recordingAccessAction()}>{button('Disable recording access', async () => { await api.call('/auth/delivery/end', 'POST'); await navigate('settings'); })}</Show>{button('Refresh status', () => navigate('settings'))}</div></section></Show>
           </Show>
         </Show>
         </Show>

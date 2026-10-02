@@ -21,7 +21,7 @@ curl -fsSL https://raw.githubusercontent.com/unlikefraction/silicon-browser/mana
 
 Since 0.2.4, the CLI command is `browser` (previously `sb`). Existing `SB_*` settings and saved authentication are reused.
 
-The installer detects Intel/x86-64 or ARM64, verifies the release SHA-256, installs `browser` into `~/.local/bin`, updates your shell's PATH, and runs interactive setup. Follow the prompts for a fresh IAM authorization token; choose an organization only when that token authorizes more than one. Setup checks recording delivery and installs the native browser controller. No Rust, Node/npm, local Chromium, or sudo is needed. Requires `curl`, `tar`, and `sha256sum` or `shasum`; Linux requires glibc 2.34 or later (Alpine/musl and 32-bit machines are not supported by this release). Running the command again reinstalls the pinned release and reruns setup.
+The installer detects Intel/x86-64 or ARM64, verifies the release SHA-256, installs `browser` into `~/.local/bin`, updates your shell's PATH, and runs interactive setup. Follow the prompts for an IAM login token bound to one account and organization. Setup separately requests Briefcase recording approval and installs the native browser controller. No Rust, Node/npm, local Chromium, or sudo is needed. Requires `curl`, `tar`, and `sha256sum` or `shasum`; Linux requires glibc 2.34 or later (Alpine/musl and 32-bit machines are not supported by this release). Running the command again reinstalls the pinned release and reruns setup.
 
 Then explore the commands:
 
@@ -119,8 +119,9 @@ set `SB_BRIEFCASE_TEST_KEY` when enrolling through environment variables. This i
 the `app_secret` returned when importing `briefcase` into the same IAM test world:
 `ask_` followed by 43 base64url characters, not a 32-character root key.
 Run `browser --test <environment-uuid> setup` to install/check the local controller
-and authorize a separate recording token family using the signed-in test actor.
-`SB_RECORDING_SLT` can instead supply a fresh Browser test SLT. Missing
+and approve recording access using IAM's separate consent page and returned code.
+Use `browser --test <environment-uuid> recording-access --help` for noninteractive
+start/status/complete commands. Login tokens cannot substitute for consent. Missing
 recording configuration fails explicitly; test recordings never use production
 Briefcase storage.
 

@@ -1,13 +1,13 @@
 //! Delivery orchestration: durable claims surround each external mutation.
 use super::*;
+use crate::delivery_auth::obo::ConsentComplete;
 use crate::{
-    auth::RecordingProofRequest,
     delivery_auth::{DeliveryAuth, DeliveryAuthError},
     providers::BriefcaseClient,
     recording_delivery::{DeliveryError, RecordingDelivery},
     store::{RecordingArtifactKind, RecordingDeliveryClaim},
 };
-use silicon_browser_shared::{DeliveryAuthorization, DeliveryAuthorizationRequest, DeliveryAuthorizationState};
+use silicon_browser_shared::{DeliveryAuthorization, DeliveryAuthorizationState};
 
 const MAX_ATTEMPTS: u32 = 8;
 const ITEM_BUDGET: Duration = Duration::from_secs(480);
@@ -16,7 +16,6 @@ pub(super) struct RecordingDeliveryServices {
     auth: DeliveryAuth,
     transfer: RecordingDelivery,
     issuer: String,
-    audience: String,
 }
 
 impl AppState {
@@ -37,7 +36,6 @@ impl AppState {
             auth: DeliveryAuth::new(self.store.clone(), self.secrets.clone(), self.identity.clone(), audience.clone()),
             transfer: RecordingDelivery::new(briefcase, self.browser.clone()),
             issuer,
-            audience,
         }));
         Ok(self)
     }
@@ -60,17 +58,18 @@ impl AppState {
         };
         let binding = delivery
             .auth
-            .validate_authorized_binding_for_principal(
+            .storage_binding(
                 &scope.org_id,
                 &scope.identity.id,
                 &scope.principal.principal_id.to_string(),
                 &scope.principal.membership_id.to_string(),
+                true,
             )
             .await?;
         if binding.0 != scope.principal.principal_id || binding.1 != scope.principal.membership_id {
             return Err(ApiFailure::conflict(
                 "recording_authorization_required",
-                "recording delivery needs a fresh SLT for this membership",
+                "recording delivery needs a Briefcase approval for this membership",
             ));
         }
         Ok(Some(binding))
@@ -119,7 +118,7 @@ impl AppState {
         };
         if !delivery
             .auth
-            .authorized_binding_for_principal(&claim.org_id, &claim.actor_id, principal, membership)
+            .storage_binding(&claim.org_id, &claim.actor_id, principal, membership, false)
             .await
             .is_ok_and(|binding| binding.0 == *principal && binding.1 == *membership)
         {
@@ -169,45 +168,55 @@ impl AppState {
             }
             return Ok(());
         }
-        let request = RecordingProofRequest {
-            expected_org_id: claim.org_id.clone(),
-            expected_actor_id: claim.actor_id.clone(),
-            audience: delivery.audience.clone(),
-            path: String::new(),
-            name: artifact.name.clone(),
-            content_type: artifact.content_type.into(),
-            body_sha256: artifact.body_sha256.clone(),
-            idempotency_key: format!("recording-{}-{}-{}", claim.session_id, claim.lease_id, claim.kind.as_str()),
-        };
-        let proof = match delivery.auth.issue_recording_proof_for_principal(principal, membership, request).await {
-            Ok(proof) => proof,
-            Err(DeliveryAuthError::NeedsAuthorization)
-            | Err(DeliveryAuthError::Identity(IdentityError::Unauthenticated | IdentityError::Forbidden)) => {
-                return self.retry_recording_delivery(&claim, "recording_authorization_required", false).await;
-            }
-            Err(DeliveryAuthError::Busy) => {
-                return self.retry_recording_delivery(&claim, "recording_authorization_refreshing", false).await;
-            }
-            Err(_) => return self.retry_recording_delivery(&claim, "recording_proof_unavailable", true).await,
-        };
+        let proof =
+            match delivery.auth.recording_tokens(&claim.org_id, &claim.actor_id, principal, membership, false).await {
+                Ok(proof) => proof,
+                Err(DeliveryAuthError::NeedsAuthorization)
+                | Err(DeliveryAuthError::Identity(IdentityError::Unauthenticated | IdentityError::Forbidden)) => {
+                    return self.retry_recording_delivery(&claim, "recording_authorization_required", false).await;
+                }
+                Err(DeliveryAuthError::Busy) => {
+                    return self.retry_recording_delivery(&claim, "recording_authorization_refreshing", false).await;
+                }
+                Err(_) => return self.retry_recording_delivery(&claim, "recording_proof_unavailable", true).await,
+            };
         if proof.expires_at <= Utc::now() + TimeDelta::seconds(5) {
             return self.retry_recording_delivery(&claim, "recording_proof_expired", true).await;
         }
         // Cancellation/lease checks immediately precede the single network mutation.
         if !delivery
             .auth
-            .authorized_binding_for_principal(&claim.org_id, &claim.actor_id, principal, membership)
+            .storage_binding(&claim.org_id, &claim.actor_id, principal, membership, false)
             .await
             .is_ok_and(|binding| binding.0 == *principal && binding.1 == *membership)
         {
             return self.retry_recording_delivery(&claim, "recording_authorization_required", false).await;
         }
+        if !self.store.bind_recording_destination(&claim, &proof.org_id, &proof.actor_id).await? {
+            return self.retry_recording_delivery(&claim, "recording_destination_changed", false).await;
+        }
         if !self.store.begin_recording_upload(&claim, Utc::now()).await? {
             return Ok(());
         }
-        match delivery.transfer.upload(artifact, &proof.grant, &claim.org_id, &delivery.issuer).await {
+        // One operation ID per immutable session artifact, independent of worker leases.
+        // Retrying a lost transfer/commit response reconciles the same reservation.
+        use sha2::Digest as _;
+        let digest = sha2::Sha256::digest(
+            format!("browser-recording/{}/{}/{}", claim.org_id, claim.session_id, claim.kind.as_str()).as_bytes(),
+        );
+        let operation_id = Uuid::from_slice(&digest[..16])
+            .map_err(|_| StoreError::Invalid("invalid recording operation identity".into()))?;
+        match delivery.transfer.upload_approved(artifact, &proof, &delivery.issuer, operation_id).await {
             Ok(receipt) => {
                 self.store.complete_recording_delivery(&claim, &receipt, &self.secrets, Utc::now()).await?;
+            }
+            Err(DeliveryError::Provider(ProviderError::Http { status: 401, .. })) => {
+                delivery
+                    .auth
+                    .invalidate_storage(&claim.org_id, principal, membership, &proof.credential_version)
+                    .await
+                    .map_err(|_| StoreError::Invalid("could not save recording permission status".into()))?;
+                self.retry_recording_delivery(&claim, "recording_authorization_required", false).await?;
             }
             Err(_) => self.retry_recording_delivery(&claim, "briefcase_upload_unconfirmed", true).await?,
         }
@@ -235,7 +244,7 @@ pub(super) async fn authorization_status(
     scope: Scope,
 ) -> Result<impl IntoResponse, ApiFailure> {
     let status = match &state.recording_delivery {
-        Some(delivery) => delivery.auth.live_status_for_principal(&scope.org_id, &scope.principal).await?,
+        Some(delivery) => delivery.auth.storage_status(&scope.org_id, &scope.principal).await?,
         None => DeliveryAuthorization {
             configured: false,
             enabled: false,
@@ -246,27 +255,71 @@ pub(super) async fn authorization_status(
     Ok(success(status))
 }
 
-pub(super) async fn authorize(
+pub(super) async fn authorize() -> ApiFailure {
+    ApiFailure::new(
+        StatusCode::GONE,
+        "feature_consent_required",
+        "Recording access requires separate Briefcase approval; start a delivery authorization.",
+    )
+}
+
+pub(super) async fn start_consent(
     State(state): State<AppState>,
     scope: Scope,
-    payload: Result<Json<DeliveryAuthorizationRequest>, JsonRejection>,
+    Bearer(bearer): Bearer,
+    headers: HeaderMap,
+    payload: Result<Json<serde_json::Value>, JsonRejection>,
 ) -> Result<impl IntoResponse, ApiFailure> {
-    let request = json_payload(payload)?;
-    if state.identity.is_testing() {
-        request.validate_testing().map_err(ApiFailure::validation)?;
-    } else {
-        request.validate().map_err(ApiFailure::validation)?;
+    let payload = json_payload(payload)?;
+    if payload != serde_json::json!({}) {
+        return Err(ApiFailure::new(StatusCode::BAD_REQUEST, "invalid_request", "Expected an empty object."));
     }
+    let key = required_header(&headers, "idempotency-key", "idempotency key is required")?;
     let delivery = state.recording_delivery.as_ref().ok_or_else(|| {
         ApiFailure::new(
             StatusCode::SERVICE_UNAVAILABLE,
             "recording_delivery_unavailable",
-            "recording delivery is not configured",
+            "Recording storage is not configured.",
         )
     })?;
-    let authorization = delivery.auth.enroll(&scope.org_id, &scope.principal, &request.short_lived_token).await?;
+    Ok((
+        [(http::header::CACHE_CONTROL, "no-store")],
+        success(delivery.auth.start_consent(&scope.org_id, &scope.principal, &bearer, &key).await?),
+    ))
+}
+pub(super) async fn consent_status(
+    State(state): State<AppState>,
+    scope: Scope,
+    Path(id): Path<String>,
+) -> Result<impl IntoResponse, ApiFailure> {
+    let delivery = state.recording_delivery.as_ref().ok_or_else(|| {
+        ApiFailure::new(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "recording_delivery_unavailable",
+            "Recording storage is not configured.",
+        )
+    })?;
+    Ok((
+        [(http::header::CACHE_CONTROL, "no-store")],
+        success(delivery.auth.consent_status(&scope.org_id, &scope.principal, &id).await?),
+    ))
+}
+pub(super) async fn complete_consent(
+    State(state): State<AppState>,
+    scope: Scope,
+    Path(id): Path<String>,
+    payload: Result<Json<ConsentComplete>, JsonRejection>,
+) -> Result<impl IntoResponse, ApiFailure> {
+    let delivery = state.recording_delivery.as_ref().ok_or_else(|| {
+        ApiFailure::new(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "recording_delivery_unavailable",
+            "Recording storage is not configured.",
+        )
+    })?;
+    let response = delivery.auth.complete_consent(&scope.org_id, &scope.principal, &id, json_payload(payload)?).await?;
     state.store.wake_recording_deliveries(&scope.org_id, &scope.identity.id, Utc::now()).await?;
-    Ok(success(authorization))
+    Ok(([(http::header::CACHE_CONTROL, "no-store")], success(response)))
 }
 
 pub(super) async fn disable_authorization(
@@ -280,7 +333,7 @@ pub(super) async fn disable_authorization(
             "recording delivery is not configured",
         )
     })?;
-    Ok(success(delivery.auth.disable_for_principal(&scope.org_id, &scope.principal).await?))
+    Ok(success(delivery.auth.disable_storage(&scope.org_id, &scope.principal).await?))
 }
 
 pub(super) async fn retry_recording(
@@ -328,6 +381,11 @@ impl From<DeliveryAuthError> for ApiFailure {
     fn from(value: DeliveryAuthError) -> Self {
         match value {
             DeliveryAuthError::Identity(error) => Self::from(error),
+            DeliveryAuthError::InvalidConsent => Self::new(
+                StatusCode::BAD_REQUEST,
+                "invalid_recording_consent",
+                "The approval code or state is invalid. Your sign-in remains active.",
+            ),
             DeliveryAuthError::NeedsAuthorization => Self::conflict(
                 "recording_authorization_required",
                 "Reconnect recording access to save your sessions in Briefcase.",

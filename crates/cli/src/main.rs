@@ -79,6 +79,8 @@ struct Cli {
 
 #[derive(Subcommand, Debug)]
 enum Command {
+    /// Manage separate Briefcase permission for recording delivery.
+    RecordingAccess(Service<RecordingAccessCommand>),
     /// Enroll and verify IAM test environments, isolated from production credentials.
     #[command(
         long_about = "Enroll an IAM test environment using explicit developer credentials.\n\n  browser testing login --credentials-stdin < test-credentials.json\n  browser --test <environment-uuid> login si:worker --org-id tos\n  browser --test <environment-uuid> testing status --json\n\nEvery ordinary command accepts --test. Production and each test environment keep separate credentials and browser state. Credentials JSON requires app_secret; iam_test_key and briefcase_test_environment_key are optional; keep this file private. Test keys are developer configuration; normal login still accepts only an IAM short-lived token."
@@ -250,6 +252,27 @@ struct RunArgs {
     /// Additional browser command arguments.
     #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
     flags: Vec<String>,
+}
+
+#[derive(Subcommand, Debug)]
+enum RecordingAccessCommand {
+    /// Start consent and print its URL. Reuse this key if the response is lost.
+    Start {
+        #[arg(long)]
+        idempotency_key: Option<String>,
+    },
+    /// Show current grant state or one pending consent request.
+    Status { authorization_id: Option<String> },
+    /// Redeem the IAM code from a private file, or stdin with '-'.
+    Complete {
+        authorization_id: String,
+        #[arg(long)]
+        code_file: std::path::PathBuf,
+        #[arg(long)]
+        state: String,
+    },
+    /// Disable background storage and erase its local credentials.
+    Disable,
 }
 
 #[derive(Subcommand, Debug)]
@@ -1000,7 +1023,7 @@ fn setup(
 fn setup_delivery_authorization(
     client: &Client,
     services: &[String],
-    testing: Option<&TestingCredentials>,
+    _testing: Option<&TestingCredentials>,
 ) -> Result<Option<DeliveryAuthorization>, Box<dyn std::error::Error>> {
     if !services.iter().any(|service| service == "recording_delivery") {
         return Ok(None);
@@ -1017,31 +1040,54 @@ fn setup_delivery_authorization(
     if matches!(current.state, DeliveryAuthorizationState::Pending | DeliveryAuthorizationState::Revoking) {
         return Err("recording authorization is being updated; retry `browser setup` after it finishes".into());
     }
-    let token = match std::env::var("SB_RECORDING_SLT").ok().filter(|value| !value.trim().is_empty()) {
-        Some(token) => token,
-        None if testing.is_some() => current.actor_id,
-        None if io::stdin().is_terminal() => rpassword::prompt_password(
-            "Fresh IAM oac_ token for background recording delivery (separate from CLI login): ",
-        )?,
-        None => return Err("recording delivery needs a separate fresh Browser IAM oac_ token; set SB_RECORDING_SLT and rerun `browser setup`, or rerun interactively. Do not reuse the CLI login token.".into()),
-    };
-    if testing.is_none() && !token.starts_with("oac_") {
-        return Err("SB_RECORDING_SLT must be a fresh IAM oac_ short-lived token for Browser".into());
+    let retry_key = uuid::Uuid::new_v4().to_string();
+    eprintln!("Recording approval retry key: {retry_key}");
+    let consent = client.start_recording_consent(&retry_key)?;
+    eprintln!("Approve recording storage: {}", consent.consent_url.as_deref().ok_or("missing approval URL")?);
+    eprintln!("Authorization: {}\nState: {}", consent.authorization_id, consent.state);
+    if !io::stdin().is_terminal() {
+        return Err("Complete approval using `browser recording-access complete <authorization-id> --code-file <private-file> --state <state>`, then rerun setup.".into());
     }
-    if token.starts_with("oac_") && environment_auth_token().as_deref() == Some(token.as_str()) {
-        return Err("recording delivery requires a different fresh oac_ token from SB_AUTHTOKEN; the CLI login token cannot be reused".into());
-    }
-    let request = DeliveryAuthorizationRequest { short_lived_token: token };
-    let enrolled = match testing {
-        Some(credentials) => client.authorize_delivery_testing(&request, credentials.clone())?,
-        None => client.authorize_delivery(&request)?,
-    };
-    if !enrolled.enabled
-        || !matches!(enrolled.state, DeliveryAuthorizationState::Active | DeliveryAuthorizationState::Refreshing)
-    {
-        return Err(format!("recording delivery authorization is {:?}; setup is not ready", enrolled.state).into());
-    }
+    let code = rpassword::prompt_password("IAM recording approval code (obc_): ")?;
+    client.complete_recording_consent(
+        &consent.authorization_id,
+        &RecordingConsentComplete { code: code.trim().into(), state: consent.state },
+    )?;
+    let enrolled = client.delivery_authorization()?;
     Ok(Some(enrolled))
+}
+
+fn recording_access(
+    client: &Client,
+    command: Option<RecordingAccessCommand>,
+    _json: bool,
+) -> Result<(), Box<dyn std::error::Error>> {
+    match command.unwrap_or(RecordingAccessCommand::Status { authorization_id: None }) {
+        RecordingAccessCommand::Start { idempotency_key } => {
+            let key = idempotency_key.unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
+            eprintln!("Retry key: {key}");
+            print_json(&client.start_recording_consent(&key)?)?;
+        }
+        RecordingAccessCommand::Status { authorization_id: Some(id) } => print_json(&client.recording_consent(&id)?)?,
+        RecordingAccessCommand::Status { authorization_id: None } => print_json(&client.delivery_authorization()?)?,
+        RecordingAccessCommand::Disable => print_json(&client.end_delivery_authorization()?)?,
+        RecordingAccessCommand::Complete { authorization_id, code_file, state } => {
+            let mut code = String::new();
+            if code_file.as_os_str() == "-" {
+                io::stdin().take(16385).read_to_string(&mut code)?;
+            } else {
+                std::fs::File::open(code_file)?.take(16385).read_to_string(&mut code)?;
+            }
+            if code.len() > 16384 {
+                return Err("approval code is too long".into());
+            }
+            print_json(&client.complete_recording_consent(
+                &authorization_id,
+                &RecordingConsentComplete { code: code.trim().into(), state },
+            )?)?;
+        }
+    }
+    Ok(())
 }
 
 fn setup_needs_initial_exchange(has_environment_token: bool, has_stored_token: bool, refresh_failed: bool) -> bool {
@@ -1172,6 +1218,7 @@ fn dispatch(
             }
         }
         Command::Recording(service) => recording(client, service.command, json)?,
+        Command::RecordingAccess(service) => recording_access(client, service.command, json)?,
         Command::Usage(service) => usage(client, service.command, json)?,
         Command::Search(args) => {
             let request = SearchRequest {

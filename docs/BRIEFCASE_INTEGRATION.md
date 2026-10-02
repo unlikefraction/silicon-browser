@@ -1,192 +1,115 @@
 # Briefcase recording delivery
 
-The backend now consumes durable recording work automatically. It copies Browser
-Use's existing native MP4 into the initiating member's private Briefcase and also
-uploads cooperatively reported command logs for Silicon-initiated sessions. It does not implement
-another browser recorder. This describes the current workspace implementation;
-the complete automatic flow passed the paired-sandbox live retest. This report
-makes no production deployment claim.
+This describes the October 2026 local consumer cutover. It is not a deployed
+release claim. Earlier live recording reports exercised the preceding proof
+protocol and do not validate this implementation.
 
-## Setup and credential ownership
+Browser copies its provider's existing native MP4 and, for Silicon initiators,
+cooperatively reported command logs. It does not introduce another recorder.
 
-Configure `BRIEFCASE_URL` and `BRIEFCASE_APP_ID` together, alongside Browser's IAM
-application credentials. Issuer and audience must be canonical application IDs.
-The issuer’s owning organization may differ from the client’s storage organization:
-for example, `browser` can deliver into an authorized `interface-client` workspace.
-Browser preserves the issuer in `X-App-ID` and the storage organization in `X-Org-ID`;
-IAM’s request-bound proof and Briefcase’s authorization still enforce the exact actor,
-organization, destination, bytes, and selected testing environment.
+## Separate feature approval
 
-In a server-wide test deployment, `IAM_TEST_ENVIRONMENT_KEY` is the 32-character
-IAM root key. `BRIEFCASE_TEST_ENVIRONMENT_KEY` must instead contain the imported
-Briefcase IAM application secret (`ask_` plus 43 base64url characters) from the same
-world. Browser sends it only as `X-Briefcase-App-Secret`; the old Briefcase root-key
-header and 32-character credential are rejected. Ordinary shared-backend enrollment
-uses `briefcase_test_environment_key` / `SB_BRIEFCASE_TEST_KEY` for that same app secret.
-These existing names remain for compatibility. Import `briefcase` into the
-Browser test world and use its returned `app_secret`; no separate legacy Briefcase
-root key is needed. These compatibility changes are covered with local HTTP fixtures;
-a new hosted recording walkthrough remains a separate check.
-The production backend entrypoint requires recording delivery before permitting a
-paid browser session. `BRIEFCASE_URL` alone is insufficient.
+Configure `BRIEFCASE_URL` and `BRIEFCASE_APP_ID` together with Browser's IAM
+application credentials and retain `SB_ENCRYPTION_KEY`. Ordinary login discloses
+IAM identity/membership information. It never grants Briefcase actions.
 
-Recording authorization requires the current IAM grants `self.identity.read`,
-`self.membership.read`, and the exact external endpoint grant
-`obo:<BRIEFCASE_APP_ID>:briefcase.files.create` (for example,
-`obo:briefcase:briefcase.files.create`). IAM application approval and the
-Carbon/Silicon's actual consent must authorize those grants for the selected
-organization. This release does not add permissions or consent automatically.
-Both the native scope and the corresponding identity/role disclosure must be
-present; Browser never fills in a missing membership role. Optional membership
-tags are disclosed only by `self.tags.read`; undisclosed tags remain absent.
-The old `obo.issue`, `memberships.read`, and `roles.read` aliases do not grant
-recording authority. IAM still independently enforces recipient approval,
-endpoint consent, current actor/membership epochs and exact signed request bytes.
+The website, Rust SDK, and `browser recording-access` commands start a separate
+approval request for `briefcase.uploads.reserve`, `briefcase.uploads.commit`, and
+`briefcase.entries.list`. The user opens IAM, chooses the Briefcase account and
+organization, approves, then supplies the returned one-use code. No paid browser
+session starts as a side effect of approval. `browser setup` offers the same
+manual-code flow. `SB_RECORDING_SLT` and the old delivery SLT endpoint are retired.
 
-The live selected OAT snapshot is rechecked without the metadata cache before a
-paid session starts or a recording is uploaded. Retried refresh exchanges are
-separate: IAM refresh introspection intentionally contains no authorization
-snapshot. Its verified current family binding can recover an ORT after an
-uncertain response, but cannot authorize a session or upload. Browser persists
-that family, stays in `refreshing`, and requires a fresh active OAT snapshot.
+The backend API uses the ordinary authenticated Browser account and `X-Org-ID`:
 
-The recipient catalog identifies the Briefcase application's owning organization,
-which must match its canonical app ID; it need not equal the client organization.
-The selected client organization remains mandatory in IAM introspection and the
-signed OBO exchange, and the upload remains bound to that organization and world.
-These authorization fixes have local HTTP/SQLite regression coverage. A hosted
-provider start, stop and recording receipt after this release require a separate
-manual verification.
+- `POST /api/v1/auth/delivery/authorizations`, body `{}`, and a 16–255 character
+  `Idempotency-Key`: create or resume the exact pending request.
+- `GET /api/v1/auth/delivery/authorizations/{id}`: read a request owned by that
+  exact account and membership.
+- `POST /api/v1/auth/delivery/authorizations/{id}/complete`, body `{code,state}`:
+  redeem and encrypt the approved credentials.
+- `GET /api/v1/auth/delivery`: inspect local grant status.
+- `POST /api/v1/auth/delivery/end`: disable local use and erase its credentials.
 
-`browser setup` first establishes the CLI login. Recording delivery needs a **second,
-fresh Browser-targeted IAM `oac_` token**, supplied through the masked prompt or
-`SB_RECORDING_SLT`. An already active delivery authorization is reused. Never reuse
-the consumed login SLT or share the CLI's refresh token with the worker.
+Responses use the normal `data` envelope. A pending/completed consent exposes
+`authorization_id`, `consent_url`, `state`, `status`, and `expires_at`; no access
+or refresh tokens reach the browser/CLI. A mistyped code returns
+`400 invalid_recording_consent` and keeps login valid. Correcting it uses a
+separate redemption retry identity; repeating the same code remains idempotent.
+Expired/withdrawn approval requires a fresh feature request, not another login.
 
-The backend exchanges the second SLT into its own application session, encrypts its
-OAT/ORT, serializes refresh, and persists pending exchange/rotation identity before
-network mutation. The job stores the initiating IAM principal and membership IDs;
-matching a public actor name is insufficient. Historical sessions without this
-binding are not silently adopted by a later authorization. Disabling delivery
-revokes the backend-owned family and prevents new uploads; an already in-flight
-write may still finish. The Rust client exposes authorization status, enrollment,
-and disable operations independently of the CLI.
+SQLite stores encrypted dedicated OBO pairs under account, organization,
+membership, and testing-context AAD. It serializes refresh and uses the old
+high-entropy refresh token's digest as the retry identity. Lost responses or a
+process restart repeat that same mutation. New paid sessions force IAM refresh
+validation first; a revoked grant stops them before provider creation. Recipient
+verification checks every downstream call again. Ordinary logout does not erase
+approval. Users can revoke the IAM grant through IAM's OBO management screen;
+Browser's local Disable control blocks pending/new work and erases its copy.
+Already in-flight work may complete.
 
-## Transfer lifecycle
+The consent request's IAM identifier, originating application/account/org and
+expiry must match before Browser saves its consent link. The chosen downstream
+provider account may differ after explicit approval. A delayed rejection of an
+older upload credential cannot disable a replacement approval.
 
-1. Session stop/expiry finalizes provider usage and queues native recording lookup.
-   Detail GET supplies a fresh presigned URL; `recordingAvailable: false` ends
-   unsuccessful readiness polling. Recording capture remains entirely upstream.
-2. Durable claims track video and command logs separately. Download resolution
-   rejects private addresses, pins public DNS results, follows no redirects, sends
-   no IAM/provider credentials, and streams into an anonymous private file.
-3. Completed local actions report command metadata separately; stdout/stderr never
-   enter this protocol. Silicon logs are serialized as JSONL with receipt sequence,
-   client timestamp, actor, command and exit code. Creating the command artifact
-   intent closes admission before the first page read. New late reports receive
-   `409 report_window_closed`; exact duplicate reports still return their receipt.
-   Logs are cooperative and can omit direct/offline activity. Interrupted rows from
-   the former server-controller implementation are frozen only for migration
-   compatibility. Carbon sessions do not create a command-log artifact.
-4. The worker hashes the complete staged file before issuing a fresh request-bound
-   IAM proof. It persists digest and size, rechecks ownership/cancellation, and
-   uploads the same file handle with explicit Content-Length.
-5. Verified receipts persist independently with encrypted links. A successful
-   receipt is not uploaded again. A recording is available once all required
-   artifacts are complete; an individual failure does not abandon the other
-   artifact. Existing video and log links remain independently represented.
+Migration `0009_recording_obo_consent.sql` disables legacy login-derived delivery
+families and queues their revocation. Existing ownership bindings, job claims,
+and verified receipts remain. No historical ordinary token becomes OBO consent.
 
-Stable names are `<session-id>.mp4` and `<session-id>-commands.jsonl`. The OBO proof
-uses an empty destination path: Briefcase chooses its private application folder.
-Browser persists the actual path from the receipt, rather than constructing remote
-folders. The public `briefcase_path` stays empty until a verified video receipt exists;
-legacy pending placeholders are also hidden.
+## Recording publication
 
-## Retry and size policy
+1. Session stop/expiry finalizes usage and queues provider recording lookup.
+   Source downloads reject private addresses, pin DNS results, follow no
+   redirects, and send no IAM/provider credentials. Files stage anonymously.
+2. Video and Silicon command-log work retain separate durable claims. Log intent
+   freezes report admission before reading pages; exact existing reports can
+   replay, but late new reports remain rejected. Carbon sessions have no log file.
+3. The worker hashes the exact file and persists digest/size. It obtains current
+   dedicated endpoint tokens, preserving the selected Briefcase actor/org. That
+   destination is pinned before the first upload so an uncertain write cannot be
+   redirected by a later approval.
+4. The official Briefcase SDK reserves a stable operation for the session/artifact
+   with empty relative parent, exact name, media type, size, and SHA-256. It
+   transfers the same open file using only the narrow staging capability, then
+   commits with the separately approved OBO endpoint token. The obsolete raw
+   `/api/v1/obo/files` route is never called.
+5. A retry repeats the same operation ID, recovers reserved/staged/committed state,
+   and resolves the published entry through the approved list endpoint. It checks
+   selected org, actor's app folder, origin app, name, media type, and size before
+   saving the encrypted receipt. Completed artifacts are not uploaded again.
 
-Transient transfer/proof failures receive bounded backoff, up to eight counted
-attempts. Waiting for authorization does not exhaust that budget. Expired leases
-can be reclaimed. Before another upload, newly staged bytes must match the already
-persisted digest and size; changed content is rejected.
+The destination is `apps/browser/private/<selected-public-id>/`; filenames are
+`<session-id>.mp4` and `<session-id>-commands.jsonl`. Recordings remain owned and
+visible in their original Browser organization even when stored in a different
+approved Briefcase organization. Reapproval to a different destination cannot
+silently move an already attempted artifact. Restore its original destination to
+resume it. `browser recording send` retries eligible failed artifacts without
+resetting successful receipts or accepting changed source bytes. Local hiding
+never deletes Briefcase files.
 
-After correcting an eligible exhausted outage, proof, timeout, or size-limit
-failure, the original initiator can run `browser recording send SESSION_ID`, or use
-the Rust client/UI retry action. An active delivery authorization and the same
-original IAM principal/membership are required. Retry preserves completed receipts
-and bound bytes. Permanent source failures and locally hidden recordings are not
-reset; repeating the request does not restart already active work.
+## Testing and release
 
-This is **at-least-once delivery**, not exactly-once storage. If Briefcase committed
-but its response was lost, another fresh proof may upload the same filename and
-bytes again, creating an identical extra version. A consumed proof is never
-replayed. The adapter itself does not automatically retry HTTP mutations.
+Shared testing routes authenticate Browser's test app secret before opening an
+isolated environment/generation database. The approved token response supplies
+Briefcase's imported app secret; no production fallback is allowed. Production
+and different testing worlds cannot decrypt each other's grant envelopes. IAM
+clean/credential rotation prevents retired generations from delivering.
 
-`SB_RECORDING_MAX_BYTES` defaults to **512 MiB per artifact**. Increasing it changes
-our bound, not Briefcase's limits or the proof deadline. The reusable adapter and
-standalone example retain their separate 64 MiB default unless explicitly
-configured. Staging is disk-backed; hashing uses a 64 KiB buffer. Download and
-upload requests have bounded deadlines; the worker also bounds each job.
+Local verification on 2026-10-03 passed 214 backend tests, a separate legacy
+schema-upgrade regression, 91 SDK/CLI tests, 39 frontend tests, the production
+frontend build and strict Rust lint. Synthetic desktop/mobile checks exercised
+wrong-code recovery, context switching, revoked approval and completion without
+automatically starting a paid session. The official Briefcase SDK wire suite
+passed 27 tests. The vendored IAM 5.0.0 client comes from the exact release commit recorded in
+`vendor/silicon-iam-client/VENDORED.md`. Briefcase client provenance is recorded
+in `vendor/briefcase-client/VENDORED.md`. These are coordinated release
+candidates until the runtime rollout and live checks complete.
 
-IAM proofs last at most 60 seconds. Briefcase stages the body before proof
-verification, so upload must finish within the remaining proof lifetime. A
-120-second HTTP deadline does not extend it. Slow transfer rejection was reproduced;
-see [the slow-upload report](BRIEFCASE_SLOW_UPLOAD_RETEST.md).
-
-`browser recording rm` hides the recording locally and cancels new pending delivery.
-It does not call OBO deletion, delete the remote Briefcase file, or assert a remote
-45-day trash guarantee. A late upload receipt is retained without making a hidden
-recording visible again. Briefcase owns remote retention and directory layout.
-
-## Validation and evidence boundaries
-
-Focused tests cover private-source rejection, transient DNS recovery, bounded
-streaming, exact JSONL preservation, proof/body binding, concurrent leases, stale
-receipts, independent artifacts, immutable retry digests, late command completion,
-local hiding, and original-owner authorization. Tests reproduced and fixed a
-command-log failure that blocked delayed native video resolution. Full workspace
-validation is reported separately after integration; old checkpoint test totals
-are not evidence for the final worker.
-
-The automatic flow now passed with real Carbon and Silicon browser sessions.
-Both used CLI setup with a separate delivery SLT. The Carbon completed a real form
-submission; the Silicon ran five commands and shared its live browser with a Carbon
-through the authenticated iframe, which recorded the viewer association. Both
-sessions were stopped, and all three artifacts completed on their first attempt.
-
-Recipient-side Briefcase CLI stat, version listing, and download checks passed:
-
-| Artifact | Downloaded size | Stored versions |
-| --- | ---: | ---: |
-| Carbon native video | 17,409,685 bytes | 1 |
-| Silicon native video | 12,827,907 bytes | 1 |
-| Silicon command JSONL | 622 bytes | 1 |
-
-Every downloaded SHA-256 matched its delivery digest. Both videos decoded as H.264
-at 1920×1080, with durations of 387.1 and 393.5 seconds. Exact hashes, timestamps,
-and fixture details are in [the automatic live retest](AUTOMATIC_RECORDING_LIVE_RETEST.md).
-This is bounded end-to-end verification, not prolonged load testing or a deployment.
-The external proof deadline and observed incognito-proxy discrepancy remain.
-
-Earlier explicit adapter tests also covered text, synthetic MP4, 300 MiB streaming,
-byte ranges, and deliberately slow proof expiry.
-[Adapter retest](BRIEFCASE_0_1_3_RETEST.md),
-[native feature evidence](BROWSER_USE_FEATURES.md),
-[external findings](BRIEFCASE_0_1_3_EXTERNAL_BUGS.md).
-
-## Explicit sandbox verification harness
-
-`crates/backend/examples/briefcase_upload.rs` remains a one-shot adapter harness.
-It requires the two sandbox keys, `IAM_APP_ID`, `IAM_APP_SECRET`,
-`BRIEFCASE_APP_ID`, `SB_AUTHTOKEN`, `SB_TEST_ORG`, `SB_TEST_ACTOR`,
-`SB_TEST_UPLOAD_FILE`, and `SB_TEST_UPLOAD_NAME`. Optional settings are
-`SB_TEST_UPLOAD_CONTENT_TYPE`, `SB_TEST_UPLOAD_MAX_BYTES`, `SILICON_IAM_URL`,
-and `BRIEFCASE_URL`. Inject secrets from private storage, not shell literals.
-
-```sh
-cargo run -p silicon-browser-backend --example briefcase_upload
-cargo run -p silicon-browser-backend --example briefcase_upload -- --proof-only
-```
-
-Proof-only mode requires the IAM sandbox and file/identity settings, omits the
-Briefcase sandbox requirement, and never uploads. It prints proof ID, expiry, and
-digest, not the opaque proof. This example is separate from automatic delivery.
+Apply IAM's complete new OBO migration set, including selected-provider metadata
+in `0140`, and deploy the matching Briefcase reservation/commit receiver and SDK.
+Register/approve the three endpoint definitions, import Briefcase into the same
+test world, and deploy Browser migration/API/website/CLI together. Verify one
+real Carbon and Silicon recording, cross-org selection, uncertain retry,
+revocation, and test clean after deployment. Local mock-provider/SQLite evidence
+does not prove paid provider compatibility, hosted storage, or production rollout.

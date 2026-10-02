@@ -37,3 +37,9 @@ test('a missing native recording cannot offer a retry that the server will rejec
   assert.equal(recovery.canReconnect, false);
   assert.match(recovery.message, /did not provide a recording/);
 });
+
+test('a changed recording destination asks its owner to restore the original context',()=>{
+ const owner=recordingRecovery({...pending,delivery_error:'recording_destination_changed'},'owner');
+ assert.equal(owner.canReconnect,true);assert.equal(owner.canRetry,false);assert.match(owner.message,/original Briefcase account and organization/);
+ const viewer=recordingRecovery({...pending,delivery_error:'recording_destination_changed'},'viewer');assert.equal(viewer.canReconnect,false);assert.match(viewer.message,/session owner/);
+});

@@ -580,6 +580,7 @@ fn api_middleware(router: Router, origin: HeaderValue) -> Router {
                 .allow_origin(origin)
                 .allow_methods([Method::GET, Method::POST, Method::PATCH])
                 .allow_headers([
+                    HeaderName::from_static("idempotency-key"),
                     AUTHORIZATION,
                     CONTENT_TYPE,
                     HeaderName::from_static("x-org-id"),
@@ -608,6 +609,9 @@ pub fn router(state: AppState) -> Router {
         .route("/api/v1/auth/exchange", post(exchange_auth))
         .route("/api/v1/auth/refresh", post(refresh_auth))
         .route("/api/v1/auth/delivery", get(delivery::authorization_status).post(delivery::authorize))
+        .route("/api/v1/auth/delivery/authorizations", post(delivery::start_consent))
+        .route("/api/v1/auth/delivery/authorizations/{id}", get(delivery::consent_status))
+        .route("/api/v1/auth/delivery/authorizations/{id}/complete", post(delivery::complete_consent))
         .route("/api/v1/auth/delivery/end", post(delivery::disable_authorization))
         .route("/api/v1/recordings/{session_id}/retry", post(delivery::retry_recording))
         .route("/api/v1/me", get(me))

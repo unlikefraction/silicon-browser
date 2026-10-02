@@ -1,9 +1,6 @@
-//! Briefcase's single-use, request-bound OBO upload endpoint.
-//!
-//! Destination path, name, and media type must already be bound into the IAM
-//! proof. This adapter sends only the exact raw bytes; it cannot select folders,
-//! obtain a proof, or replay an uncertain upload. It is deliberately separate
-//! from `ArtifactStore`, whose asynchronous delegation contract is not yet wired.
+//! Briefcase recording publication using separately approved reusable OBO tokens.
+//! Reservation binds exact metadata and bytes. The staging capability transfers
+//! bytes without IAM credentials, and commit rechecks current provider authority.
 
 use std::time::Duration;
 use tokio::io::{AsyncReadExt, AsyncSeekExt};
@@ -15,7 +12,7 @@ use url::Url;
 use uuid::Uuid;
 
 use super::artifact::OnBehalfOfGrant;
-use super::error::{ProviderError, ProviderResult, json_response_with_limit, transport};
+use super::error::{ProviderError, ProviderResult, transport};
 use crate::url_policy::is_https_or_loopback_http;
 
 const PROVIDER: &str = "briefcase";
@@ -24,12 +21,10 @@ pub const BRIEFCASE_OBO_ENDPOINT_ID: &str = "briefcase.files.create";
 /// Default bound for both byte and file uploads. Operators may explicitly
 /// configure a different bound; Briefcase's own limit is independent of this one.
 pub const DEFAULT_BRIEFCASE_UPLOAD_LIMIT: usize = 64 * 1024 * 1024;
-const MAX_RESPONSE_BYTES: usize = 1024 * 1024;
 const MAX_URL_BYTES: usize = 4096;
 
 #[derive(Clone)]
 pub struct BriefcaseClient {
-    http: reqwest::Client,
     endpoint: Url,
     testing_key: Option<HeaderValue>,
     max_upload_bytes: usize,
@@ -92,7 +87,7 @@ impl BriefcaseClient {
                 secret_header(value)
             })
             .transpose()?;
-        let http = reqwest::Client::builder()
+        let _http = reqwest::Client::builder()
             .user_agent(concat!("silicon-browser/", env!("CARGO_PKG_VERSION")))
             .connect_timeout(Duration::from_secs(10))
             .timeout(Duration::from_secs(120))
@@ -100,16 +95,14 @@ impl BriefcaseClient {
             .retry(reqwest::retry::never())
             .build()
             .map_err(|error| transport(PROVIDER, error))?;
-        Ok(Self { http, endpoint, testing_key, max_upload_bytes })
+        Ok(Self { endpoint, testing_key, max_upload_bytes })
     }
 
     pub fn max_upload_bytes(&self) -> usize {
         self.max_upload_bytes
     }
 
-    /// Compute the lowercase hexadecimal digest IAM must bind before upload.
-    /// Callers must bind POST, `BRIEFCASE_OBO_PATH`, and the destination metadata
-    /// while exchanging the proof, then pass these same unmodified bytes.
+    /// Compute the digest bound by the Briefcase upload reservation.
     pub fn body_sha256(&self, bytes: &[u8]) -> ProviderResult<String> {
         self.validate_size(bytes.len())?;
         Ok(hex::encode(Sha256::digest(bytes)))
@@ -144,100 +137,173 @@ impl BriefcaseClient {
         Ok((hex::encode(digest.finalize()), size))
     }
 
-    /// Stream the same immutable open file previously hashed for this proof.
-    /// An open handle avoids pathname substitution; callers must prevent writes.
+    /// Publish exact staged bytes under a stable reservation, then read the committed receipt.
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "checks the exact immutable artifact fields and selected authority together"
+    )]
+    pub async fn upload_recording(
+        &self,
+        app_id: &str,
+        operation_id: Uuid,
+        tokens: &crate::delivery_auth::obo::RecordingTokens,
+        name: &str,
+        content_type: &str,
+        digest: &str,
+        file: tokio::fs::File,
+        size: u64,
+    ) -> ProviderResult<BriefcaseEntry> {
+        use briefcase_client::{
+            ApplicationId, Client, Config, DelegatedCommitUpload, DelegatedListEntries, DelegatedReserveUpload,
+            DelegatedUploadState, EnvironmentKey, OboProof,
+        };
+        use secrecy::ExposeSecret as _;
+        if size > self.max_upload_bytes as u64
+            || silicon_browser_shared::app_id(app_id, "app_id").is_err()
+            || tokens.expires_at <= chrono::Utc::now()
+        {
+            return Err(invalid("invalid recording upload authority or size"));
+        }
+        let metadata = file.metadata().await.map_err(|_| invalid("could not inspect staged recording"))?;
+        if !metadata.is_file() || metadata.len() != size {
+            return Err(invalid("staged recording length changed"));
+        }
+        let mut base = self.endpoint.clone();
+        base.set_path("/api/v1/");
+        let mut config = Config::new(base.as_str(), &tokens.org_id)
+            .map_err(|_| invalid("invalid Briefcase configuration"))?
+            .with_auto_update(false)
+            .with_transfer_timeout(Duration::from_secs(120));
+        if let Some(key) = &tokens.testing_secret {
+            config = config.with_environment(
+                EnvironmentKey::new(key.expose_secret()).map_err(|_| invalid("invalid selected testing context"))?,
+            );
+        } else if self.testing_key.is_some() {
+            return Err(invalid("missing testing grant context"));
+        }
+        let client = Client::connect(config).await.map_err(sdk_error)?;
+        let app = ApplicationId::new(app_id).map_err(sdk_error)?;
+        let token = |token: &OnBehalfOfGrant| OboProof::new(token.expose()).map_err(sdk_error);
+        let reserve = DelegatedReserveUpload {
+            operation_id,
+            parent_path: String::new(),
+            name: name.into(),
+            content_type: content_type.into(),
+            size,
+            sha256: digest.into(),
+        }
+        .prepare()
+        .map_err(sdk_error)?;
+        let reserved =
+            client.reserve_delegated_upload(&app, token(&tokens.reserve)?, &reserve).await.map_err(sdk_error)?;
+        if reserved.status.operation_id != operation_id || reserved.status.upload_id.is_nil() {
+            return Err(invalid_receipt());
+        }
+        let upload_id = reserved.status.upload_id;
+        let staged = match reserved.status.state {
+            DelegatedUploadState::Reserved => client
+                .transfer_delegated_upload_file(upload_id, reserved.capability.ok_or_else(invalid_receipt)?, file)
+                .await
+                .map_err(sdk_error)?,
+            DelegatedUploadState::Staged | DelegatedUploadState::Committed => reserved.status,
+            _ => return Err(invalid_receipt()),
+        };
+        if staged.operation_id != operation_id
+            || staged.upload_id != upload_id
+            || !matches!(staged.state, DelegatedUploadState::Staged | DelegatedUploadState::Committed)
+        {
+            return Err(invalid_receipt());
+        }
+        let committed = if staged.state == DelegatedUploadState::Committed {
+            staged
+        } else {
+            client
+                .commit_delegated_upload(
+                    &app,
+                    token(&tokens.commit)?,
+                    &DelegatedCommitUpload { operation_id, upload_id }.prepare().map_err(sdk_error)?,
+                )
+                .await
+                .map_err(sdk_error)?
+        };
+        if committed.operation_id != operation_id
+            || committed.upload_id != upload_id
+            || committed.state != DelegatedUploadState::Committed
+        {
+            return Err(invalid_receipt());
+        }
+        let published = committed.published_entry_id.ok_or_else(invalid_receipt)?;
+        let parent = format!("apps/{app_id}/private/{}", tokens.actor_id);
+        let mut cursor = None;
+        let mut seen = std::collections::HashSet::new();
+        for _ in 0..100 {
+            let page = client
+                .list_entries_on_behalf_of(
+                    &app,
+                    token(&tokens.list)?,
+                    &DelegatedListEntries {
+                        path: Some(parent.clone()),
+                        cursor,
+                        limit: Some(100),
+                        ..Default::default()
+                    }
+                    .prepare()
+                    .map_err(sdk_error)?,
+                )
+                .await
+                .map_err(sdk_error)?;
+            if let Some(entry) = page.items.into_iter().find(|entry| entry.id == published) {
+                if entry.org_id != tokens.org_id
+                    || entry.path != format!("{parent}/{name}")
+                    || entry.name != name
+                    || entry.origin_app_id.as_deref() != Some(app_id)
+                    || entry.size != Some(size)
+                    || entry.content_type.as_deref() != Some(content_type)
+                    || clean_url(entry.permanent_url.as_str()).is_err()
+                {
+                    return Err(invalid_receipt());
+                }
+                return Ok(BriefcaseEntry {
+                    id: entry.id,
+                    org_id: entry.org_id,
+                    entry_type: "file".into(),
+                    name: entry.name,
+                    path: entry.path,
+                    content_type: entry.content_type,
+                    size,
+                    permanent_url: entry.permanent_url.to_string(),
+                    origin_app_id: entry.origin_app_id,
+                });
+            }
+            match page.next_cursor {
+                Some(next) if seen.insert(next.clone()) => cursor = Some(next),
+                None => break,
+                _ => return Err(invalid_receipt()),
+            }
+        }
+        Err(invalid_receipt())
+    }
+
+    /// Retired raw proof API. Call `upload_recording` with separately approved tokens.
     pub async fn upload_file(
         &self,
-        org_id: &str,
-        app_id: &str,
-        proof: &OnBehalfOfGrant,
-        mut file: tokio::fs::File,
-        size: u64,
+        _org_id: &str,
+        _app_id: &str,
+        _proof: &OnBehalfOfGrant,
+        _file: tokio::fs::File,
+        _size: u64,
     ) -> ProviderResult<BriefcaseEntry> {
-        let metadata = file.metadata().await.map_err(|_| invalid("could not inspect staging file"))?;
-        if !metadata.is_file() || metadata.len() != size || size > self.max_upload_bytes as u64 {
-            return Err(invalid("staging file does not match the declared bounded upload size"));
-        }
-        file.rewind().await.map_err(|_| invalid("could not rewind staging file"))?;
-        self.upload_body(org_id, app_id, proof, reqwest::Body::from(file), size).await
+        Err(invalid("raw OBO upload retired; reserve, transfer, then commit"))
     }
-
-    /// Make exactly one request with a supplied proof. A transport error or
-    /// malformed success response can follow a committed write. Do not replay
-    /// this single-use proof. A caller choosing a fresh-proof retry must accept
-    /// that it may publish another version of an already committed file.
+    /// Retired raw proof API. No credentials or bytes are sent.
     pub async fn upload_raw(
         &self,
-        org_id: &str,
-        app_id: &str,
-        proof: &OnBehalfOfGrant,
-        bytes: Vec<u8>,
+        _org_id: &str,
+        _app_id: &str,
+        _proof: &OnBehalfOfGrant,
+        _bytes: Vec<u8>,
     ) -> ProviderResult<BriefcaseEntry> {
-        self.validate_size(bytes.len())?;
-        let size = bytes.len() as u64;
-        self.upload_body(org_id, app_id, proof, reqwest::Body::from(bytes), size).await
-    }
-
-    async fn upload_body(
-        &self,
-        org_id: &str,
-        app_id: &str,
-        proof: &OnBehalfOfGrant,
-        body: reqwest::Body,
-        size: u64,
-    ) -> ProviderResult<BriefcaseEntry> {
-        let organization = identifier_header(org_id)?;
-        let application = identifier_header(app_id)?;
-        if silicon_browser_shared::app_id(app_id, "app_id").is_err() {
-            return Err(invalid("Briefcase OBO requires a canonical bare application ID"));
-        }
-        // The issuer's owning organization is independent of the represented
-        // member's storage organization. IAM's request-bound proof and Briefcase
-        // verify that exact delegation; neither identity may be rewritten here.
-        let proof_value = proof.expose();
-        if !proof_value.starts_with("obo_")
-            || proof_value.len() <= 4
-            || proof_value.len() > 8192
-            || !proof_value.bytes().all(|byte| byte.is_ascii_graphic())
-        {
-            return Err(invalid("invalid Briefcase OBO proof"));
-        }
-        let mut request = self
-            .http
-            .post(self.endpoint.clone())
-            .header("x-org-id", organization)
-            .header("x-app-id", application)
-            .header("x-iam-obo-access-proof", secret_header(proof_value)?)
-            .header("content-type", "application/octet-stream")
-            .header(reqwest::header::CONTENT_LENGTH, size)
-            .body(body);
-        if let Some(key) = &self.testing_key {
-            request = request.header("x-briefcase-app-secret", key.clone());
-        }
-        let response = request.send().await.map_err(|error| transport(PROVIDER, error))?;
-        let status = response.status();
-        let entry: BriefcaseEntry = json_response_with_limit(PROVIDER, response, MAX_RESPONSE_BYTES).await?;
-        if status != reqwest::StatusCode::CREATED
-            || entry.org_id != org_id
-            || entry.entry_type != "file"
-            || entry.size != size
-            || entry.name.is_empty()
-            || entry.name.len() > 255
-            || entry.path.rsplit('/').next() != Some(entry.name.as_str())
-            || entry.path.is_empty()
-            || entry.path.len() > MAX_URL_BYTES
-            || entry.path.starts_with('/')
-            || entry.path.split('/').any(|part| matches!(part, "" | "." | ".."))
-            || entry.name.chars().any(char::is_control)
-            || entry.path.chars().any(char::is_control)
-            || clean_url(&entry.permanent_url).is_err()
-        {
-            return Err(ProviderError::InvalidResponse {
-                provider: PROVIDER,
-                message: "created entry did not match the upload contract".into(),
-            });
-        }
-        Ok(entry)
+        Err(invalid("raw OBO upload retired; reserve, transfer, then commit"))
     }
 
     fn validate_size(&self, size: usize) -> ProviderResult<()> {
@@ -248,6 +314,25 @@ impl BriefcaseClient {
             )));
         }
         Ok(())
+    }
+}
+
+fn invalid_receipt() -> ProviderError {
+    ProviderError::InvalidResponse {
+        provider: PROVIDER,
+        message: "recording receipt disagreed with approved upload".into(),
+    }
+}
+fn sdk_error(error: briefcase_client::Error) -> ProviderError {
+    if error.is_unauthenticated() {
+        ProviderError::Http {
+            provider: PROVIDER,
+            status: 401,
+            message: "recording authorization required".into(),
+            retry_after: None,
+        }
+    } else {
+        ProviderError::Transport { provider: PROVIDER, message: "Briefcase request could not be confirmed".into() }
     }
 }
 
@@ -271,13 +356,6 @@ fn clean_url(value: &str) -> ProviderResult<Url> {
     Ok(url)
 }
 
-fn identifier_header(value: &str) -> ProviderResult<HeaderValue> {
-    if value.is_empty() || value.len() > 255 || !value.bytes().all(|byte| byte.is_ascii_graphic()) {
-        return Err(invalid("invalid Briefcase organization or application identifier"));
-    }
-    HeaderValue::from_str(value).map_err(|_| invalid("invalid Briefcase identifier header"))
-}
-
 fn secret_header(value: &str) -> ProviderResult<HeaderValue> {
     let mut header = HeaderValue::from_str(value).map_err(|_| invalid("invalid Briefcase secret header"))?;
     header.set_sensitive(true);
@@ -289,280 +367,5 @@ fn invalid(message: &str) -> ProviderError {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::providers::test_http::{spawn_header_only_server, spawn_json_server};
-    use serde_json::json;
-
-    fn proof() -> OnBehalfOfGrant {
-        OnBehalfOfGrant::new("obo_request-bound-secret").unwrap()
-    }
-
-    fn entry(size: usize) -> serde_json::Value {
-        json!({
-            "id":"018f156c-0276-7000-8000-000000000001", "org_id":"test-org", "type":"file",
-            "name":"recording.bin", "path":"private/actor/apps/browser/recording.bin",
-            "content_type":"video/mp4", "size":size,
-            "permanent_url":"https://briefcase.example/test-org/private/actor/apps/test-org%3Ebrowser/recording.bin",
-            "origin_app_id":"browser"
-        })
-    }
-
-    #[tokio::test]
-    async fn file_upload_streams_over_100_mib_from_the_same_hashed_handle() {
-        use tokio::io::{AsyncReadExt, AsyncWriteExt};
-        let staged = tempfile::NamedTempFile::new().unwrap();
-        let size = 101 * 1024 * 1024;
-        staged.as_file().set_len(size).unwrap();
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let client = BriefcaseClient::with_upload_limit(
-            &format!("http://{}", listener.local_addr().unwrap()),
-            None,
-            size as usize,
-        )
-        .unwrap();
-        let mut file = tokio::fs::File::from_std(staged.reopen().unwrap());
-        let (expected_digest, hashed_size) = client.hash_file(&mut file).await.unwrap();
-        assert_eq!(hashed_size, size);
-        // Removing the pathname cannot redirect the upload to another file.
-        staged.close().unwrap();
-        let server = tokio::spawn(async move {
-            let (mut socket, _) = listener.accept().await.unwrap();
-            let mut head = Vec::new();
-            while !head.ends_with(b"\r\n\r\n") {
-                head.push(socket.read_u8().await.unwrap());
-                assert!(head.len() < 16384);
-            }
-            let head = String::from_utf8(head).unwrap().to_lowercase();
-            assert!(head.contains(&format!("content-length: {size}\r\n")));
-            let mut digest = Sha256::new();
-            let mut remaining = size;
-            let mut buffer = [0u8; 64 * 1024];
-            while remaining > 0 {
-                let bound = remaining.min(buffer.len() as u64) as usize;
-                let count = socket.read(&mut buffer[..bound]).await.unwrap();
-                assert!(count > 0);
-                digest.update(&buffer[..count]);
-                remaining -= count as u64;
-            }
-            assert_eq!(hex::encode(digest.finalize()), expected_digest);
-            let body = entry(size as usize).to_string();
-            socket
-                .write_all(
-                    format!(
-                        "HTTP/1.1 201 Created\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
-                        body.len()
-                    )
-                    .as_bytes(),
-                )
-                .await
-                .unwrap();
-        });
-        assert_eq!(client.upload_file("test-org", "browser", &proof(), file, size).await.unwrap().size, size);
-        server.await.unwrap();
-    }
-
-    #[tokio::test]
-    async fn file_upload_rejects_changed_size_before_network() {
-        let staged = tempfile::NamedTempFile::new().unwrap();
-        staged.as_file().set_len(3).unwrap();
-        let client = BriefcaseClient::new("http://127.0.0.1:1", None).unwrap();
-        let mut file = tokio::fs::File::from_std(staged.reopen().unwrap());
-        let (_, size) = client.hash_file(&mut file).await.unwrap();
-        staged.as_file().set_len(4).unwrap();
-        assert!(matches!(
-            client.upload_file("test-org", "browser", &proof(), file, size).await,
-            Err(ProviderError::InvalidInput(_))
-        ));
-    }
-
-    #[tokio::test]
-    async fn upload_sends_bound_raw_bytes_and_only_obo_credentials_in_selected_plane() {
-        let app_secret = format!("ask_{}_-9", "a".repeat(40));
-        for testing_key in [None, Some(app_secret.as_str())] {
-            let bytes = b"\0\xffraw\n".to_vec();
-            let (base, mut requests, server) = spawn_json_server(vec![(201, entry(bytes.len()).to_string())]).await;
-            let client = BriefcaseClient::new(&base, testing_key).unwrap();
-            assert_eq!(
-                client.body_sha256(b"abc").unwrap(),
-                "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
-            );
-            let result = client.upload_raw("test-org", "browser", &proof(), bytes.clone()).await.unwrap();
-            assert_eq!(result.size, bytes.len() as u64);
-            let request = requests.recv().await.unwrap();
-            server.await.unwrap();
-            assert_eq!(request.method, "POST");
-            assert_eq!(request.target, BRIEFCASE_OBO_PATH);
-            assert_eq!(request.body, bytes);
-            let headers = request.headers.to_ascii_lowercase();
-            assert!(headers.contains(concat!("user-agent: silicon-browser/", env!("CARGO_PKG_VERSION"))));
-            for expected in [
-                "x-app-id: browser",
-                "x-org-id: test-org",
-                "x-iam-obo-access-proof: obo_request-bound-secret",
-                "content-type: application/octet-stream",
-            ] {
-                assert!(headers.contains(expected), "missing expected header");
-            }
-            for forbidden in
-                ["authorization:", "idempotency-key:", "content-digest:", "x-path:", "x-testing-environment-key:"]
-            {
-                assert!(!headers.contains(forbidden));
-            }
-            assert_eq!(headers.contains("x-briefcase-app-secret:"), testing_key.is_some());
-            if let Some(key) = testing_key {
-                assert!(headers.contains(&format!("x-briefcase-app-secret: {key}")));
-                assert!(!format!("{client:?}").contains(key));
-                assert!(client.testing_key.as_ref().unwrap().is_sensitive());
-            }
-        }
-    }
-
-    #[tokio::test]
-    async fn rejects_unsafe_configuration_credentials_and_oversized_bytes_before_upload() {
-        for origin in [
-            "http://remote.example",
-            "https://user:secret@example.com",
-            "https://example.com?secret=yes",
-            "https://example.com/#fragment",
-            "https://example.com:0",
-            "https://example.com/api/v1",
-            &format!("https://example.com/{}", "x".repeat(MAX_URL_BYTES)),
-        ] {
-            assert!(BriefcaseClient::new(origin, None).is_err());
-        }
-        for key in [
-            String::new(),
-            "short".into(),
-            "k".repeat(32),
-            format!("ask_{}", "a".repeat(42)),
-            format!("ask_{}", "a".repeat(44)),
-            format!("ort_{}", "a".repeat(43)),
-            format!("ask_{}+", "a".repeat(42)),
-            format!("ask_{}\n", "a".repeat(42)),
-        ] {
-            assert!(BriefcaseClient::new("http://127.0.0.1:1", Some(&key)).is_err());
-        }
-        assert!(BriefcaseClient::with_upload_limit("http://127.0.0.1:1", None, 0).is_err());
-        let client = BriefcaseClient::with_upload_limit("http://127.0.0.1:1", None, 3).unwrap();
-        assert_eq!(client.max_upload_bytes(), 3);
-        assert!(client.body_sha256(b"four").is_err());
-        let error = client.upload_raw("test-org", "browser", &proof(), b"four".to_vec()).await.unwrap_err();
-        assert!(matches!(error, ProviderError::InvalidInput(_)));
-        for (org, app, grant) in [
-            ("test-org", ">browser", proof()),
-            ("test-org", "tos>", proof()),
-            ("test-org", "tos>Browser", proof()),
-            ("test-org", "tos>browser", proof()),
-            ("test-org", "browser>other", proof()),
-            ("test-org", "tos>2browser", proof()),
-            ("test-org", "Browser", proof()),
-            ("test-org", "2browser", proof()),
-            ("test-org\r\n", "browser", proof()),
-            ("test-org", "browser", OnBehalfOfGrant::new("invalid-proof-secret").unwrap()),
-        ] {
-            assert!(matches!(client.upload_raw(org, app, &grant, vec![]).await, Err(ProviderError::InvalidInput(_))));
-        }
-    }
-
-    #[tokio::test]
-    async fn delegated_upload_preserves_distinct_issuer_owner_and_storage_organization() {
-        let app_secret = format!("ask_{}", "b".repeat(43));
-        for testing_key in [None, Some(app_secret.as_str())] {
-            let mut response = entry(3);
-            response["org_id"] = json!("interface-client");
-            response["path"] = json!("private/worker/apps/browser/recording.bin");
-            response["origin_app_id"] = json!("browser");
-            response["permanent_url"] =
-                json!("https://briefcase.example/interface-client/private/worker/apps/tos%3Ebrowser/recording.bin");
-            let (base, mut requests, server) = spawn_json_server(vec![(201, response.to_string())]).await;
-            let client = BriefcaseClient::new(&base, testing_key).unwrap();
-            let result = client.upload_raw("interface-client", "browser", &proof(), b"abc".to_vec()).await.unwrap();
-            assert_eq!(result.org_id, "interface-client");
-            assert_eq!(result.origin_app_id.as_deref(), Some("browser"));
-            let request = requests.recv().await.unwrap();
-            server.await.unwrap();
-            assert!(request.headers.contains("x-app-id: browser\r\n"));
-            assert!(request.headers.contains("x-org-id: interface-client\r\n"));
-            assert!(request.headers.contains("x-iam-obo-access-proof: obo_request-bound-secret\r\n"));
-            assert_eq!(request.body, b"abc");
-            assert!(!request.headers.contains("x-testing-environment-key:"));
-            assert_eq!(request.headers.contains("x-briefcase-app-secret:"), testing_key.is_some());
-        }
-        // A canonical issuer alone grants nothing: preserve Briefcase's rejection
-        // of an invalid proof/world, and reject a receipt for another organization.
-        for (status, response) in [(403, "private rejection".into()), (201, entry(3).to_string())] {
-            let (base, mut requests, server) = spawn_json_server(vec![(status, response)]).await;
-            let client = BriefcaseClient::new(&base, Some(&app_secret)).unwrap();
-            let error = client.upload_raw("interface-client", "browser", &proof(), b"abc".to_vec()).await.unwrap_err();
-            assert!(matches!(error, ProviderError::Http { status: 403, .. } | ProviderError::InvalidResponse { .. }));
-            requests.recv().await.unwrap();
-            server.await.unwrap();
-            assert!(requests.try_recv().is_err());
-            assert!(!error.to_string().contains("private rejection"));
-        }
-    }
-
-    #[tokio::test]
-    async fn errors_are_redacted_and_redirects_never_replay_single_use_proofs() {
-        let (base, _requests, server) =
-            spawn_json_server(vec![(403, "obo_request-bound-secret upstream-private-detail".into())]).await;
-        let client = BriefcaseClient::new(&base, None).unwrap();
-        let error = client.upload_raw("test-org", "browser", &proof(), vec![]).await.unwrap_err();
-        server.await.unwrap();
-        assert!(matches!(error, ProviderError::Http { status: 403, .. }));
-        assert!(!format!("{error:?}").contains("upstream-private-detail"));
-        assert!(!error.to_string().contains("obo_request-bound-secret"));
-        let (base, server) =
-            spawn_header_only_server(307, vec![("Location".into(), "http://127.0.0.1:1/proof-must-not-follow".into())])
-                .await;
-        let client = BriefcaseClient::new(&base, None).unwrap();
-        let error = client.upload_raw("test-org", "browser", &proof(), vec![]).await.unwrap_err();
-        server.await.unwrap();
-        assert!(matches!(error, ProviderError::Http { status: 307, .. }));
-    }
-
-    #[tokio::test]
-    async fn authorized_overwrite_preserves_original_creator_metadata() {
-        for origin in [None, Some("other"), Some("test-org>other")] {
-            let bytes = b"replacement content".to_vec();
-            let mut response = entry(bytes.len());
-            response["origin_app_id"] = json!(origin);
-            let (base, mut requests, server) = spawn_json_server(vec![(201, response.to_string())]).await;
-            let client = BriefcaseClient::new(&base, None).unwrap();
-            let uploaded = client.upload_raw("test-org", "browser", &proof(), bytes.clone()).await.unwrap();
-            let request = requests.recv().await.unwrap();
-            server.await.unwrap();
-            assert_eq!(uploaded.origin_app_id.as_deref(), origin);
-            assert_eq!(uploaded.org_id, "test-org");
-            assert_eq!(uploaded.size, bytes.len() as u64);
-            assert_eq!(request.body, bytes);
-            assert!(request.headers.contains("x-app-id: browser"));
-        }
-    }
-
-    #[tokio::test]
-    async fn responses_are_bounded_and_must_match_created_file_identity_and_size() {
-        let (base, server) =
-            spawn_header_only_server(201, vec![("Content-Length".into(), (MAX_RESPONSE_BYTES + 1).to_string())]).await;
-        let client = BriefcaseClient::new(&base, None).unwrap();
-        let error = client.upload_raw("test-org", "browser", &proof(), vec![]).await.unwrap_err();
-        server.await.unwrap();
-        assert!(matches!(error, ProviderError::InvalidResponse { .. }));
-        for (field, value) in [
-            ("org_id", json!("another-org")),
-            ("type", json!("folder")),
-            ("size", json!(99)),
-            ("permanent_url", json!("https://briefcase.example/entry?token=hidden")),
-        ] {
-            let mut response = entry(0);
-            response[field] = value;
-            let (base, _requests, server) = spawn_json_server(vec![(201, response.to_string())]).await;
-            let client = BriefcaseClient::new(&base, None).unwrap();
-            let error = client.upload_raw("test-org", "browser", &proof(), vec![]).await.unwrap_err();
-            server.await.unwrap();
-            assert!(matches!(error, ProviderError::InvalidResponse { .. }), "field {field}");
-            assert!(!error.to_string().contains("hidden"));
-        }
-    }
-}
+#[path = "briefcase_tests.rs"]
+mod tests;

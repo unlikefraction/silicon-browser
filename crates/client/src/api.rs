@@ -139,22 +139,50 @@ impl Client {
         self.get_scoped("/api/v1/auth/delivery")
     }
 
-    /// Enroll a fresh, separate IAM short-lived token for background recording delivery.
-    pub fn authorize_delivery(&self, request: &DeliveryAuthorizationRequest) -> Result<DeliveryAuthorization, Error> {
-        request.validate().map_err(validation)?;
-        self.post_scoped("/api/v1/auth/delivery", request)
+    /// Retired login-derived delivery enrollment. Start separate feature consent instead.
+    pub fn authorize_delivery(&self, _request: &DeliveryAuthorizationRequest) -> Result<DeliveryAuthorization, Error> {
+        Err(Error::Local("recording access needs separate consent; call start_recording_consent".into()))
     }
-
-    /// Enroll a separate background IAM family using a test SLT or test actor ID.
+    /// Retired testing login-derived enrollment. Test actors also approve feature consent.
     pub fn authorize_delivery_testing(
         &self,
-        request: &DeliveryAuthorizationRequest,
-        credentials: TestingCredentials,
+        _request: &DeliveryAuthorizationRequest,
+        _credentials: TestingCredentials,
     ) -> Result<DeliveryAuthorization, Error> {
-        request.validate_testing().map_err(validation)?;
-        let transport = HttpTransport::default().with_testing(&self.base, credentials)?;
-        let client = Self { transport: Arc::new(transport), ..self.clone() };
-        client.post_scoped("/api/v1/auth/delivery", request)
+        Err(Error::Local("recording access needs separate consent; call start_recording_consent".into()))
+    }
+    /// Starts explicit recording-storage consent with a caller-retained retry identity.
+    pub fn start_recording_consent(&self, key: &str) -> Result<RecordingConsent, Error> {
+        self.require_org()?;
+        if !(16..=255).contains(&key.len()) || !key.bytes().all(|b| b.is_ascii_graphic()) {
+            return Err(Error::Local("invalid idempotency key".into()));
+        }
+        decode_response(self.transport.send_idempotent(
+            self.request(Method::Post, "/api/v1/auth/delivery/authorizations", Some(serde_json::json!({})), true)?,
+            key,
+        )?)
+    }
+    /// Reads a pending or completed request in the selected account and organization.
+    pub fn recording_consent(&self, id: &str) -> Result<RecordingConsent, Error> {
+        let id = uuid::Uuid::parse_str(id).map_err(|_| Error::Local("invalid authorization ID".into()))?;
+        self.get_scoped(&format!("/api/v1/auth/delivery/authorizations/{id}"))
+    }
+    /// Redeems the exact IAM code and request state; no delegated credentials are returned.
+    pub fn complete_recording_consent(
+        &self,
+        id: &str,
+        request: &RecordingConsentComplete,
+    ) -> Result<RecordingConsent, Error> {
+        let id = uuid::Uuid::parse_str(id).map_err(|_| Error::Local("invalid authorization ID".into()))?;
+        if !request.code.starts_with("obc_")
+            || !(5..=16384).contains(&request.code.len())
+            || !request.code.bytes().all(|b| b.is_ascii_graphic())
+            || request.state.len() != 64
+            || !request.state.bytes().all(|b| b.is_ascii_hexdigit())
+        {
+            return Err(Error::Local("invalid recording consent code or state".into()));
+        }
+        self.post_scoped(&format!("/api/v1/auth/delivery/authorizations/{id}/complete"), request)
     }
 
     pub fn end_delivery_authorization(&self) -> Result<DeliveryAuthorization, Error> {
@@ -501,6 +529,69 @@ mod tests {
         fn send(&self, request: Request) -> Result<Response, Error> {
             self.0.lock().unwrap().push(request);
             Ok(Response { status: 200, body: br#"{"data":[]}"#.to_vec() })
+        }
+    }
+
+    #[derive(Default)]
+    struct RecordingTransport(Mutex<Vec<(Request, Option<String>)>>);
+    impl Transport for RecordingTransport {
+        fn send(&self, request: Request) -> Result<Response, Error> {
+            self.record(request, None)
+        }
+        fn send_idempotent(&self, request: Request, key: &str) -> Result<Response, Error> {
+            self.record(request, Some(key.into()))
+        }
+    }
+    impl RecordingTransport {
+        fn record(&self, request: Request, key: Option<String>) -> Result<Response, Error> {
+            self.0.lock().unwrap().push((request, key));
+            Ok(Response{status:200,body:serde_json::to_vec(&serde_json::json!({"data":{"authorization_id":"aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa","consent_url":"https://auth.iam.example/obo/consent","state":"a".repeat(64),"status":"pending","expires_at":"2099-01-01T00:00:00Z"}})).unwrap()})
+        }
+    }
+    #[test]
+    fn recording_consent_uses_explicit_retry_identity_and_never_a_login_token_as_approval() {
+        let transport = Arc::new(RecordingTransport::default());
+        let client = Client::with_transport(
+            "https://backend.example/testing/11111111-1111-4111-8111-111111111111",
+            Auth::new("oat_origin").unwrap(),
+            transport.clone(),
+        )
+        .unwrap();
+        assert!(client.start_recording_consent("same-retry-identity").is_err());
+        let client = client.org("tos").unwrap();
+        assert!(client.start_recording_consent("short").is_err());
+        let approved = client.start_recording_consent("same-retry-identity").unwrap();
+        client.start_recording_consent("same-retry-identity").unwrap();
+        assert!(
+            client
+                .complete_recording_consent(
+                    &approved.authorization_id,
+                    &RecordingConsentComplete { code: "oac_login_token".into(), state: approved.state.clone() }
+                )
+                .is_err()
+        );
+        assert!(
+            client
+                .complete_recording_consent(
+                    &approved.authorization_id,
+                    &RecordingConsentComplete { code: "obc_approval".into(), state: String::new() }
+                )
+                .is_err()
+        );
+        let request = RecordingConsentComplete { code: "obc_approval".into(), state: approved.state };
+        assert!(!format!("{request:?}").contains("obc_approval"));
+        client.complete_recording_consent(&approved.authorization_id, &request).unwrap();
+        let calls = transport.0.lock().unwrap();
+        assert_eq!(calls.len(), 3);
+        assert_eq!(calls[0].1, calls[1].1);
+        for (request, _) in calls.iter() {
+            assert_eq!(request.bearer.as_deref(), Some("oat_origin"));
+            assert_eq!(request.org.as_deref(), Some("tos"));
+            assert!(
+                request
+                    .url
+                    .contains("/testing/11111111-1111-4111-8111-111111111111/api/v1/auth/delivery/authorizations")
+            );
         }
     }
 

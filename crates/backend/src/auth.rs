@@ -34,7 +34,6 @@ const IAM_SUPPORTED_VERSIONS_HEADER: &str = "silicon-iam-supported-api-versions"
 const MAX_RESPONSE_BYTES: usize = 1024 * 1024;
 const MAX_ORG_PAGES: usize = 100;
 const RECORDING_ENDPOINT_ID: &str = "briefcase.files.create";
-const RECORDING_ENDPOINT_PATH: &str = "/api/v1/obo/files";
 
 /// Identity facts an application token can prove through IAM introspection.
 ///
@@ -226,6 +225,15 @@ pub trait IdentityProvider: Send + Sync {
     /// True only after IAM has authenticated an isolated testing context.
     fn is_testing(&self) -> bool {
         false
+    }
+
+    /// App-authenticated SDK for separate recording feature consent.
+    fn recording_client(&self) -> Option<silicon_iam_client::Client> {
+        None
+    }
+
+    fn recording_environment(&self) -> Option<Uuid> {
+        None
     }
 
     /// Resolve an OAT inside an explicit organization context.
@@ -804,6 +812,13 @@ impl SiliconIamIdentityProvider {
 
 #[async_trait]
 impl IdentityProvider for SiliconIamIdentityProvider {
+    fn recording_client(&self) -> Option<silicon_iam_client::Client> {
+        Some(self.sdk.clone())
+    }
+    fn recording_environment(&self) -> Option<Uuid> {
+        self.testing_environment
+    }
+
     fn app_id(&self) -> &str {
         &self.app_id
     }
@@ -883,64 +898,11 @@ impl IdentityProvider for SiliconIamIdentityProvider {
 
     async fn issue_recording_proof(
         &self,
-        bearer: &str,
-        request: RecordingProofRequest,
+        _bearer: &str,
+        _request: RecordingProofRequest,
     ) -> Result<RecordingProof, IdentityError> {
-        validate_recording_proof_request(&request)?;
-        let claims = self.introspect(bearer, Some(&request.expected_org_id)).await?;
-        let identity = identity_from_claims(&claims, &self.app_id, &request.expected_org_id, None, Utc::now())?;
-        if identity.public_id.as_deref() != Some(&request.expected_actor_id) {
-            return Err(IdentityError::Forbidden);
-        }
-        if !recording_authority(&identity, &request.audience) {
-            return Err(IdentityError::Forbidden);
-        }
-        let catalog = self.sdk.obo().endpoints(&request.audience).await.map_err(obo_sdk_error)?;
-        let mut endpoints = catalog.endpoints.iter().filter(|endpoint| endpoint.endpoint_id == RECORDING_ENDPOINT_ID);
-        let endpoint = endpoints.next().ok_or(IdentityError::Contract {
-            operation: "recording proof",
-            reason: "Briefcase file creation is absent from the IAM endpoint catalog",
-        })?;
-        if catalog.application.app_id != request.audience
-            || validate_org_id(&catalog.application.org_id).is_err()
-            || endpoint.path != RECORDING_ENDPOINT_PATH
-            || endpoints.next().is_some()
-        {
-            return Err(IdentityError::Contract {
-                operation: "recording proof",
-                reason: "Briefcase endpoint catalog did not match the configured destination",
-            });
-        }
-        let mutation = Mutation::with_key(IdempotencyKey::parse(request.idempotency_key).map_err(obo_sdk_error)?);
-        let proof = self.sdk.obo().exchange_signed(&silicon_iam_client::models::OboExchangeRequest {
-            org_id: Some(request.expected_org_id.clone()), subject_token: bearer.to_owned(), audience: request.audience, endpoint_id: RECORDING_ENDPOINT_ID.into(),
-            metadata: serde_json::json!({"path":request.path, "name":request.name, "content_type":request.content_type}),
-            request: silicon_iam_client::models::OboExchangeRequestBinding {
-                method: "POST".into(), body_sha256: request.body_sha256,
-            },
-        }, &catalog, &mutation).await.map_err(obo_sdk_error)?;
-        let expires_at =
-            DateTime::from_timestamp(proof.expires_at.unix_timestamp(), 0).ok_or(IdentityError::Contract {
-                operation: "recording proof",
-                reason: "proof expiry was outside the supported timestamp range",
-            })?;
-        let now = Utc::now();
-        if proof.proof_id.is_nil()
-            || !(1..=60).contains(&proof.expires_in)
-            || expires_at <= now
-            || expires_at > now + chrono::TimeDelta::seconds(65)
-            || validate_opaque_token(&proof.access_proof, &["obo_"]).is_err()
-        {
-            return Err(IdentityError::Contract {
-                operation: "recording proof",
-                reason: "IAM returned an invalid recording proof",
-            });
-        }
-        let grant = OnBehalfOfGrant::new(proof.access_proof).map_err(|_| IdentityError::Contract {
-            operation: "recording proof",
-            reason: "IAM returned an invalid recording proof",
-        })?;
-        Ok(RecordingProof { grant, proof_id: proof.proof_id, expires_at: expires_at.min(identity.expires_at) })
+        // Ordinary application login authority never becomes feature consent.
+        Err(IdentityError::CapabilityUnavailable(IdentityCapability::RecordingProof))
     }
 }
 
@@ -1233,6 +1195,7 @@ pub(crate) fn recording_scope_authority(scope: &str, audience: &str) -> bool {
         && scopes.contains(format!("obo:{audience}:{RECORDING_ENDPOINT_ID}").as_str())
 }
 
+#[cfg(test)]
 fn validate_recording_proof_request(request: &RecordingProofRequest) -> Result<(), IdentityError> {
     validate_org_id(&request.expected_org_id)?;
     validate_idempotency_key(&request.idempotency_key)?;
@@ -1475,6 +1438,8 @@ pub struct FakeIdentityProvider {
 
 #[derive(Default)]
 struct FakeState {
+    recording_sdk: Option<silicon_iam_client::Client>,
+    recording_environment: Option<Uuid>,
     identities: HashMap<CacheKey, PrincipalIdentity>,
     organizations: HashMap<[u8; 32], Result<Vec<OrganizationAccess>, IdentityError>>,
     exchanges: HashMap<([u8; 32], String), Result<ExchangedAuth, IdentityError>>,
@@ -1495,6 +1460,11 @@ impl fmt::Debug for FakeIdentityProvider {
 }
 
 impl FakeIdentityProvider {
+    pub fn allow_recording_client(&self, client: silicon_iam_client::Client, environment: Option<Uuid>) {
+        let mut state = self.write();
+        state.recording_sdk = Some(client);
+        state.recording_environment = environment;
+    }
     pub fn new() -> Self {
         Self::default()
     }
@@ -1539,6 +1509,15 @@ impl FakeIdentityProvider {
 
 #[async_trait]
 impl IdentityProvider for FakeIdentityProvider {
+    fn recording_client(&self) -> Option<silicon_iam_client::Client> {
+        self.state.read().unwrap().recording_sdk.clone()
+    }
+    fn recording_environment(&self) -> Option<Uuid> {
+        self.state.read().unwrap().recording_environment
+    }
+    fn is_testing(&self) -> bool {
+        self.recording_environment().is_some()
+    }
     async fn identify(&self, bearer: &str, org: &str) -> Result<PrincipalIdentity, IdentityError> {
         self.state
             .read()
@@ -1837,7 +1816,7 @@ mod tests {
             path: String::new(),
             name: "session-recording.webm".into(),
             content_type: "video/webm".into(),
-            body_sha256: silicon_iam_client::api::obo::body_sha256(b"exact recording bytes"),
+            body_sha256: hex::encode(Sha256::digest(b"exact recording bytes")),
             idempotency_key: "recording-proof-attempt-0001".into(),
         }
     }
@@ -1890,46 +1869,6 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn recording_proof_requires_the_live_initiator_and_delegation_scopes() {
-        for wrong_actor in [false, true] {
-            let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
-            let base = Url::parse(&format!("http://{}/", listener.local_addr().unwrap())).unwrap();
-            let server = tokio::spawn(async move {
-                let (mut stream, _) = listener.accept().await.unwrap();
-                read_request_head(&mut stream).await;
-                let mut claims = claims();
-                if wrong_actor {
-                    claims.scope = Some(
-                        "self.identity.read self.membership.read self.tags.read obo:briefcase:briefcase.files.create"
-                            .into(),
-                    );
-                    claims.authorization.as_mut().unwrap().scopes = vec![
-                        "self.identity.read".into(),
-                        "self.membership.read".into(),
-                        "self.tags.read".into(),
-                        "obo:briefcase:briefcase.files.create".into(),
-                    ];
-                    claims.authorization.as_mut().unwrap().org_role = Some("member".into());
-                }
-                write_test_response(&mut stream, "200 OK", &[], &serde_json::to_string(&claims).unwrap()).await;
-            });
-            let provider =
-                SiliconIamIdentityProvider::from_parts(reqwest::Client::new(), base, APP.into(), "app-secret".into())
-                    .unwrap();
-            let mut request = recording_request();
-            if wrong_actor {
-                request.expected_actor_id = "c:different-viewer".into();
-            }
-            assert_eq!(provider.issue_recording_proof(&oat('A'), request).await, Err(IdentityError::Forbidden));
-            server.await.unwrap();
-        }
-        assert!(matches!(
-            FakeIdentityProvider::new().issue_recording_proof(&oat('A'), recording_request()).await,
-            Err(IdentityError::CapabilityUnavailable(IdentityCapability::RecordingProof))
-        ));
-    }
-
-    #[tokio::test]
     async fn delivery_identity_bypasses_cached_metadata_when_an_endpoint_grant_changes() {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let base = Url::parse(&format!("http://{}/", listener.local_addr().unwrap())).unwrap();
@@ -1955,149 +1894,6 @@ mod tests {
         assert!(recording_authority(&provider.identify(&oat('A'), ORG).await.unwrap(), "briefcase"));
         assert!(recording_authority(&provider.identify(&oat('A'), ORG).await.unwrap(), "briefcase"));
         assert!(!recording_authority(&provider.identify_for_delivery(&oat('A'), ORG).await.unwrap(), "briefcase"));
-        server.await.unwrap();
-    }
-
-    #[tokio::test]
-    async fn recording_catalog_rejects_wrong_application_owner_path_or_duplicate_endpoint_before_exchange() {
-        for invalid in 0..4 {
-            let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
-            let base = Url::parse(&format!("http://{}/", listener.local_addr().unwrap())).unwrap();
-            let server = tokio::spawn(async move {
-                for step in 0..2 {
-                    let (mut stream, _) = listener.accept().await.unwrap();
-                    let request = read_request_head(&mut stream).await;
-                    let body = if step == 0 {
-                        assert!(request.starts_with("POST /api/v1/oauth/introspect "));
-                        let mut current = claims();
-                        current.scope = Some("self.identity.read self.membership.read self.tags.read obo:briefcase:briefcase.files.create".into());
-                        current.authorization.as_mut().unwrap().scopes =
-                            current.scope.as_ref().unwrap().split_whitespace().map(str::to_owned).collect();
-                        current.authorization.as_mut().unwrap().org_role = Some("member".into());
-                        serde_json::to_value(current).unwrap()
-                    } else {
-                        assert!(request.starts_with("GET /api/v1/obo-access/applications/briefcase/endpoints "));
-                        let mut catalog = json!({"application":{"app_id":"briefcase","org_id":"tos"},"endpoints":[{
-                            "critical":false,"endpoint_id":RECORDING_ENDPOINT_ID,"path":RECORDING_ENDPOINT_PATH,
-                            "metadata":{"path":{"type":"string"},"name":{"type":"string"},"content_type":{"type":"string"}}
-                        }]});
-                        match invalid {
-                            0 => catalog["application"]["org_id"] = json!(""),
-                            1 => catalog["application"]["app_id"] = json!("other>briefcase"),
-                            2 => catalog["endpoints"][0]["path"] = json!("/different"),
-                            _ => {
-                                let copy = catalog["endpoints"][0].clone();
-                                catalog["endpoints"].as_array_mut().unwrap().push(copy);
-                            }
-                        }
-                        catalog
-                    };
-                    write_test_response(&mut stream, "200 OK", &[], &body.to_string()).await;
-                }
-            });
-            let provider =
-                SiliconIamIdentityProvider::from_parts(reqwest::Client::new(), base, APP.into(), "app-secret".into())
-                    .unwrap();
-            assert!(provider.issue_recording_proof(&oat('A'), recording_request()).await.is_err());
-            server.await.unwrap();
-        }
-    }
-
-    #[tokio::test]
-    async fn recording_proof_sdk_binds_exact_bytes_metadata_actor_app_and_testing_plane() {
-        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let base = format!("http://{}/", listener.local_addr().unwrap());
-        let environment_key = "T".repeat(32);
-        let expected_environment = environment_key.clone();
-        let mut request = recording_request();
-        request.expected_org_id = "interface-client".into();
-        let expected_digest = request.body_sha256.clone();
-        let expected_key = request.idempotency_key.clone();
-        let raw_proof = format!("obo_{}", "P".repeat(43));
-        let returned_proof = raw_proof.clone();
-        let expires_at = Utc::now() + chrono::TimeDelta::seconds(50);
-        let expected_expiry = expires_at;
-        let server = tokio::spawn(async move {
-            for index in 0..5 {
-                let (mut stream, _) = listener.accept().await.unwrap();
-                let request = read_request_head(&mut stream).await;
-                let lower = request.to_ascii_lowercase();
-                assert!(request.contains(&format!("x-testing-environment-key: {expected_environment}\r\n")));
-                assert!(lower.contains("silicon-iam-supported-api-versions: v1\r\n"));
-                let body = match index {
-                    0 => {
-                        json!({"service":"silicon-iam","selected_api_version":"v1","supported_api_versions":["v1"],"build":"test","commit":"test"})
-                    }
-                    1 => {
-                        assert!(request.starts_with("GET /api/v1/application/testing-context "));
-                        testing_context()
-                    }
-                    2 => {
-                        assert!(request.starts_with("POST /api/v1/oauth/introspect "));
-                        assert!(lower.contains("authorization: basic "));
-                        assert!(lower.contains("x-org-id: interface-client\r\n"));
-                        let mut claims = claims();
-                        claims.org_id = Some("interface-client".into());
-                        claims.membership_id = Some("si:silicon-1[interface-client]".into());
-                        claims.authorization.as_mut().unwrap().org_id = "interface-client".into();
-                        claims.authorization.as_mut().unwrap().membership_id = "si:silicon-1[interface-client]".into();
-                        claims.scope = Some("self.identity.read self.membership.read self.tags.read obo:briefcase:briefcase.files.create".into());
-                        let snapshot = claims.authorization.as_mut().unwrap();
-                        snapshot.scopes = vec![
-                            "self.identity.read".into(),
-                            "self.membership.read".into(),
-                            "self.tags.read".into(),
-                            "obo:briefcase:briefcase.files.create".into(),
-                        ];
-                        snapshot.org_role = Some("member".into());
-                        snapshot.testing_environment_id = Some(Uuid::from_u128(10));
-                        serde_json::to_value(claims).unwrap()
-                    }
-                    3 => {
-                        assert!(request.starts_with("GET /api/v1/obo-access/applications/briefcase/endpoints "));
-                        assert!(lower.contains("authorization: basic "));
-                        assert!(!lower.contains("x-org-id:"));
-                        json!({"application":{"app_id":"briefcase","org_id":ORG},"endpoints":[{
-                            "critical":false,"endpoint_id":RECORDING_ENDPOINT_ID,"path":RECORDING_ENDPOINT_PATH,
-                            "metadata":{"path":{"type":"string"},"name":{"type":"string"},"content_type":{"type":"string"}}
-                        }]})
-                    }
-                    _ => {
-                        assert!(request.starts_with("POST /api/v1/obo-access/exchanges "));
-                        assert!(lower.contains("authorization: basic "));
-                        assert!(!lower.contains("x-org-id:"));
-                        assert!(request.contains(&format!("idempotency-key: {expected_key}\r\n")));
-                        assert!(lower.contains("x-obo-timestamp:"));
-                        let signature =
-                            request.lines().find_map(|line| line.strip_prefix("x-obo-signature: ")).unwrap();
-                        assert_eq!(signature.len(), 64);
-                        let wire: serde_json::Value =
-                            serde_json::from_str(request.split_once("\r\n\r\n").unwrap().1).unwrap();
-                        assert_eq!(
-                            wire,
-                            json!({"org_id":"interface-client","subject_token":oat('A'),"audience":"briefcase","endpoint_id":RECORDING_ENDPOINT_ID,
-                            "metadata":{"path":"","name":"session-recording.webm","content_type":"video/webm"},
-                            "request":{"method":"POST","body_sha256":expected_digest}})
-                        );
-                        json!({"access_proof":returned_proof,"proof_id":Uuid::from_u128(11),"expires_in":60,"expires_at":expires_at.to_rfc3339()})
-                    }
-                };
-                write_test_response(&mut stream, "200 OK", &[], &body.to_string()).await;
-            }
-        });
-        let provider = SiliconIamIdentityProvider::connect_with_environment(
-            &base,
-            APP.into(),
-            "app-secret".into(),
-            Some(&environment_key),
-        )
-        .await
-        .unwrap();
-        let proof = provider.issue_recording_proof(&oat('A'), request).await.unwrap();
-        assert_eq!(proof.grant.expose(), raw_proof);
-        assert_eq!(proof.proof_id, Uuid::from_u128(11));
-        assert_eq!(proof.expires_at.timestamp(), expected_expiry.timestamp());
-        assert!(!format!("{proof:?}").contains(&raw_proof));
         server.await.unwrap();
     }
 

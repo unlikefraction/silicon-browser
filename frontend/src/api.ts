@@ -5,7 +5,7 @@ export interface TestingCredentials { app_secret: string; iam_test_key?: string;
 export interface TestingContext { environment_id: string; app_id: string; name: string }
 
 export class ApiError extends Error {
-  constructor(message: string, public authRejected = false, public status?: number) { super(message); }
+  constructor(message: string, public authRejected = false, public status?: number, public code?: string) { super(message); }
 }
 export function publicError(value: unknown): string {
   const message = value instanceof Error ? value.message : 'Something went wrong. Please try again.';
@@ -54,7 +54,7 @@ export class BrowserApi {
     this.refreshing = null;
   }
   currentSession() { return this.session; }
-  async request<T>(path: string, method = 'GET', body?: unknown, session = this.session): Promise<T> {
+  async request<T>(path: string, method = 'GET', body?: unknown, session = this.session, retryKey?: string): Promise<T> {
     if (this.closed) throw new ApiError('This workspace has been closed.');
     let endpoint = `${this.origin}/api/v1${path}`;
     if (this.testing) {
@@ -63,6 +63,7 @@ export class BrowserApi {
       endpoint = target.href;
     }
     const headers: Record<string, string> = { Accept: 'application/json' };
+    if (retryKey) { if (!/^[!-~]{16,255}$/.test(retryKey)) throw new ApiError('Invalid retry identity.'); headers['Idempotency-Key'] = retryKey; }
     if (this.testing) {
       headers['x-sb-test-app-secret'] = this.testing.app_secret;
       if (this.testing.iam_test_key) headers['x-testing-environment-key'] = this.testing.iam_test_key;
@@ -79,7 +80,7 @@ export class BrowserApi {
     if (!response.ok) {
       const error = envelope.error || {};
       const fields = Array.isArray(error.fields) ? error.fields.map((field: {field: string; message: string}) => `${field.field}: ${field.message}`).join(' · ') : '';
-      throw new ApiError(publicError(new Error(`${error.message || 'Request failed'}${fields ? ` — ${fields}` : ''}${error.request_id ? ` (Request ${error.request_id})` : ''}`)), response.status === 401 && response.headers.get('x-sb-auth-rejected') === '1', response.status);
+      throw new ApiError(publicError(new Error(`${error.message || 'Request failed'}${fields ? ` — ${fields}` : ''}${error.request_id ? ` (Request ${error.request_id})` : ''}`)), response.status === 401 && response.headers.get('x-sb-auth-rejected') === '1', response.status, typeof error.code === 'string' ? error.code : undefined);
     }
     return envelope.data as T;
   }
@@ -105,14 +106,14 @@ export class BrowserApi {
     }
     await this.refreshing;
   }
-  async call<T>(path: string, method = 'GET', body?: unknown): Promise<T> {
+  async call<T>(path: string, method = 'GET', body?: unknown, retryKey?: string): Promise<T> {
     const session = this.session, generation = this.generation;
     if (!session) throw new ApiError('Sign in to continue.');
     if (Date.parse(session.expires_at) <= Date.now() + 60000) await this.refresh(session, generation);
     if (!this.session || generation !== this.generation) throw new ApiError('Sign-in changed. Please try again.');
     const sent = this.session;
     try {
-      const result = await this.request<T>(path, method, body, sent);
+      const result = await this.request<T>(path, method, body, sent, retryKey);
       if (generation !== this.generation) throw new ApiError('Sign-in changed. Please try again.');
       return result;
     }
@@ -121,7 +122,7 @@ export class BrowserApi {
       if (!(error instanceof ApiError) || !error.authRejected) throw error;
       await this.refresh(sent, generation);
       if (!this.session || generation !== this.generation) throw new ApiError('Sign-in changed. Please try again.');
-      return this.request<T>(path, method, body, this.session);
+      return this.request<T>(path, method, body, this.session, retryKey);
     }
   }
 }

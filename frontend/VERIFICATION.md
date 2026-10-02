@@ -1,5 +1,32 @@
 # Frontend verification
 
+## Separate recording consent — 3 October 2026
+
+The recording permission flow now starts an explicit IAM feature approval and
+accepts its one-time code independently of login. The pending request uses a
+stable retry key and remains in memory. Changing the account, organization, or
+testing context invalidates the pending UI operation and ignores late responses.
+
+Local checks passed:
+
+- Frontend: 39 tests and the TypeScript/Vite production build.
+- SDK and CLI: 34 client tests, 28 CLI unit tests, and 29 binary contracts; strict
+  all-target Clippy for both packages.
+- An isolated headless Chromium fixture at 1440 × 1000 and 390 × 844 verified
+  that an invalid code preserves login, an organization switch clears pending
+  approval, and a session rejection refreshes recording status. Completing
+  approval did not retry or create a browser session. No horizontal overflow or
+  uncaught JavaScript errors occurred. Mobile organization selectors have
+  accessible names even when their text labels are hidden.
+
+The fixture intercepted all API responses and blocked external requests. It
+used synthetic credentials and created no paid browser sessions. Screenshots
+were captured in `/tmp/browser-consent-qa/` (`1440-pending.png`,
+`1440-complete.png`, `390-pending.png`, and `390-complete.png`). The fixture server
+and headless browser were stopped after verification. This establishes local
+UI behavior, not live IAM approval, metered-provider operation, deployment, or
+real recording delivery.
+
 ## IAM testing additions — 14 September 2026
 
 The current frontend adds the visible Testing environment selector, memory-only

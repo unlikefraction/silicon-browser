@@ -392,3 +392,69 @@ async fn public_identity_projection_never_rewrites_a_verified_partial_receipt_pa
             .unwrap();
     assert_eq!(persisted, receipt.path);
 }
+
+#[tokio::test]
+async fn selected_provider_destination_is_pinned_before_upload_and_receipt_stays_origin_owned() {
+    let (store, owner, session, _) = fixture(IdentityKind::Carbon, true, false).await;
+    let now = Utc::now();
+    let claims = store.claim_recording_deliveries(now, now + ChronoDuration::seconds(60), 2).await.unwrap();
+    let claim = &claims[0];
+    assert!(store.bind_recording_destination(claim, "selected-org", "si:selected").await.unwrap());
+    assert!(store.bind_recording_destination(claim, "selected-org", "si:selected").await.unwrap());
+    assert!(!store.bind_recording_destination(claim, "other-org", "si:selected").await.unwrap());
+    assert!(!store.bind_recording_destination(claim, "selected-org", "si:other").await.unwrap());
+    begin(&store, claim, now).await;
+    assert!(store.complete_recording_delivery(claim, &receipt(claim), &secrets(), now).await.is_err());
+    let mut selected = receipt(claim);
+    selected.org_id = "selected-org".into();
+    selected.path = format!("apps/browser/private/si:selected/{}", selected.name);
+    assert!(store.complete_recording_delivery(claim, &selected, &secrets(), now).await.unwrap());
+    let recording = store.recording("org", &owner, &session, &secrets()).await.unwrap();
+    assert_eq!(recording.status, RecordingStatus::Available);
+    assert!(store.recording("selected-org", &owner, &session, &secrets()).await.is_err());
+}
+
+#[tokio::test]
+async fn obo_migration_retires_old_authority_without_replacing_receipts_or_job_ownership() {
+    let pool = sqlx::sqlite::SqlitePoolOptions::new().max_connections(1).connect("sqlite::memory:").await.unwrap();
+    for migration in [
+        include_str!("../../migrations/0001_initial.sql"),
+        include_str!("../../migrations/0002_delivery_credentials.sql"),
+        include_str!("../../migrations/0003_recording_delivery.sql"),
+        include_str!("../../migrations/0004_delivery_principal_ownership.sql"),
+        include_str!("../../migrations/0005_client_command_reports.sql"),
+        include_str!("../../migrations/0006_iam_webhook_receipts.sql"),
+        include_str!("../../migrations/0007_testing_environments.sql"),
+        include_str!("../../migrations/0008_canonical_delivery_replay.sql"),
+    ] {
+        sqlx::raw_sql(migration).execute(&pool).await.unwrap();
+    }
+    for (id, state, operation) in [
+        ("ready", "active", None),
+        ("pending", "pending", Some("exchange")),
+        ("refreshing", "refreshing", Some("refresh")),
+    ] {
+        sqlx::query("INSERT INTO delivery_credentials(id,org_id,actor_id,principal_id,membership_id,actor_kind,enabled,state,operation,enrollment_digest,encrypted_payload,lease_owner,lease_until,created_at,updated_at) VALUES(?,'org',?,?,?,'silicon',1,?,?,?,'encrypted-old-family','worker',9999999999,1,1)")
+            .bind(id).bind(id).bind(id).bind(id).bind(state).bind(operation).bind(id).execute(&pool).await.unwrap();
+    }
+    sqlx::raw_sql("INSERT INTO sessions(id,org_id,started_by,started_by_kind,name,description,started_at,expires_at,delivery_principal_id,delivery_membership_id) VALUES('session','org','si:owner','silicon','Existing recording','Migration fixture','2026-01-01','2026-01-02','principal','membership'); INSERT INTO recording_artifacts(session_id,kind,state,next_attempt_at,entry_id,artifact_path,receipt_url_enc) VALUES('session','video','complete','2026-01-02','verified-entry','existing/path','encrypted-receipt');")
+        .execute(&pool).await.unwrap();
+    sqlx::raw_sql(include_str!("../../migrations/0009_recording_obo_consent.sql")).execute(&pool).await.unwrap();
+    let retired: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM delivery_credentials WHERE enabled=0 AND state='revoking' AND operation='revoke' AND mutation_key=id AND lease_owner IS NULL AND lease_until=0 AND encrypted_payload='encrypted-old-family'")
+        .fetch_one(&pool).await.unwrap();
+    assert_eq!(retired, 3);
+    let grants: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM recording_obo_grants").fetch_one(&pool).await.unwrap();
+    assert_eq!(grants, 0);
+    let receipt: (String, String, String, String, String) = sqlx::query_as("SELECT s.delivery_principal_id,s.delivery_membership_id,a.state,a.entry_id,a.receipt_url_enc FROM sessions s JOIN recording_artifacts a ON a.session_id=s.id")
+        .fetch_one(&pool).await.unwrap();
+    assert_eq!(
+        receipt,
+        (
+            "principal".into(),
+            "membership".into(),
+            "complete".into(),
+            "verified-entry".into(),
+            "encrypted-receipt".into()
+        )
+    );
+}

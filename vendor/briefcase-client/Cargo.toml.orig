@@ -1,0 +1,49 @@
+[package]
+name = "briefcase-client"
+description = "Official Rust client for the Silicon Briefcase file service."
+categories = ["api-bindings", "filesystem"]
+keywords = ["briefcase", "silicon", "files", "storage", "client"]
+readme = "README.md"
+documentation = "https://docs.briefcase.teamofsilicons.com/client/"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+authors.workspace = true
+
+[dependencies]
+futures-core = "0.3.31"
+mime = "0.3.17"
+reqwest.workspace = true
+secrecy.workspace = true
+semver.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sha2 = "0.10.9"
+thiserror.workspace = true
+time.workspace = true
+tokio = { workspace = true, features = ["fs", "io-util", "net", "time"] }
+tokio-util = { version = "0.7.17", features = ["io"] }
+url.workspace = true
+uuid.workspace = true
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2.189"
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
+wiremock = "0.6.5"
+
+[lints.rust]
+missing_docs = "warn"
+unsafe_code = "forbid"
+
+[lints.clippy]
+all = { level = "warn", priority = -1 }
+pedantic = { level = "warn", priority = -1 }
+expect_used = "deny"
+todo = "deny"
+unimplemented = "deny"
+unwrap_used = "deny"

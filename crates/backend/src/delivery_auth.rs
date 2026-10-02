@@ -1,4 +1,5 @@
-//! Backend-owned IAM families for recording delivery. CLI refresh tokens never enter this store.
+pub mod obo;
+// Legacy OAuth family revocation and OBO recording broker shared dependencies.
 use crate::{
     auth::{
         DeliveryTokenExchange, ExchangeRequest, IdentityError, IdentityProvider, PrincipalIdentity, RecordingProof,
@@ -19,6 +20,8 @@ use uuid::Uuid;
 pub enum DeliveryAuthError {
     #[error(transparent)]
     Identity(#[from] IdentityError),
+    #[error("recording consent code or state is invalid")]
+    InvalidConsent,
     #[error("delivery authorization storage is unavailable")]
     Storage,
     #[error("delivery authorization transition is in progress")]

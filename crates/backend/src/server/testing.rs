@@ -141,10 +141,10 @@ impl TestingRegistry {
         state.identity = Arc::new(identity);
         // Never send a test recording to production Briefcase storage. The
         // same IAM world is selected in Briefcase by its imported app secret.
-        if let (Some(url), Some(audience), Some(key)) =
+        if let (Some(url), Some(audience), key) =
             (&self.0.config.briefcase_url, &self.0.config.briefcase_app_id, &credentials.briefcase_test_environment_key)
         {
-            let client = BriefcaseClient::with_upload_limit(url, Some(key), self.0.config.recording_max_bytes)?;
+            let client = BriefcaseClient::with_upload_limit(url, key.as_deref(), self.0.config.recording_max_bytes)?;
             state = state
                 .with_recording_delivery(client, self.0.config.iam_app_id.clone(), audience.clone())
                 .map_err(|_| internal("could not configure test recording delivery"))?;

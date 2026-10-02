@@ -72,3 +72,15 @@ Test actor IDs or test SLTs use the same authenticated APIs as production.
 Creating browser sessions additionally requires the imported Briefcase IAM app
 secret (`ask_` plus 43 base64url characters) from the same world, passed through
 `briefcase_test_environment_key`, and recording authorization. See the [API and CLI guide](https://browser.teamofsilicons.com/docs).
+
+### Separate recording consent
+
+After login and `Client::org`, call `start_recording_consent` with a retained
+idempotency key, show its IAM URL, then call `complete_recording_consent` with
+`RecordingConsentComplete { code, state }`. `recording_consent(id)` reads pending
+status; `delivery_authorization()` reads the resulting safe status. The same
+account, organization and testing transport must complete the request. The client
+never owns delegated access/refresh credentials. Old `authorize_delivery` helpers
+return an explicit local migration error without transmitting a login token.
+Custom transports must implement `send_idempotent` to support starting approval;
+the default refuses to silently discard the retry identity.

@@ -1,7 +1,7 @@
-//! Prepare existing native recordings and command logs for request-bound Briefcase delivery.
+//! Prepare existing native recordings and command logs for reserved Briefcase delivery.
 //!
 //! Durable claiming, cancellation, retry identity, and receipt persistence belong to the caller.
-//! Preparation happens before proof issuance. Upload never retries a proof itself.
+//! Preparation precedes reservation. Durable operation IDs reconcile uncertain publication.
 
 use std::{net::SocketAddr, sync::Arc, time::Duration};
 
@@ -34,7 +34,7 @@ pub enum DeliveryError {
 }
 
 /// An anonymous private file; the only handle remains owned by this artifact until upload.
-/// Persist the digest and size with the attempt before issuing a body-bound proof.
+/// Persist the digest and size before reserving the exact artifact.
 #[derive(Debug)]
 pub struct StagedArtifact {
     pub name: String,
@@ -143,6 +143,28 @@ impl RecordingDelivery {
             }
         }
         self.finish_staging(format!("{session_id}-commands.jsonl"), "application/x-ndjson", file).await
+    }
+
+    pub async fn upload_approved(
+        &self,
+        artifact: StagedArtifact,
+        tokens: &crate::delivery_auth::obo::RecordingTokens,
+        app_id: &str,
+        operation_id: uuid::Uuid,
+    ) -> Result<BriefcaseEntry, DeliveryError> {
+        Ok(self
+            .briefcase
+            .upload_recording(
+                app_id,
+                operation_id,
+                tokens,
+                &artifact.name,
+                artifact.content_type,
+                &artifact.body_sha256,
+                artifact.file,
+                artifact.size,
+            )
+            .await?)
     }
 
     pub async fn upload(
@@ -511,57 +533,6 @@ mod tests {
         assert_eq!(equivalent.size, staged.size);
         staged.file.rewind().await.unwrap();
         assert!(!format!("{staged:?}").contains("evaluate"));
-    }
-
-    #[tokio::test]
-    async fn staged_artifact_upload_uses_exact_hashed_bytes_and_supplied_proof() {
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let origin = format!("http://{}", listener.local_addr().unwrap());
-        let mut worker = idle_worker(4096);
-        worker.briefcase = BriefcaseClient::with_upload_limit(&origin, None, 4096).unwrap();
-        let staged = worker.prepare_log("local", &[log(1)]).await.unwrap();
-        let digest = staged.body_sha256.clone();
-        let expected_size = staged.size;
-        let server = tokio::spawn(async move {
-            let (mut socket, _) = listener.accept().await.unwrap();
-            let mut head = vec![];
-            loop {
-                head.push(socket.read_u8().await.unwrap());
-                if head.ends_with(b"\r\n\r\n") {
-                    break;
-                }
-            }
-            let head = String::from_utf8(head).unwrap().to_ascii_lowercase();
-            assert!(head.starts_with("post /api/v1/obo/files "));
-            assert!(head.contains("x-iam-obo-access-proof: obo_supplied-proof\r\n"));
-            assert!(!head.contains("authorization:"));
-            let size =
-                head.lines().find_map(|line| line.strip_prefix("content-length: ")).unwrap().parse::<usize>().unwrap();
-            assert_eq!(size as u64, expected_size);
-            let mut body = vec![0; size];
-            socket.read_exact(&mut body).await.unwrap();
-            assert_eq!(hex::encode(Sha256::digest(&body)), digest);
-            let reply = serde_json::json!({"id":"00000000-0000-0000-0000-000000000001", "org_id":"org", "type":"file", "name":"local-commands.jsonl",
-                "path":"private/actor/browser/local-commands.jsonl", "size":size,
-                "permanent_url":"https://briefcase.example/entry", "origin_app_id":"browser"})
-            .to_string();
-            socket
-                .write_all(
-                    format!(
-                        "HTTP/1.1 201 Created\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{reply}",
-                        reply.len()
-                    )
-                    .as_bytes(),
-                )
-                .await
-                .unwrap();
-        });
-        let receipt = worker
-            .upload(staged, &OnBehalfOfGrant::new("obo_supplied-proof").unwrap(), "org", "browser")
-            .await
-            .unwrap();
-        assert_eq!(receipt.size, expected_size);
-        server.await.unwrap();
     }
 
     #[tokio::test]

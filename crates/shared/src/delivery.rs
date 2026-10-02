@@ -43,3 +43,24 @@ impl crate::Validate for DeliveryAuthorizationRequest {
         crate::AuthExchangeRequest { short_lived_token: self.short_lived_token.clone(), org_id: None }.validate()
     }
 }
+
+/// Separate feature consent. Access and refresh credentials stay on the backend.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RecordingConsent {
+    pub authorization_id: String,
+    pub consent_url: Option<String>,
+    pub state: String,
+    pub status: String,
+    pub expires_at: String,
+}
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RecordingConsentComplete {
+    pub code: String,
+    pub state: String,
+}
+impl std::fmt::Debug for RecordingConsentComplete {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("RecordingConsentComplete([REDACTED])")
+    }
+}
