@@ -324,6 +324,11 @@ impl Client {
     ///
     /// # Errors
     /// Always returns a configuration error without transmitting credentials or bytes.
+    #[allow(
+        clippy::unused_async,
+        clippy::unused_async_trait_impl,
+        reason = "retain the public async signature while refusing the retired operation locally"
+    )]
     pub async fn create_file_on_behalf_of(&self, upload: &OnBehalfOfUpload) -> Result<Entry> {
         crate::ApplicationId::new(upload.app_id.clone())?;
         Err(crate::Error::Configuration(

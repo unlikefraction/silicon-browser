@@ -1,9 +1,9 @@
 # IAM client 5.0.0
 
 Normalized cargo package of `teamofsilicons/silicon-iam` commit
-`52dd5ea7d48571e29e3b79371dfc27405644fbd9` (`release/iam-5.0.0`).
+`f1e9c4768029aacabe337ca41be52e05023d1631` (`release/iam-5.0.0`).
 
-Archive SHA-256: `0ea91b222ca40cb7b1181c9365bab69bcdc870d82c30724d29c4bf3f4b1b6ea8`.
+Archive SHA-256: `08e77be23d42e5021e371b2653e71cf98dd0ff75eebfa24734d4950b8fbe335f`.
 
 Created with `cargo package -p silicon-iam-client --locked --no-verify --offline`.
 The package manifest resolves workspace inheritance; source and tests match that

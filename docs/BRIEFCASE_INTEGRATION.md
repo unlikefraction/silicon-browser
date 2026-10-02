@@ -53,7 +53,7 @@ expiry must match before Browser saves its consent link. The chosen downstream
 provider account may differ after explicit approval. A delayed rejection of an
 older upload credential cannot disable a replacement approval.
 
-Migration `0009_recording_obo_consent.sql` disables legacy login-derived delivery
+Migration `0010_recording_obo_consent.sql` disables legacy login-derived delivery
 families and queues their revocation. Existing ownership bindings, job claims,
 and verified receipts remain. No historical ordinary token becomes OBO consent.
 

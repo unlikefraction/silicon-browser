@@ -2021,7 +2021,7 @@ pub struct ApplicationOboDownstream {
 /// the Application's organization.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ApplicationOboEndpoint {
-    /// Globally unique [app:obo:local] identity.
+    /// Globally unique `[app:obo:local]` identity.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub obo_id: Option<String>,
     /// The contract's `name`.
@@ -2553,7 +2553,7 @@ pub struct AtaDiscoveredEndpoint {
     /// The contract's `enabled`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub enabled: Option<bool>,
-    /// Globally unique [app_id:ata:local_id]
+    /// Globally unique `[app_id:ata:local_id]`
     pub ata_id: String,
     /// The contract's `version`.
     pub version: i64,
@@ -4201,7 +4201,7 @@ pub struct OboConsentDetail {
 /// Contract type `OboConsentNode`.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct OboConsentNode {
-    /// Globally unique [app:obo:local] identity.
+    /// Globally unique `[app:obo:local]` identity.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub obo_id: Option<String>,
     /// The contract's `name`.
