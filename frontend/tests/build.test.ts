@@ -9,7 +9,10 @@ test('build backend configuration rejects visitor-controlled or credential-beari
 });
 test('Vercel routes login and live handoffs to the static app and never proxies APIs', async () => {
   const config = JSON.parse(await readFile(new URL('../vercel.json', import.meta.url), 'utf8'));
-  assert.equal(config.framework,'vite'); assert.equal(config.buildCommand,'pnpm run build'); assert.equal(config.outputDirectory,'dist');
+  const { packageManager } = JSON.parse(await readFile(new URL('../package.json', import.meta.url), 'utf8'));
+  assert.equal(config.framework,'vite'); assert.equal(config.outputDirectory,'dist');
+  assert.equal(config.buildCommand, `npx --yes ${packageManager} run build`);
+  assert.equal(config.installCommand, `npx --yes ${packageManager} install --frozen-lockfile`);
   assert(config.rewrites.some((route:{source:string})=>route.source==='/auth/callback'));
   assert(config.rewrites.some((route:{source:string})=>route.source==='/sessions/:id/live'));
   assert(config.rewrites.some((route:{source:string;destination:string})=>route.source==='/docs' && route.destination==='/docs/index.html'));
