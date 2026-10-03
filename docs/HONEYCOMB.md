@@ -24,22 +24,23 @@ compatible. The curl installer and Honeycomb use the same native CLI builds.
 
 ## Current release — 2026-10-03
 
-[Browser 0.4.0](https://github.com/unlikefraction/silicon-browser/releases/tag/managed-v0.4.0)
+[Browser 0.4.1](https://github.com/unlikefraction/silicon-browser/releases/tag/managed-v0.4.1)
 is public in Honeycomb at application revision 3. It separates login from IAM 5
 feature authorization: recording delivery needs an explicit Briefcase approval
 bound to the selected account and organization. Ordinary CLI SLT login remains
 compatible.
 
 The published archive SHA-256 is
-`da326fb6ad3ea1dc8b87f32238cb32079d2887998cda7911f6cfd8937422a7f4`.
-[Native CI](https://github.com/unlikefraction/silicon-browser/actions/runs/37077948674)
-built all six targets from `e2127927c4f29aa65bf38d29c8c4a7691ef5123d`; the
+`c7b92980fb09ada4538ded03d6222a0346455c2d4cb7c4831ab9afe4363df86a`.
+[Native CI](https://github.com/unlikefraction/silicon-browser/actions/runs/37142254120)
+built all six targets from `6da8a79f2307483d28091869221f342b817c342d`; the
 release includes provenance and per-binary checksums. Keep these published
 artifacts immutable. The curl installer and npm package reuse the macOS/Linux
-CLI bytes from this release.
+CLI bytes from this release. The Rust client, shared contracts, and CLI crates
+are published as 0.4.1. Older releases, including 0.4.0, remain immutable.
 
 The current installer is served from `main/scripts/install.sh` and pins the
-0.4.0 release assets and hashes. Older release tags retain their original
+0.4.1 release assets and hashes. Older release tags retain their original
 installer scripts; use the current installer when upgrading.
 
 ## Historical rollout status — 2026-09-17
@@ -70,7 +71,7 @@ while that wording change is reviewed.
 ## Build a release
 
 Browser 0.3.0 introduced canonical identities; its published artifacts remain
-immutable. This checkout prepares 0.4.1, with corrected IAM 5 setup guidance and login/recording compatibility fixes. Follow the [migration procedure](PUBLIC-IDENTIFIER-MIGRATION.md)
+immutable. The current release is 0.4.1, with corrected IAM 5 setup guidance and login/recording compatibility fixes. Follow the [migration procedure](PUBLIC-IDENTIFIER-MIGRATION.md)
 for any retained store that has not completed the identifier cutover.
 
 Keep `Cargo.toml`, workspace versions in `Cargo.lock`, and `honeycomb.yaml` in
