@@ -32,6 +32,18 @@ npm `silicon-browser@1.0.4` is the public `latest` and contains the same four ma
 
 Honeycomb development operation `51f91c31-208d-49b3-8668-edb8131c8dbb` and production operation `7c8f0f0b-f10f-46fc-99f2-5f99eada8624` accepted the identical 0.4.2 archive. Both channels are public and published under configuration revision 4 with no pending permission approval. Anonymous clean-home macOS ARM64 installs in both channels returned `browser 0.4.2` and `agent-browser 0.36.0`, passed help checks, and matched archive executable hashes.
 
+## Public installer and website
+
+[GitHub release managed-v0.4.2](https://github.com/unlikefraction/silicon-browser/releases/tag/managed-v0.4.2) is public and targets `55100e27a69a0ca083529cd691c2edc34561a840`. All twelve uploaded assets match local sizes and SHA256 digests. The current public installer source SHA256 is `417751eed2ecd61d73ee9b5af606ebd17f758d6b08aed5c82a8dab2031d582ed`; an isolated child-process `--no-setup` install returned `browser 0.4.2` without modifying the operator's normal installation or shell profiles.
+
+Vercel production deployment `dpl_Gbkx9thRW95NBpZuSZAmcfPhdp1p` serves commit `49d8bd2` at [browser.teamofsilicons.com](https://browser.teamofsilicons.com). The live bundle is `index-DvKeiyG7.js`, SHA256 `93d29d539337145b2f5763293948cfd9097566bb3bdd5ac84fbeaa660f168b1c`. Root, docs, ordinary and OBO callback routes, and live-session deep links return 200. Chrome renders Carbon/Silicon choices without console warnings or errors. The first candidate failed because Vercel selected an incompatible pnpm; the successful deployment explicitly uses the declared pnpm 12.5.1 without changing dependency or lockfile versions.
+
+## Production authentication and bounded recording check
+
+Live checks passed for Carbon login bound to the selected organization, bad-state rejection, exact login replay, wrong-organization rejection, Carbon/Silicon mismatch rejection without invalidating the legitimate login, and refresh replay. IAM displayed exactly the four expected Briefcase roots with the originating account, organization, callback and state; explicit approval, completion retry and active feature status passed.
+
+One incognito session was created and explicitly stopped after 13.052 seconds. It is confirmed ended in both Browser and Browser Use. Browser Use's authenticated GET returns `recordingAvailable: true` with a null `recordingUrl`; both its V3 and V2 lookup agree. Browser is retaining the pending source-resolution job, so no upload artifact or Briefcase receipt exists yet. This verifies live login, consent, session start and stop, but does not certify the full recording-delivery path. No second paid browser was created to repeat this check.
+
 ## IAM and Honeycomb permissions
 
 Browser's accepted/effective Honeycomb configuration is revision 4, active in IAM as revision 46. Publication `7f9c9101-6d03-4d6c-810d-590ce505d2b2` is published. It declares exactly four Briefcase roots: `briefcase.uploads.reserve`, `briefcase.uploads.commit`, `briefcase.uploads.status`, and `briefcase.entries.list`. Existing three-root approvals require fresh explicit feature consent; ordinary login remains separate.
