@@ -9,7 +9,7 @@ const headers = Object.fromEntries(config.headers[0].headers.map(header => [head
 const types = { '.svg': 'image/svg+xml', '.js': 'text/javascript', '.css': 'text/css', '.woff': 'font/woff', '.woff2': 'font/woff2' };
 const server = createServer(async (request, response) => {
   const pathname = new URL(request.url, 'http://localhost').pathname;
-  const page = pathname === '/' || pathname === '/auth/callback' || /^\/sessions\/[^/]+\/live\/?$/.test(pathname);
+  const page = pathname === '/' || pathname === '/auth/callback' || pathname === '/auth/obo/callback' || /^\/sessions\/[^/]+\/live\/?$/.test(pathname);
   const asset = /^\/assets\/[A-Za-z0-9_.-]+$/.test(pathname) && types[path.extname(pathname)];
   const docsPage = pathname === '/docs' || pathname === '/docs/';
   const docsFile = /^\/docs\/[A-Za-z0-9_-]+\.(html|css|md)$/.test(pathname);
