@@ -51,16 +51,17 @@ fn digest(value: &str) -> String {
 fn upstream(error: silicon_iam_client::Error) -> DeliveryAuthError {
     match error {
         silicon_iam_client::Error::Api(api)
-            if matches!(
-                api.code.as_str(),
-                "invalid_grant"
-                    | "obo_access_token_invalid"
-                    | "obo_token_invalid"
-                    | "obo_token_expired"
-                    | "obo_token_revoked"
-                    | "obo_authorization_denied"
-                    | "obo_consent_required"
-            ) =>
+            if api.status == 412
+                || matches!(
+                    api.code.as_str(),
+                    "invalid_grant"
+                        | "obo_access_token_invalid"
+                        | "obo_token_invalid"
+                        | "obo_token_expired"
+                        | "obo_token_revoked"
+                        | "obo_authorization_denied"
+                        | "obo_consent_required"
+                ) =>
         {
             DeliveryAuthError::NeedsAuthorization
         }
@@ -72,6 +73,20 @@ fn upstream(error: silicon_iam_client::Error) -> DeliveryAuthError {
         .into(),
     }
 }
+
+#[cfg(test)]
+#[test]
+fn changed_consent_graph_requires_new_authorization_without_rejecting_login() {
+    let error = silicon_iam_client::Error::Api(silicon_iam_client::ApiError {
+        status: 412,
+        code: "version_mismatch".into(),
+        message: "Review the changed graph".into(),
+        details: None,
+        request_id: None,
+    });
+    assert!(matches!(upstream(error), DeliveryAuthError::NeedsAuthorization));
+}
+
 impl DeliveryAuth {
     fn sdk(&self) -> Result<Client> {
         self.identity

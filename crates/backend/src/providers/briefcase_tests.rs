@@ -7,6 +7,29 @@ use wiremock::{
     matchers::{body_bytes, body_partial_json, header, method, path},
 };
 
+#[test]
+fn rejected_or_changed_provider_authority_requests_new_consent() {
+    for (status, code, needs_consent) in [
+        (401, "unauthenticated", true),
+        (403, "forbidden", false),
+        (403, "obo_token_revoked", true),
+        (412, "consent_changed", true),
+        (429, "rate_limit", false),
+        (503, "unavailable", false),
+    ] {
+        let error = briefcase_client::Error::Api(briefcase_client::ApiError {
+            status,
+            code: code.into(),
+            message: "details".into(),
+            request_id: None,
+            retry_after: None,
+            unsatisfied_range_length: None,
+        });
+        let mapped = sdk_error(error);
+        assert_eq!(matches!(mapped, ProviderError::Http { status: 401, .. }), needs_consent);
+    }
+}
+
 #[tokio::test]
 async fn staged_upload_reconciles_same_operation_and_uses_selected_provider_context() {
     for testing in [false, true] {

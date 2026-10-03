@@ -48,6 +48,7 @@ use crate::store::{
 use crate::url_policy::{has_forbidden_host, is_https_or_loopback_http};
 
 mod delivery;
+mod login;
 mod testing;
 mod usage_limits;
 pub use testing::TestingRegistry;
@@ -607,6 +608,8 @@ pub fn router(state: AppState) -> Router {
         .route("/healthz", get(health))
         .route("/api/v1/iam", get(iam))
         .route("/api/v1/auth/exchange", post(exchange_auth))
+        .route("/api/v1/auth/login-attempts", post(login::start))
+        .route("/api/v1/auth/login-attempts/{id}/complete", post(login::complete))
         .route("/api/v1/auth/refresh", post(refresh_auth))
         .route("/api/v1/auth/delivery", get(delivery::authorization_status).post(delivery::authorize))
         .route("/api/v1/auth/delivery/authorizations", post(delivery::start_consent))
@@ -2287,6 +2290,9 @@ pub fn spawn_ttl_reaper(state: AppState, interval: Duration) -> tokio::task::Joi
 
 #[cfg(test)]
 mod tests {
+    mod login_attempts {
+        include!("server/login_tests.rs");
+    }
     mod testing_routing {
         include!("server/testing_tests.rs");
     }

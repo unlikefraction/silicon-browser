@@ -114,8 +114,9 @@ enum Command {
         pr: Option<String>,
     },
     /// Install/check the runner and authenticate with an IAM short-lived token.
-    /// Recording delivery uses a separate fresh Browser oac_ token via SB_RECORDING_SLT
-    /// or a masked prompt. Test mode enrolls the authenticated test actor automatically.
+    /// Recording delivery requires separate IAM approval for the selected account and
+    /// organization. Open the approval URL and enter its approval code; use
+    /// recording-access for noninteractive approval. Login tokens cannot replace consent.
     /// An active backend authorization is reused.
     Setup {
         /// Select an organization already authorized by the short-lived token.

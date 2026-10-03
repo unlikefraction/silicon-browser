@@ -1438,6 +1438,8 @@ pub struct FakeIdentityProvider {
 
 #[derive(Default)]
 struct FakeState {
+    #[cfg(test)]
+    exchange_keys: Vec<String>,
     recording_sdk: Option<silicon_iam_client::Client>,
     recording_environment: Option<Uuid>,
     identities: HashMap<CacheKey, PrincipalIdentity>,
@@ -1460,6 +1462,10 @@ impl fmt::Debug for FakeIdentityProvider {
 }
 
 impl FakeIdentityProvider {
+    #[cfg(test)]
+    pub fn exchange_keys(&self) -> Vec<String> {
+        self.write().exchange_keys.clone()
+    }
     pub fn allow_recording_client(&self, client: silicon_iam_client::Client, environment: Option<Uuid>) {
         let mut state = self.write();
         state.recording_sdk = Some(client);
@@ -1539,6 +1545,8 @@ impl IdentityProvider for FakeIdentityProvider {
     }
 
     async fn exchange_short_lived_token(&self, request: ExchangeRequest) -> Result<ExchangedAuth, IdentityError> {
+        #[cfg(test)]
+        self.write().exchange_keys.push(request.idempotency_key.clone());
         self.state
             .read()
             .unwrap_or_else(|poisoned| poisoned.into_inner())

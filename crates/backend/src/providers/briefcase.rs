@@ -324,7 +324,12 @@ fn invalid_receipt() -> ProviderError {
     }
 }
 fn sdk_error(error: briefcase_client::Error) -> ProviderError {
-    if error.is_unauthenticated() {
+    // A resource ACL denial is not a revoked grant. Only explicit consent/token
+    // failures (or a changed consent graph) invite the user to authorize again.
+    if matches!(&error, briefcase_client::Error::Api(api) if matches!(api.status, 401 | 412)
+        || (api.status == 403 && matches!(api.code.as_str(),
+            "obo_access_token_invalid" | "obo_token_invalid" | "obo_token_expired" | "obo_token_revoked" | "obo_consent_required")))
+    {
         ProviderError::Http {
             provider: PROVIDER,
             status: 401,
