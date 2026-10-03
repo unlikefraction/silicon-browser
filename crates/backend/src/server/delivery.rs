@@ -252,7 +252,7 @@ impl AppState {
         {
             Ok(status) => Some(status),
             Err(DeliveryAttemptError::Provider(ProviderError::Http { status: 404, .. })) => None,
-            Err(error) => return Err(error.into()),
+            Err(error) => return Err(error),
         };
         // Status comes first: an uncertain commit can already be complete even after
         // the browser's source URL has expired. Never reserve a new operation to retry it.
