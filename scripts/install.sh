@@ -1,5 +1,5 @@
 #!/bin/sh
-# Public installer for immutable Browser 0.4.1 release assets and SHA-256 checksums.
+# Public installer for immutable Browser 0.4.2 release assets and SHA-256 checksums.
 # Keep the entry point last so a truncated download cannot start installation.
 set -eu
 
@@ -19,16 +19,16 @@ main() {
     case "$(uname -s):$(uname -m)" in
         Darwin:arm64|Darwin:aarch64)
             target=aarch64-apple-darwin
-            digest=aa971a3255dfdcaaf62c7e36edf6a010cca6081c540ec8a3a235dad9e1b515a0 ;;
+            digest=54c3b4e3cc27e1efa9ca8bf67c770cbbb12f3ddf90f1f2fc419c5c9a4c1b847b ;;
         Darwin:x86_64)
             target=x86_64-apple-darwin
-            digest=de6c33fbdcfd5539324fe2794b8acb184efdf73725a5dcd1f74435578028f389 ;;
+            digest=125c44c24e290ec8c834bee32725be02910b14e85c0a01f0a7079773b7125612 ;;
         Linux:aarch64|Linux:arm64)
             target=aarch64-unknown-linux-gnu
-            digest=c4bc9bedc48211da7c90e42bba36e9d5b11ebe29c19d6c4c3e388e8cb3179600 ;;
+            digest=9812fbc23e5b4406550c36bd0a48660db56933f6c6f888d8d6fad0e1af847838 ;;
         Linux:x86_64)
             target=x86_64-unknown-linux-gnu
-            digest=c5d54092be09b3163516371568f2ffbf4b1379b1837a187e6367246eb42136ba ;;
+            digest=458abf04581d36563250145fdcf93cf557521f77048920f9fbc82c7bffade65b ;;
         *) fail 'Supported platforms: macOS and Linux on x86-64 or ARM64.' ;;
     esac
     case "$target" in
@@ -62,11 +62,11 @@ main() {
     trap 'rm -rf "$work"' EXIT
     trap 'exit 130' INT
     trap 'exit 143' TERM
-    asset="browser-v0.4.1-$target"
-    printf 'Installing browser 0.4.1 for %s…\n' "$target"
+    asset="browser-v0.4.2-$target"
+    printf 'Installing browser 0.4.2 for %s…\n' "$target"
     curl --fail --show-error --silent --location --proto '=https' --tlsv1.2 \
         --retry 3 --connect-timeout 20 --max-time 300 \
-        "https://github.com/unlikefraction/silicon-browser/releases/download/managed-v0.4.1/$asset.tar.gz" \
+        "https://github.com/unlikefraction/silicon-browser/releases/download/managed-v0.4.2/$asset.tar.gz" \
         --output "$work/archive.tar.gz"
     if [ "$checksum" = sha256sum ]; then
         actual=$(sha256sum "$work/archive.tar.gz")
@@ -77,7 +77,7 @@ main() {
     tar -xzf "$work/archive.tar.gz" -C "$work" "$asset/browser"
     chmod 755 "$work/$asset/browser"
     installed_version=$("$work/$asset/browser" --version) || fail 'The release cannot run on this system; existing installation was not changed.'
-    [ "$installed_version" = 'browser 0.4.1' ] || fail 'The release has an unexpected command name or version; existing installation was not changed.'
+    [ "$installed_version" = 'browser 0.4.2' ] || fail 'The release has an unexpected command name or version; existing installation was not changed.'
     [ ! -d "$bin_dir/browser" ] || fail "$bin_dir/browser is a directory."
     mv -f "$work/$asset/browser" "$bin_dir/browser"
     add_path "$HOME/.profile"

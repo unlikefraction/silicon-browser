@@ -41,13 +41,13 @@ Four Space Station tables have been provisioned, but Browser does not yet emit
 runtime telemetry to them. See the [current capability status](docs/CLI.md#telemetry-updates-and-compatibility)
 for telemetry, updates, and versioning limits.
 
-For installation without interactive setup, use `curl -fsSL https://raw.githubusercontent.com/unlikefraction/silicon-browser/main/scripts/install.sh | sh -s -- --no-setup`, then run `~/.local/bin/browser setup` when ready. You can also [download prebuilt binaries](https://github.com/unlikefraction/silicon-browser/releases/tag/managed-v0.4.1) or build this release using `cargo install silicon-browser-cli --version 0.4.1 --locked` with Rust 1.98 or later. For a source checkout, use `cargo install --path crates/cli`.
+For installation without interactive setup, use `curl -fsSL https://raw.githubusercontent.com/unlikefraction/silicon-browser/main/scripts/install.sh | sh -s -- --no-setup`, then run `~/.local/bin/browser setup` when ready. You can also [download prebuilt binaries](https://github.com/unlikefraction/silicon-browser/releases/tag/managed-v0.4.2) or build this release using `cargo install silicon-browser-cli --version 0.4.2 --locked` with Rust 1.98 or later. For a source checkout, use `cargo install --path crates/cli`.
 
 `browser login <SLT>` exchanges a short-lived IAM token bound to the account and single organization selected in IAM; `--org-id` can require that same organization. For example, `iam login --app-id 'browser' --grant-org tos -o json | jq -r .slt` followed by `browser --org-id tos login '<SLT>'`. `browser login status --json` reports the current session, and `browser iam --json` prints the canonical application ID.
 
 Website sign-in creates a backend-bound login attempt for the selected Carbon or Silicon account kind. The callback must match its state and verified account kind, and the popup closes only after the backend confirms the exchange. A blocked popup falls back to full-page sign-in. CLI SLT login remains compatible.
 
-The dashboard is live at [browser.teamofsilicons.com](https://browser.teamofsilicons.com). The CLI uses its production API by default. Install the [Rust client](https://crates.io/crates/silicon-browser) with `cargo add silicon-browser@0.4.1`.
+The dashboard is live at [browser.teamofsilicons.com](https://browser.teamofsilicons.com). The CLI uses its production API by default. Install the [Rust client](https://crates.io/crates/silicon-browser) with `cargo add silicon-browser@0.4.2`.
 
 Setup accepts a fresh IAM `oac_` token interactively or through `SB_AUTHTOKEN`. IAM supplies the token's organization authorization; `--org` selects one when several are available. Setup exchanges the one-shot token and never persists it. An `oat_` in that variable is an explicit invocation-only bearer override. Setup installs the pinned native controller with integrity checks; it does not install local Chromium, Node or npm. Running setup again is safe.
 
