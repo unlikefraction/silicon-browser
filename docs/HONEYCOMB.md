@@ -130,7 +130,16 @@ IAM's fresh verification for `application.webhook.approve` and the exact pending
 endpoint; a stored login is insufficient.
 
 Browser requests identity, membership and tags for authorization, plus
-`briefcase.entries.list`, `briefcase.uploads.reserve`, and `briefcase.uploads.commit` for separately approved recording delivery.
+`briefcase.entries.list`, `briefcase.uploads.reserve`, `briefcase.uploads.commit`,
+and `briefcase.uploads.status` for separately approved recording delivery.
+Status is a separate accepted provider endpoint; reserve and commit do not grant
+it implicitly. Update Browser's complete application configuration at its current
+revision and obtain new feature consent when expanding from the old three roots.
+The 2026-10-03 UTC update saved proposed Browser revision 4 and opened publication
+request `7f9c9101-6d03-4d6c-810d-590ce505d2b2` in `awaiting_validator`.
+Effective revision 3 remains active until review and activation finish; it lacks
+the status root. Check live state before release rather than treating a saved
+configuration as accepted permission.
 Honeycomb itself needs its own Briefcase upload/download/publication grants; a
 missing Honeycomb grant must be repaired in that platform, not added to Browser.
 

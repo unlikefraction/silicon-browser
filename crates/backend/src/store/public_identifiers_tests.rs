@@ -70,7 +70,10 @@ async fn fixture() -> (Store, String, String, CommandReport, RecordingDeliveryCl
         )
         .await
         .unwrap();
-    store.bind_session_delivery_owner("bricks", &session.id, PRINCIPAL, MEMBERSHIP).await.unwrap();
+    store
+        .bind_session_delivery_owner("bricks", &session.id, PRINCIPAL, MEMBERSHIP, "bricks", "chef:bricks")
+        .await
+        .unwrap();
     store
         .activate_session(
             "bricks",

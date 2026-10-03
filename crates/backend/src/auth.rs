@@ -236,6 +236,15 @@ pub trait IdentityProvider: Send + Sync {
         None
     }
 
+    /// Durable OBO secrets belong to one authenticated testing generation.
+    fn recording_world(&self) -> String {
+        self.recording_environment().map_or_else(|| "production".into(), |id| id.to_string())
+    }
+
+    async fn validate_recording_context(&self) -> Result<(), IdentityError> {
+        Ok(())
+    }
+
     /// Resolve an OAT inside an explicit organization context.
     async fn identify(&self, bearer: &str, org: &str) -> Result<PrincipalIdentity, IdentityError>;
 
@@ -288,6 +297,7 @@ pub struct SiliconIamIdentityProvider {
     app_id: Arc<str>,
     app_secret: Secret,
     testing_environment: Option<Uuid>,
+    recording_world: String,
     authorization_cache: Option<Arc<crate::auth_cache::AuthorizationCache>>,
 }
 
@@ -404,6 +414,7 @@ impl SiliconIamIdentityProvider {
                 reason: "IAM returned a different application or invalid environment identity",
             });
         }
+        self.recording_world = testing_delivery_world(&context)?;
         self.testing_environment = Some(context.environment_id);
         Ok(context)
     }
@@ -482,6 +493,7 @@ impl SiliconIamIdentityProvider {
             app_id: Arc::from(app_id),
             app_secret: Secret::new(app_secret),
             testing_environment: None,
+            recording_world: "production".into(),
             authorization_cache: None,
         })
     }
@@ -773,25 +785,19 @@ impl SiliconIamIdentityProvider {
             })
             .transpose()?;
 
-        // Do not trust exchange metadata alone. Verify that IAM considers the
-        // new OAT active in an organization already authorized by the SLT.
-        let claims = self.introspect(&response.access_token, required_org_id).await?;
-        let org_id = required_org_id
-            .map(str::to_owned)
-            .or_else(|| response.org_id.clone())
-            .or_else(|| {
-                let mut organizations = organizations_from_claims(&claims, &self.app_id, Utc::now()).ok()?;
-                (organizations.len() == 1).then(|| organizations.remove(0).id)
-            })
-            .ok_or(IdentityError::Contract {
-                operation,
-                reason: "select an explicit organization when IAM authorizes zero or multiple organizations",
-            })?;
-        let selected_claims = if claims.org_id.as_deref() == Some(org_id.as_str()) {
-            claims
-        } else {
-            self.introspect(&response.access_token, Some(&org_id)).await?
-        };
+        // IAM 5 binds the family to exactly one organization. An org parameter
+        // can check that binding, never select from an old plural authorization.
+        let selected_claims = self.introspect(&response.access_token, required_org_id).await?;
+        validate_common_claims(&selected_claims, &self.app_id, Utc::now())?;
+        let org_id = selected_claims.org_id.clone().ok_or(IdentityError::Contract {
+            operation,
+            reason: "IAM 5 application tokens must select exactly one organization",
+        })?;
+        if required_org_id.is_some_and(|expected| expected != org_id)
+            || response.org_id.as_deref().is_some_and(|expected| expected != org_id)
+        {
+            return Err(IdentityError::Forbidden);
+        }
         let identity = identity_from_claims(&selected_claims, &self.app_id, &org_id, actor_public_id, Utc::now())?;
         if let Some(actor) = response.actor.as_ref()
             && (identity.principal_id != actor.public_id
@@ -812,6 +818,22 @@ impl SiliconIamIdentityProvider {
 
 #[async_trait]
 impl IdentityProvider for SiliconIamIdentityProvider {
+    fn recording_world(&self) -> String {
+        self.recording_world.clone()
+    }
+
+    async fn validate_recording_context(&self) -> Result<(), IdentityError> {
+        if self.is_testing() {
+            let context = self.sdk.applications().testing_context().await.map_err(testing_context_error)?;
+            if context.application.app_id != self.app_id.as_ref()
+                || testing_delivery_world(&context)? != self.recording_world
+            {
+                return Err(IdentityError::Forbidden);
+            }
+        }
+        Ok(())
+    }
+
     fn recording_client(&self) -> Option<silicon_iam_client::Client> {
         Some(self.sdk.clone())
     }
@@ -906,40 +928,45 @@ impl IdentityProvider for SiliconIamIdentityProvider {
     }
 }
 
+fn testing_delivery_world(context: &ApplicationTestingContext) -> Result<String, IdentityError> {
+    let environment = context
+        .environment
+        .as_ref()
+        .filter(|environment| environment.environment_id == context.environment_id && environment.key_generation > 0)
+        .ok_or(IdentityError::Contract {
+            operation: "testing context",
+            reason: "IAM omitted the authenticated testing generation",
+        })?;
+    Ok(format!(
+        "{}:{}:{}",
+        context.environment_id,
+        environment.key_generation,
+        environment.cleaned_at.map(|time| time.unix_timestamp_nanos()).unwrap_or(0)
+    ))
+}
+
 fn organizations_from_claims(
     claims: &TokenIntrospection,
     app_id: &str,
     now: DateTime<Utc>,
 ) -> Result<Vec<OrganizationAccess>, IdentityError> {
-    if let Some(id) = claims.org_id.clone() {
-        identity_from_claims(claims, app_id, &id, None, now)?;
-        return Ok(vec![OrganizationAccess { id, name: None }]);
-    }
-    validate_common_claims(claims, app_id, now)?;
-    let authorizations = claims.authorizations.as_ref().ok_or(IdentityError::Contract {
+    let id = claims.org_id.clone().ok_or(IdentityError::Contract {
         operation: "token introspection",
-        reason: "an unscoped token had no organization authorizations",
+        reason: "IAM 5 application tokens must select exactly one organization",
     })?;
-    let mut result = Vec::with_capacity(authorizations.len());
-    for authorization in authorizations {
-        let id = authorization.org_id.clone();
-        let mut selected = claims.clone();
-        selected.org_id = Some(id.clone());
-        selected.membership_id = Some(authorization.membership_id.clone());
-        selected.authorization_epoch = Some(authorization.authorization_epoch);
-        selected.authorization = Some(authorization.clone());
-        selected.authorizations = None;
-        identity_from_claims(&selected, app_id, &id, None, now)?;
-        result.push(OrganizationAccess { id, name: None });
-    }
-    result.sort_by(|left, right| left.id.cmp(&right.id));
-    result.dedup_by(|left, right| left.id == right.id);
-    Ok(result)
+    identity_from_claims(claims, app_id, &id, None, now)?;
+    Ok(vec![OrganizationAccess { id, name: None }])
 }
 
 fn validate_common_claims(claims: &TokenIntrospection, app_id: &str, now: DateTime<Utc>) -> Result<(), IdentityError> {
     if !claims.active {
         return Err(IdentityError::Unauthenticated);
+    }
+    if claims.authorizations.as_ref().is_some_and(|authorizations| !authorizations.is_empty()) {
+        return Err(IdentityError::Contract {
+            operation: "token introspection",
+            reason: "IAM 5 application tokens must select exactly one organization",
+        });
     }
     if claims.client_id.as_deref() != Some(app_id) || claims.audience.as_deref() != Some(app_id) {
         return Err(IdentityError::Unauthenticated);
@@ -1769,7 +1796,7 @@ mod tests {
     }
 
     #[test]
-    fn org_bound_oat_yields_one_org_and_unbound_oat_reports_capability() {
+    fn org_bound_oat_yields_one_org_and_legacy_plural_tokens_fail_closed() {
         assert_eq!(
             organizations_from_claims(&claims(), APP, Utc::now()).unwrap(),
             vec![OrganizationAccess { id: ORG.into(), name: None }]
@@ -1779,7 +1806,45 @@ mod tests {
         unbound.org_id = None;
         unbound.membership_id = None;
         unbound.authorizations = Some(Vec::new());
-        assert_eq!(organizations_from_claims(&unbound, APP, Utc::now()).unwrap(), Vec::<OrganizationAccess>::new());
+        assert!(matches!(organizations_from_claims(&unbound, APP, Utc::now()), Err(IdentityError::Contract { .. })));
+        let mut plural = claims();
+        plural.authorizations = Some(vec![plural.authorization.clone().unwrap()]);
+        assert!(matches!(
+            identity_from_claims(&plural, APP, ORG, None, Utc::now()),
+            Err(IdentityError::Contract { .. })
+        ));
+    }
+
+    #[tokio::test]
+    async fn exchange_cannot_select_an_organization_from_a_legacy_plural_token() {
+        let iam = wiremock::MockServer::start().await;
+        let mut legacy = claims();
+        legacy.org_id = None;
+        legacy.authorizations = Some(vec![legacy.authorization.take().unwrap()]);
+        wiremock::Mock::given(wiremock::matchers::path("/api/v1/oauth/introspect"))
+            .respond_with(wiremock::ResponseTemplate::new(200).set_body_json(legacy))
+            .expect(1)
+            .mount(&iam)
+            .await;
+        let provider = SiliconIamIdentityProvider::from_parts(
+            reqwest::Client::new(),
+            Url::parse(&iam.uri()).unwrap(),
+            APP.into(),
+            "app-secret".into(),
+        )
+        .unwrap();
+        let response: OAuthTokenResponse = serde_json::from_value(json!({
+            "access_token":oat('A'),"refresh_token":format!("ort_{}", "R".repeat(43)),
+            "token_type":"Bearer","expires_in":1800,"scope":"self.identity.read", "org_id":ORG
+        }))
+        .unwrap();
+        assert!(matches!(
+            provider.validate_exchanged(response, Some(ORG), "test exchange").await,
+            Err(IdentityError::Contract {
+                reason: "IAM 5 application tokens must select exactly one organization",
+                ..
+            })
+        ));
     }
 
     #[test]
@@ -2276,6 +2341,31 @@ mod tests {
                 IdentityError::Contract { operation: "testing context", .. } | IdentityError::Unauthenticated
             ));
             assert!(!format!("{error:?}").contains(&secret));
+            server.await.unwrap();
+        }
+    }
+
+    #[tokio::test]
+    async fn cleanup_or_key_rotation_blocks_old_recording_authority() {
+        for field in ["cleaned_at", "key_generation"] {
+            let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let base = Url::parse(&format!("http://{}/", listener.local_addr().unwrap())).unwrap();
+            let original: ApplicationTestingContext = serde_json::from_value(testing_context()).unwrap();
+            let mut changed = testing_context();
+            changed["environment"][field] =
+                if field == "cleaned_at" { json!("2026-10-03T12:00:00Z") } else { json!(2) };
+            let server = tokio::spawn(async move {
+                let (mut stream, _) = listener.accept().await.unwrap();
+                let request = read_request_head(&mut stream).await;
+                assert!(request.starts_with("GET /api/v1/application/testing-context "));
+                write_test_response(&mut stream, "200 OK", &[], &changed.to_string()).await;
+            });
+            let mut provider =
+                SiliconIamIdentityProvider::from_parts(reqwest::Client::new(), base, APP.into(), "app-secret".into())
+                    .unwrap();
+            provider.testing_environment = Some(original.environment_id);
+            provider.recording_world = testing_delivery_world(&original).unwrap();
+            assert_eq!(provider.validate_recording_context().await, Err(IdentityError::Forbidden));
             server.await.unwrap();
         }
     }

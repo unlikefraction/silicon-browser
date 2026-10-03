@@ -19,7 +19,8 @@ pub use artifact::{
     TrashArtifact,
 };
 pub use briefcase::{
-    BRIEFCASE_OBO_ENDPOINT_ID, BRIEFCASE_OBO_PATH, BriefcaseClient, BriefcaseEntry, DEFAULT_BRIEFCASE_UPLOAD_LIMIT,
+    BRIEFCASE_RECORDING_ENDPOINTS, BriefcaseClient, BriefcaseEntry, BriefcaseUploadManifest,
+    BriefcaseUploadReservation, BriefcaseUploadState, BriefcaseUploadStatus, DEFAULT_BRIEFCASE_UPLOAD_LIMIT,
 };
 pub use browser::{
     BrowserProvider, BrowserUseV3, CreateBrowserProfile, ProviderAccountLimits, ProviderBrowserSession,

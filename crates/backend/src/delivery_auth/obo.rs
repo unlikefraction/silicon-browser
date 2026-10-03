@@ -8,7 +8,8 @@ use silicon_iam_client::{
 use sqlx::Row;
 use subtle::ConstantTimeEq;
 
-pub const ENDPOINTS: [&str; 3] = ["briefcase.uploads.reserve", "briefcase.uploads.commit", "briefcase.entries.list"];
+pub const ENDPOINTS: [&str; 4] =
+    ["briefcase.uploads.reserve", "briefcase.uploads.commit", "briefcase.uploads.status", "briefcase.entries.list"];
 #[derive(Serialize)]
 pub struct RecordingConsent {
     pub authorization_id: String,
@@ -33,6 +34,7 @@ pub struct RecordingTokens {
     pub actor_id: String,
     pub reserve: crate::providers::OnBehalfOfGrant,
     pub commit: crate::providers::OnBehalfOfGrant,
+    pub status: crate::providers::OnBehalfOfGrant,
     pub list: crate::providers::OnBehalfOfGrant,
     pub testing_secret: Option<secrecy::SecretString>,
     pub expires_at: chrono::DateTime<Utc>,
@@ -88,16 +90,14 @@ fn changed_consent_graph_requires_new_authorization_without_rejecting_login() {
 }
 
 impl DeliveryAuth {
-    fn sdk(&self) -> Result<Client> {
+    async fn sdk(&self) -> Result<Client> {
+        self.identity.validate_recording_context().await?;
         self.identity
             .recording_client()
             .ok_or_else(|| IdentityError::CapabilityUnavailable(crate::auth::IdentityCapability::RecordingProof).into())
     }
     fn obo_context(&self, suffix: &str) -> String {
-        format!(
-            "recording-obo/{}/{suffix}",
-            self.identity.recording_environment().map_or_else(|| "production".into(), |id| id.to_string())
-        )
+        format!("recording-obo/{}/{suffix}", self.identity.recording_world())
     }
     fn grant_context(&self, org: &str, principal: &str, membership: &str) -> String {
         self.obo_context(&format!("{org}/{principal}/{membership}/tokens"))
@@ -136,7 +136,7 @@ impl DeliveryAuth {
         mutation(key)?;
         // Capture the exact login token before the first network attempt. A retry after
         // login rotation must retain the original authorization payload and mutation key.
-        let sdk = self.sdk()?;
+        let sdk = self.sdk().await?;
         let id = Uuid::now_v7().to_string();
         let state = format!("{}{}", Uuid::new_v4().simple(), Uuid::new_v4().simple());
         let request = OboAuthorizationRequest {
@@ -167,7 +167,9 @@ impl DeliveryAuth {
             .bind(&id).bind(org).bind(&actor.principal_id).bind(&actor.membership_id).bind(public).bind(key).bind(request_cipher).bind(state_cipher).bind(digest(&state)).bind(Utc::now().timestamp()+900).execute(self.store.pool()).await.map_err(database)?;
         let mut tx = self.store.pool().begin_with("BEGIN IMMEDIATE").await.map_err(database)?;
         let mut row=sqlx::query("SELECT * FROM recording_obo_authorizations WHERE org_id=? AND principal_id=? AND membership_id=? AND retry_key=?").bind(org).bind(&actor.principal_id).bind(&actor.membership_id).bind(key).fetch_one(&mut *tx).await.map_err(database)?;
-        if row.try_get::<i64, _>("expires_at").map_err(database)? <= Utc::now().timestamp() {
+        if row.try_get::<String, _>("status").map_err(database)? == "cancelled"
+            || row.try_get::<i64, _>("expires_at").map_err(database)? <= Utc::now().timestamp()
+        {
             return Err(DeliveryAuthError::NeedsAuthorization);
         }
         // A pending operation may be retried, but its callback cannot be changed.
@@ -257,7 +259,7 @@ impl DeliveryAuth {
         {
             return Err(DeliveryAuthError::InvalidConsent);
         }
-        let sdk = self.sdk()?;
+        let sdk = self.sdk().await?;
         let mut tx = self.store.pool().begin_with("BEGIN IMMEDIATE").await.map_err(database)?;
         let row = sqlx::query(
             "SELECT * FROM recording_obo_authorizations WHERE id=? AND org_id=? AND principal_id=? AND membership_id=?",
@@ -281,7 +283,9 @@ impl DeliveryAuth {
             }
             return self.consent_response(&row);
         }
-        if row.try_get::<i64, _>("expires_at").map_err(database)? <= Utc::now().timestamp() {
+        if row.try_get::<String, _>("status").map_err(database)? == "cancelled"
+            || row.try_get::<i64, _>("expires_at").map_err(database)? <= Utc::now().timestamp()
+        {
             return Err(DeliveryAuthError::NeedsAuthorization);
         }
         let iam_id = row
@@ -310,18 +314,56 @@ impl DeliveryAuth {
             .seal_for(&self.grant_context(org, &actor.principal_id, &actor.membership_id), &plaintext)
             .map_err(|_| DeliveryAuthError::Storage)?;
         sqlx::query("INSERT INTO recording_obo_grants(org_id,principal_id,membership_id,actor_id,tokens_cipher,credential_version) VALUES(?,?,?,?,?,?) ON CONFLICT(org_id,principal_id,membership_id) DO UPDATE SET actor_id=excluded.actor_id,tokens_cipher=excluded.tokens_cipher,credential_version=excluded.credential_version,enabled=1,needs_auth=0").bind(org).bind(&actor.principal_id).bind(&actor.membership_id).bind(public).bind(cipher).bind(credential_version).execute(&mut *tx).await.map_err(database)?;
+        sqlx::query("UPDATE recording_obo_authorizations SET status='cancelled',request_cipher='' WHERE org_id=? AND principal_id=? AND membership_id=? AND status='pending' AND id<>?")
+            .bind(org).bind(&actor.principal_id).bind(&actor.membership_id).bind(id).execute(&mut *tx).await.map_err(database)?;
         let row=sqlx::query("UPDATE recording_obo_authorizations SET status='completed',code_digest=?,request_cipher='' WHERE id=? RETURNING *").bind(code_digest).bind(id).fetch_one(&mut *tx).await.map_err(database)?;
         tx.commit().await.map_err(database)?;
         self.consent_response(&row)
     }
     fn validate_tokens(&self, pairs: &[OboTokenPair]) -> Result<()> {
         if pairs.len() != ENDPOINTS.len() {
-            return Err(DeliveryAuthError::Storage);
+            return Err(DeliveryAuthError::NeedsAuthorization);
         }
         let first = pairs.first().ok_or(DeliveryAuthError::Storage)?;
+        let credential = |value: &str, prefix: &str| {
+            value.starts_with(prefix)
+                && (5..=16384).contains(&value.len())
+                && value.bytes().all(|byte| byte.is_ascii_graphic())
+        };
         for endpoint in ENDPOINTS {
             let pair = pairs.iter().find(|pair| pair.endpoint_id == endpoint).ok_or(DeliveryAuthError::Storage)?;
-            if pair.audience != self.audience || pair.org_id.is_empty() || !pair.access_token.starts_with("oba_") || !pair.refresh_token.starts_with("obr_") || !(5..=16384).contains(&pair.access_token.len()) || !(5..=16384).contains(&pair.refresh_token.len()) || !pair.access_token.bytes().all(|b|b.is_ascii_graphic()) || !pair.refresh_token.bytes().all(|b|b.is_ascii_graphic()) || pair.actor.as_ref().is_none_or(|actor| !matches!((&actor.type_field,actor.public_id.split_once(':')), (silicon_iam_client::models::ActorRefType::Carbon,Some(("c",suffix))) | (silicon_iam_client::models::ActorRefType::Silicon,Some(("si",suffix))) if !suffix.is_empty() && suffix.bytes().all(|b|b.is_ascii_alphanumeric() || matches!(b,b'-'|b'_')))) || pair.org_id!=first.org_id || pair.actor.as_ref().map(|actor|&actor.public_id)!=first.actor.as_ref().map(|actor|&actor.public_id) || pair.testing_context.is_some()!=self.identity.is_testing() || pair.testing_context.as_ref().is_some_and(|context|context.app_id!=self.audience || !context.app_secret.starts_with("ask_")) || pair.testing_context.as_ref().map(|c|(&c.app_id,&c.app_secret))!=first.testing_context.as_ref().map(|c|(&c.app_id,&c.app_secret)) {return Err(DeliveryAuthError::Storage);}
+            let valid_actor = pair.actor.as_ref().is_some_and(|actor| {
+                matches!(
+                    (&actor.type_field, silicon_browser_shared::actor_id(&actor.public_id, "actor")),
+                    (ActorRefType::Carbon, Ok(IdentityKind::Carbon))
+                        | (ActorRefType::Silicon, Ok(IdentityKind::Silicon))
+                )
+            });
+            if pair.audience != self.audience
+                || pair.grant_id.is_nil()
+                || pair.token_id.is_some_and(|id| id.is_nil())
+                || pair.token_type != silicon_iam_client::models::OboTokenPairTokenType::Bearer
+                || pair.expires_in <= 0
+                || pair.expires_at.unix_timestamp() <= 0
+                || pair.org_id.is_empty()
+                || pair.org_id.chars().any(|c| c.is_control() || c.is_whitespace() || matches!(c, '/' | '\\'))
+                || !credential(&pair.access_token, "oba_")
+                || !credential(&pair.refresh_token, "obr_")
+                || !valid_actor
+                || pair.org_id != first.org_id
+                || pair.actor.as_ref().map(|a| (&a.type_field, &a.public_id))
+                    != first.actor.as_ref().map(|a| (&a.type_field, &a.public_id))
+                || pair.testing_context.is_some() != self.identity.is_testing()
+                || pair.testing_context.as_ref().is_some_and(|context| {
+                    context.app_id != self.audience
+                        || !credential(&context.app_secret, "ask_")
+                        || silicon_iam_client::EnvironmentKey::new(&context.iam_test_key).is_err()
+                })
+                || pair.testing_context.as_ref().map(|c| (&c.app_id, &c.app_secret, &c.iam_test_key))
+                    != first.testing_context.as_ref().map(|c| (&c.app_id, &c.app_secret, &c.iam_test_key))
+            {
+                return Err(DeliveryAuthError::Storage);
+            }
         }
         Ok(())
     }
@@ -333,7 +375,7 @@ impl DeliveryAuth {
         membership: &str,
         force_refresh: bool,
     ) -> Result<RecordingTokens> {
-        let sdk = self.sdk()?;
+        let sdk = self.sdk().await?;
         let mut tx = self.store.pool().begin_with("BEGIN IMMEDIATE").await.map_err(database)?;
         let row=sqlx::query("SELECT * FROM recording_obo_grants WHERE org_id=? AND principal_id=? AND membership_id=? AND actor_id=? AND enabled=1 AND needs_auth=0").bind(org).bind(principal).bind(membership).bind(actor).fetch_optional(&mut *tx).await.map_err(database)?.ok_or(DeliveryAuthError::NeedsAuthorization)?;
         let context = self.grant_context(org, principal, membership);
@@ -347,6 +389,7 @@ impl DeliveryAuth {
             if force_refresh || pair.expires_at.unix_timestamp() <= Utc::now().timestamp() + 90 {
                 // The token's high-entropy digest identifies this rotation across process
                 // crashes and lost responses. A SQLite write lock serializes consumers.
+                // ponytail: global lock; use per-grant leases only if IAM latency limits throughput.
                 let key = format!("browser-refresh-{}", digest(&pair.refresh_token));
                 match sdk.obo().refresh(&pair.refresh_token, &mutation(&key)?).await {
                     Ok(mut result) if result.items.len() == 1 => {
@@ -406,10 +449,24 @@ impl DeliveryAuth {
             actor_id: first.actor.as_ref().ok_or(DeliveryAuthError::Storage)?.public_id.clone(),
             reserve: token(ENDPOINTS[0])?,
             commit: token(ENDPOINTS[1])?,
-            list: token(ENDPOINTS[2])?,
+            status: token(ENDPOINTS[2])?,
+            list: token(ENDPOINTS[3])?,
             testing_secret: first.testing_context.as_ref().map(|c| secrecy::SecretString::from(c.app_secret.clone())),
             expires_at: chrono::DateTime::from_timestamp(expiry, 0).ok_or(DeliveryAuthError::Storage)?,
         })
+    }
+    /// Capture the provider account before a paid browser starts. Later consent
+    /// may replace the local family, but must never redirect an existing recording.
+    pub async fn storage_destination(
+        &self,
+        org: &str,
+        actor: &str,
+        principal: &str,
+        membership: &str,
+        live: bool,
+    ) -> Result<(String, String)> {
+        let tokens = self.recording_tokens(org, actor, principal, membership, live).await?;
+        Ok((tokens.org_id, tokens.actor_id))
     }
     pub async fn storage_binding(
         &self,
@@ -464,9 +521,12 @@ impl DeliveryAuth {
     }
     pub async fn disable_storage(&self, org: &str, actor: &PrincipalIdentity) -> Result<DeliveryAuthorization> {
         Self::check_actor(org, actor)?;
-        // IAM grant management remains available to the user. Local disable erases
-        // all credentials and immediately blocks new/delayed recording work.
-        sqlx::query("UPDATE recording_obo_grants SET enabled=0,tokens_cipher='' WHERE org_id=? AND principal_id=? AND membership_id=?").bind(org).bind(&actor.principal_id).bind(&actor.membership_id).execute(self.store.pool()).await.map_err(database)?;
+        // Share the refresh/exchange write lock, so a delayed completion cannot
+        // restore credentials after this disable has committed.
+        let mut tx = self.store.pool().begin_with("BEGIN IMMEDIATE").await.map_err(database)?;
+        sqlx::query("UPDATE recording_obo_grants SET enabled=0,tokens_cipher='' WHERE org_id=? AND principal_id=? AND membership_id=?").bind(org).bind(&actor.principal_id).bind(&actor.membership_id).execute(&mut *tx).await.map_err(database)?;
+        sqlx::query("UPDATE recording_obo_authorizations SET status='cancelled',request_cipher='' WHERE org_id=? AND principal_id=? AND membership_id=? AND status='pending'").bind(org).bind(&actor.principal_id).bind(&actor.membership_id).execute(&mut *tx).await.map_err(database)?;
+        tx.commit().await.map_err(database)?;
         self.storage_status(org, actor).await
     }
 }

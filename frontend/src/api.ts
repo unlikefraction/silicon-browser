@@ -137,7 +137,9 @@ export class BrowserApi {
       if (!(error instanceof ApiError) || !error.authRejected) throw error;
       await this.refresh(sent, generation);
       if (!this.session || generation !== this.generation) throw new ApiError('Sign-in changed. Please try again.');
-      return this.request<T>(path, method, body, this.session, retryKey);
+      const result = await this.request<T>(path, method, body, this.session, retryKey);
+      if (generation !== this.generation) throw new ApiError('Sign-in changed. Please try again.');
+      return result;
     }
   }
 }

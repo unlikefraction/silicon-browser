@@ -1,13 +1,14 @@
-//! Briefcase recording publication using separately approved reusable OBO tokens.
-//! Reservation binds exact metadata and bytes. The staging capability transfers
-//! bytes without IAM credentials, and commit rechecks current provider authority.
+//! Briefcase 3 delegated uploads: reusable OBO controls and capability-only byte transfer.
+//! The worker owns token refresh, immutable operation identity, retries and receipt persistence.
 
-use std::time::Duration;
-use tokio::io::{AsyncReadExt, AsyncSeekExt};
+use std::{collections::HashSet, time::Duration};
 
+use chrono::{DateTime, Utc};
 use reqwest::header::HeaderValue;
 use serde::{Deserialize, Serialize};
+use serde_json::json;
 use sha2::{Digest, Sha256};
+use tokio::io::{AsyncReadExt, AsyncSeekExt};
 use url::Url;
 use uuid::Uuid;
 
@@ -16,15 +17,15 @@ use super::error::{ProviderError, ProviderResult, transport};
 use crate::url_policy::is_https_or_loopback_http;
 
 const PROVIDER: &str = "briefcase";
-pub const BRIEFCASE_OBO_PATH: &str = "/api/v1/obo/files";
-pub const BRIEFCASE_OBO_ENDPOINT_ID: &str = "briefcase.files.create";
-/// Default bound for both byte and file uploads. Operators may explicitly
-/// configure a different bound; Briefcase's own limit is independent of this one.
+pub const BRIEFCASE_RECORDING_ENDPOINTS: [&str; 4] =
+    ["briefcase.uploads.reserve", "briefcase.uploads.commit", "briefcase.uploads.status", "briefcase.entries.list"];
 pub const DEFAULT_BRIEFCASE_UPLOAD_LIMIT: usize = 64 * 1024 * 1024;
+const MAX_RESPONSE_BYTES: usize = 1024 * 1024;
 const MAX_URL_BYTES: usize = 4096;
 
 #[derive(Clone)]
 pub struct BriefcaseClient {
+    http: reqwest::Client,
     endpoint: Url,
     testing_key: Option<HeaderValue>,
     max_upload_bytes: usize,
@@ -40,8 +41,55 @@ impl std::fmt::Debug for BriefcaseClient {
     }
 }
 
-/// Public entry metadata returned by a completed OBO upload. The permanent URL
-/// is an authenticated entry link, not a signed object-download URL.
+/// Persist this intent before the first reserve; retries must retain every field.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+pub struct BriefcaseUploadManifest {
+    pub operation_id: Uuid,
+    pub parent_path: String,
+    pub name: String,
+    pub content_type: String,
+    pub size: u64,
+    pub sha256: String,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum BriefcaseUploadState {
+    Reserved,
+    Receiving,
+    Staged,
+    Committed,
+    Cancelled,
+    Expired,
+    CleanupPending,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+pub struct BriefcaseUploadStatus {
+    pub operation_id: Uuid,
+    pub upload_id: Uuid,
+    pub state: BriefcaseUploadState,
+    pub expires_at: DateTime<Utc>,
+    pub published_entry_id: Option<Uuid>,
+}
+
+#[derive(Deserialize)]
+pub struct BriefcaseUploadReservation {
+    #[serde(flatten)]
+    pub status: BriefcaseUploadStatus,
+    capability: Option<String>,
+}
+
+impl std::fmt::Debug for BriefcaseUploadReservation {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("BriefcaseUploadReservation")
+            .field("status", &self.status)
+            .field("has_capability", &self.capability.is_some())
+            .finish()
+    }
+}
+
+/// Metadata resolved after a committed upload; links require Briefcase authentication.
 #[derive(Clone, Debug, PartialEq, Eq, Deserialize, Serialize)]
 pub struct BriefcaseEntry {
     pub id: Uuid,
@@ -53,16 +101,12 @@ pub struct BriefcaseEntry {
     pub content_type: Option<String>,
     pub size: u64,
     pub permanent_url: String,
-    /// Original creator provenance, preserved across later authorized uploads.
-    /// A member-created file has no originating application.
     pub origin_app_id: Option<String>,
 }
 
 impl BriefcaseClient {
-    /// `origin` must be a root HTTP(S) origin, not `/api/v1`. Plain HTTP is
-    /// accepted only for loopback development. Testing requires the imported
-    /// Briefcase IAM app secret (`ask_` plus 43 base64url characters), distinct
-    /// from Browser's app secret and the 32-character IAM environment root key.
+    /// Use a root HTTPS origin (loopback HTTP is allowed for local fixtures).
+    /// Testing uses the imported Briefcase IAM app secret, never an IAM root key.
     pub fn new(origin: &str, testing_key: Option<&str>) -> ProviderResult<Self> {
         Self::with_upload_limit(origin, testing_key, DEFAULT_BRIEFCASE_UPLOAD_LIMIT)
     }
@@ -71,23 +115,12 @@ impl BriefcaseClient {
         if max_upload_bytes == 0 {
             return Err(invalid("Briefcase upload limit must be positive"));
         }
-        let mut endpoint = clean_url(origin)?;
+        let endpoint = clean_url(origin)?;
         if endpoint.path() != "/" {
             return Err(invalid("Briefcase URL must be a root origin without an API path"));
         }
-        endpoint.set_path(BRIEFCASE_OBO_PATH);
-        let testing_key = testing_key
-            .map(|value| {
-                if value.len() != 47
-                    || !value.starts_with("ask_")
-                    || !value[4..].bytes().all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-'))
-                {
-                    return Err(invalid("invalid Briefcase testing application secret"));
-                }
-                secret_header(value)
-            })
-            .transpose()?;
-        let _http = reqwest::Client::builder()
+        let testing_key = testing_key.map(testing_header).transpose()?;
+        let http = reqwest::Client::builder()
             .user_agent(concat!("silicon-browser/", env!("CARGO_PKG_VERSION")))
             .connect_timeout(Duration::from_secs(10))
             .timeout(Duration::from_secs(120))
@@ -95,21 +128,30 @@ impl BriefcaseClient {
             .retry(reqwest::retry::never())
             .build()
             .map_err(|error| transport(PROVIDER, error))?;
-        Ok(Self { endpoint, testing_key, max_upload_bytes })
+        Ok(Self { http, endpoint, testing_key, max_upload_bytes })
+    }
+
+    /// Select the credential returned for this token's recipient context, including clearing it
+    /// for production. A missing or invalid testing credential must be rejected by the caller.
+    pub fn with_testing_secret(&self, testing_key: Option<&str>) -> ProviderResult<Self> {
+        let mut client = self.clone();
+        client.testing_key = testing_key.map(testing_header).transpose()?;
+        Ok(client)
     }
 
     pub fn max_upload_bytes(&self) -> usize {
         self.max_upload_bytes
     }
 
-    /// Compute the digest bound by the Briefcase upload reservation.
+    /// SHA-256 is a Briefcase manifest/integrity field, not an IAM proof signature.
     pub fn body_sha256(&self, bytes: &[u8]) -> ProviderResult<String> {
-        self.validate_size(bytes.len())?;
+        if bytes.len() > self.max_upload_bytes {
+            return Err(invalid("Briefcase upload exceeds the configured size limit"));
+        }
         Ok(hex::encode(Sha256::digest(bytes)))
     }
 
-    /// Hash a private immutable staging file with bounded memory, then rewind
-    /// the same open handle for upload. Never modify the file after hashing.
+    /// Hash and rewind the same immutable file handle using bounded memory.
     pub async fn hash_file(&self, file: &mut tokio::fs::File) -> ProviderResult<(String, u64)> {
         let metadata = file.metadata().await.map_err(|_| invalid("could not inspect staging file"))?;
         if !metadata.is_file() || metadata.len() > self.max_upload_bytes as u64 {
@@ -137,212 +179,292 @@ impl BriefcaseClient {
         Ok((hex::encode(digest.finalize()), size))
     }
 
-    /// Publish exact staged bytes under a stable reservation, then read the committed receipt.
-    #[allow(
-        clippy::too_many_arguments,
-        reason = "checks the exact immutable artifact fields and selected authority together"
-    )]
-    pub async fn upload_recording(
+    pub async fn reserve_upload(
         &self,
+        org_id: &str,
         app_id: &str,
+        access: &OnBehalfOfGrant,
+        manifest: &BriefcaseUploadManifest,
+    ) -> ProviderResult<BriefcaseUploadReservation> {
+        self.validate_manifest(manifest)?;
+        let request = self.control("/api/v1/obo/uploads/reserve", org_id, app_id, access)?.json(manifest);
+        let result: BriefcaseUploadReservation = self.response(request).await?;
+        validate_status(&result.status, manifest.operation_id, None)?;
+        if let Some(capability) = &result.capability
+            && (result.status.state != BriefcaseUploadState::Reserved || secret_header(capability).is_err())
+        {
+            return Err(invalid_response("invalid upload reservation capability"));
+        }
+        Ok(result)
+    }
+
+    pub async fn upload_status(
+        &self,
+        org_id: &str,
+        app_id: &str,
+        access: &OnBehalfOfGrant,
         operation_id: Uuid,
-        tokens: &crate::delivery_auth::obo::RecordingTokens,
-        name: &str,
-        content_type: &str,
-        digest: &str,
-        file: tokio::fs::File,
+    ) -> ProviderResult<BriefcaseUploadStatus> {
+        require_uuid(operation_id)?;
+        let request = self
+            .control("/api/v1/obo/uploads/status", org_id, app_id, access)?
+            .json(&json!({"operation_id": operation_id}));
+        let result = self.response(request).await?;
+        validate_status(&result, operation_id, None)?;
+        Ok(result)
+    }
+
+    /// Transfer credentials cannot publish. Never send an OBO token or application ID here.
+    pub async fn transfer_upload(
+        &self,
+        org_id: &str,
+        reservation: &BriefcaseUploadReservation,
+        mut file: tokio::fs::File,
         size: u64,
+    ) -> ProviderResult<BriefcaseUploadStatus> {
+        validate_status(&reservation.status, reservation.status.operation_id, None)?;
+        if reservation.status.state != BriefcaseUploadState::Reserved || reservation.status.expires_at <= Utc::now() {
+            return Err(invalid("upload reservation is not available for transfer"));
+        }
+        let capability = reservation.capability.as_deref().ok_or_else(|| invalid("upload capability is absent"))?;
+        let metadata = file.metadata().await.map_err(|_| invalid("could not inspect staging file"))?;
+        if !metadata.is_file() || metadata.len() != size || size > self.max_upload_bytes as u64 {
+            return Err(invalid("staging file does not match the declared bounded upload size"));
+        }
+        file.rewind().await.map_err(|_| invalid("could not rewind staging file"))?;
+        let request = self
+            .plane(self.http.put(self.url(&format!("/api/v1/obo/uploads/{}/content", reservation.status.upload_id))))
+            .header("x-org-id", identifier_header(org_id)?)
+            .header("x-briefcase-upload-capability", secret_header(capability)?)
+            .header("content-type", "application/octet-stream")
+            .header(reqwest::header::CONTENT_LENGTH, size)
+            .body(reqwest::Body::from(file));
+        let result = self.response(request).await?;
+        validate_status(&result, reservation.status.operation_id, Some(reservation.status.upload_id))?;
+        if result.state != BriefcaseUploadState::Staged {
+            return Err(invalid_response("byte transfer did not reach staged state"));
+        }
+        Ok(result)
+    }
+
+    /// Obtain a current commit token after transfer; transfer can outlive the reserve token.
+    pub async fn commit_upload(
+        &self,
+        org_id: &str,
+        app_id: &str,
+        access: &OnBehalfOfGrant,
+        operation_id: Uuid,
+        upload_id: Uuid,
+    ) -> ProviderResult<BriefcaseUploadStatus> {
+        require_uuid(operation_id)?;
+        require_uuid(upload_id)?;
+        let request = self
+            .control("/api/v1/obo/uploads/commit", org_id, app_id, access)?
+            .json(&json!({"operation_id": operation_id, "upload_id": upload_id}));
+        let result = self.response(request).await?;
+        validate_status(&result, operation_id, Some(upload_id))?;
+        Ok(result)
+    }
+
+    /// Status returns an entry UUID only. Resolve real provider metadata without inventing a path.
+    pub async fn resolve_upload_entry(
+        &self,
+        org_id: &str,
+        app_id: &str,
+        access: &OnBehalfOfGrant,
+        manifest: &BriefcaseUploadManifest,
+        entry_id: Uuid,
     ) -> ProviderResult<BriefcaseEntry> {
-        use briefcase_client::{
-            ApplicationId, Client, Config, DelegatedCommitUpload, DelegatedListEntries, DelegatedReserveUpload,
-            DelegatedUploadState, EnvironmentKey, OboProof,
-        };
-        use secrecy::ExposeSecret as _;
-        if size > self.max_upload_bytes as u64
-            || silicon_browser_shared::app_id(app_id, "app_id").is_err()
-            || tokens.expires_at <= chrono::Utc::now()
-        {
-            return Err(invalid("invalid recording upload authority or size"));
+        self.validate_manifest(manifest)?;
+        require_uuid(entry_id)?;
+        #[derive(Deserialize)]
+        struct Page {
+            items: Vec<serde_json::Value>,
+            next_cursor: Option<String>,
         }
-        let metadata = file.metadata().await.map_err(|_| invalid("could not inspect staged recording"))?;
-        if !metadata.is_file() || metadata.len() != size {
-            return Err(invalid("staged recording length changed"));
-        }
-        let mut base = self.endpoint.clone();
-        base.set_path("/api/v1/");
-        let mut config = Config::new(base.as_str(), &tokens.org_id)
-            .map_err(|_| invalid("invalid Briefcase configuration"))?
-            .with_auto_update(false)
-            .with_transfer_timeout(Duration::from_secs(120));
-        if let Some(key) = &tokens.testing_secret {
-            config = config.with_environment(
-                EnvironmentKey::new(key.expose_secret()).map_err(|_| invalid("invalid selected testing context"))?,
-            );
-        } else if self.testing_key.is_some() {
-            return Err(invalid("missing testing grant context"));
-        }
-        let client = Client::connect(config).await.map_err(sdk_error)?;
-        let app = ApplicationId::new(app_id).map_err(sdk_error)?;
-        let token = |token: &OnBehalfOfGrant| OboProof::new(token.expose()).map_err(sdk_error);
-        let reserve = DelegatedReserveUpload {
-            operation_id,
-            parent_path: String::new(),
-            name: name.into(),
-            content_type: content_type.into(),
-            size,
-            sha256: digest.into(),
-        }
-        .prepare()
-        .map_err(sdk_error)?;
-        let reserved =
-            client.reserve_delegated_upload(&app, token(&tokens.reserve)?, &reserve).await.map_err(sdk_error)?;
-        if reserved.status.operation_id != operation_id || reserved.status.upload_id.is_nil() {
-            return Err(invalid_receipt());
-        }
-        let upload_id = reserved.status.upload_id;
-        let staged = match reserved.status.state {
-            DelegatedUploadState::Reserved => client
-                .transfer_delegated_upload_file(upload_id, reserved.capability.ok_or_else(invalid_receipt)?, file)
-                .await
-                .map_err(sdk_error)?,
-            DelegatedUploadState::Staged | DelegatedUploadState::Committed => reserved.status,
-            _ => return Err(invalid_receipt()),
-        };
-        if staged.operation_id != operation_id
-            || staged.upload_id != upload_id
-            || !matches!(staged.state, DelegatedUploadState::Staged | DelegatedUploadState::Committed)
-        {
-            return Err(invalid_receipt());
-        }
-        let committed = if staged.state == DelegatedUploadState::Committed {
-            staged
-        } else {
-            client
-                .commit_delegated_upload(
-                    &app,
-                    token(&tokens.commit)?,
-                    &DelegatedCommitUpload { operation_id, upload_id }.prepare().map_err(sdk_error)?,
-                )
-                .await
-                .map_err(sdk_error)?
-        };
-        if committed.operation_id != operation_id
-            || committed.upload_id != upload_id
-            || committed.state != DelegatedUploadState::Committed
-        {
-            return Err(invalid_receipt());
-        }
-        let published = committed.published_entry_id.ok_or_else(invalid_receipt)?;
-        let parent = format!("apps/{app_id}/private/{}", tokens.actor_id);
-        let mut cursor = None;
-        let mut seen = std::collections::HashSet::new();
+        let mut cursor: Option<String> = None;
+        let mut seen = HashSet::new();
         for _ in 0..100 {
-            let page = client
-                .list_entries_on_behalf_of(
-                    &app,
-                    token(&tokens.list)?,
-                    &DelegatedListEntries {
-                        path: Some(parent.clone()),
-                        cursor,
-                        limit: Some(100),
-                        ..Default::default()
-                    }
-                    .prepare()
-                    .map_err(sdk_error)?,
-                )
-                .await
-                .map_err(sdk_error)?;
-            if let Some(entry) = page.items.into_iter().find(|entry| entry.id == published) {
-                if entry.org_id != tokens.org_id
-                    || entry.path != format!("{parent}/{name}")
-                    || entry.name != name
-                    || entry.origin_app_id.as_deref() != Some(app_id)
-                    || entry.size != Some(size)
-                    || entry.content_type.as_deref() != Some(content_type)
-                    || clean_url(entry.permanent_url.as_str()).is_err()
-                {
-                    return Err(invalid_receipt());
-                }
-                return Ok(BriefcaseEntry {
-                    id: entry.id,
-                    org_id: entry.org_id,
-                    entry_type: "file".into(),
-                    name: entry.name,
-                    path: entry.path,
-                    content_type: entry.content_type,
-                    size,
-                    permanent_url: entry.permanent_url.to_string(),
-                    origin_app_id: entry.origin_app_id,
-                });
+            let mut body = json!({"limit": 100});
+            if !manifest.parent_path.is_empty() {
+                body["path"] = json!(manifest.parent_path);
             }
-            match page.next_cursor {
-                Some(next) if seen.insert(next.clone()) => cursor = Some(next),
-                None => break,
-                _ => return Err(invalid_receipt()),
+            if let Some(value) = &cursor {
+                body["cursor"] = json!(value);
+            }
+            let page: Page =
+                self.response(self.control("/api/v1/obo/entries/list", org_id, app_id, access)?.json(&body)).await?;
+            if page.items.len() > 100 {
+                return Err(invalid_response("entry page exceeds requested limit"));
+            }
+            for item in page.items {
+                if item.get("id").and_then(|id| id.as_str()).and_then(|id| Uuid::parse_str(id).ok()) == Some(entry_id) {
+                    let entry: BriefcaseEntry =
+                        serde_json::from_value(item).map_err(|_| invalid_response("invalid entry metadata"))?;
+                    validate_entry(&entry, org_id, manifest, entry_id)?;
+                    return Ok(entry);
+                }
+            }
+            cursor = page.next_cursor;
+            let Some(next) = &cursor else {
+                return Err(invalid_response("published upload entry was not found"));
+            };
+            if next.is_empty() || next.len() > 2048 || !seen.insert(next.clone()) {
+                return Err(invalid_response("invalid entry pagination cursor"));
             }
         }
-        Err(invalid_receipt())
+        Err(invalid_response("published entry exceeded the lookup page limit"))
     }
 
-    /// Retired raw proof API. Call `upload_recording` with separately approved tokens.
-    pub async fn upload_file(
-        &self,
-        _org_id: &str,
-        _app_id: &str,
-        _proof: &OnBehalfOfGrant,
-        _file: tokio::fs::File,
-        _size: u64,
-    ) -> ProviderResult<BriefcaseEntry> {
-        Err(invalid("raw OBO upload retired; reserve, transfer, then commit"))
-    }
-    /// Retired raw proof API. No credentials or bytes are sent.
-    pub async fn upload_raw(
-        &self,
-        _org_id: &str,
-        _app_id: &str,
-        _proof: &OnBehalfOfGrant,
-        _bytes: Vec<u8>,
-    ) -> ProviderResult<BriefcaseEntry> {
-        Err(invalid("raw OBO upload retired; reserve, transfer, then commit"))
-    }
-
-    fn validate_size(&self, size: usize) -> ProviderResult<()> {
-        if size > self.max_upload_bytes {
-            return Err(invalid(&format!(
-                "Briefcase raw upload exceeds the configured {}-byte limit",
-                self.max_upload_bytes
-            )));
+    fn validate_manifest(&self, manifest: &BriefcaseUploadManifest) -> ProviderResult<()> {
+        require_uuid(manifest.operation_id)?;
+        if manifest.size > self.max_upload_bytes as u64
+            || manifest.name.is_empty()
+            || manifest.name.len() > 255
+            || manifest.name.contains(['/', '\\'])
+            || matches!(manifest.name.as_str(), "." | "..")
+            || manifest.name.chars().any(char::is_control)
+            || manifest.content_type.is_empty()
+            || manifest.content_type.len() > 255
+            || manifest.content_type.chars().any(char::is_control)
+            || manifest.sha256.len() != 64
+            || !manifest.sha256.bytes().all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+            || (!manifest.parent_path.is_empty() && !safe_path(&manifest.parent_path))
+        {
+            return Err(invalid("invalid Briefcase upload manifest"));
         }
         Ok(())
     }
+
+    fn control(
+        &self,
+        path: &str,
+        org: &str,
+        app: &str,
+        access: &OnBehalfOfGrant,
+    ) -> ProviderResult<reqwest::RequestBuilder> {
+        if silicon_browser_shared::app_id(app, "app_id").is_err()
+            || access.expose().starts_with("obo_")
+            || access.expose().starts_with("ort_")
+        {
+            return Err(invalid("Briefcase requires a canonical app ID and reusable OBO access token"));
+        }
+        Ok(self
+            .plane(self.http.post(self.url(path)))
+            .header("x-org-id", identifier_header(org)?)
+            .header("x-app-id", identifier_header(app)?)
+            .header("x-iam-obo-access-token", secret_header(access.expose())?))
+    }
+
+    fn plane(&self, request: reqwest::RequestBuilder) -> reqwest::RequestBuilder {
+        match &self.testing_key {
+            Some(key) => request.header("x-briefcase-app-secret", key.clone()),
+            None => request,
+        }
+    }
+
+    fn url(&self, path: &str) -> Url {
+        let mut url = self.endpoint.clone();
+        url.set_path(path);
+        url
+    }
+
+    async fn response<T: serde::de::DeserializeOwned>(&self, request: reqwest::RequestBuilder) -> ProviderResult<T> {
+        let mut response = request.send().await.map_err(|error| transport(PROVIDER, error))?;
+        let status = response.status();
+        let retry_after = response.headers().get(reqwest::header::RETRY_AFTER).and_then(|header| {
+            let value = header.to_str().ok()?;
+            value.parse::<u64>().ok().map(Duration::from_secs).or_else(|| {
+                let deadline = DateTime::parse_from_rfc2822(value).ok()?.with_timezone(&Utc);
+                Some(Duration::from_secs((deadline - Utc::now()).num_seconds().max(0) as u64))
+            })
+        });
+        if response.content_length().is_some_and(|length| length > MAX_RESPONSE_BYTES as u64) {
+            return Err(invalid_response("provider response exceeded the safety limit"));
+        }
+        let mut body = Vec::new();
+        while let Some(chunk) = response.chunk().await.map_err(|error| transport(PROVIDER, error))? {
+            if chunk.len() > MAX_RESPONSE_BYTES.saturating_sub(body.len()) {
+                return Err(invalid_response("provider response exceeded the safety limit"));
+            }
+            body.extend_from_slice(&chunk);
+        }
+        if !status.is_success() {
+            // Preserve only an allowlisted authorization classification. ACL denials and
+            // transient failures must not erase a still-valid grant; body text is never logged.
+            let code = serde_json::from_slice::<serde_json::Value>(&body).ok();
+            let code = code.as_ref().and_then(|value| value["error"]["code"].as_str());
+            let authorization_required = matches!(status.as_u16(), 401 | 412)
+                || (status.as_u16() == 403
+                    && matches!(
+                        code,
+                        Some(
+                            "obo_access_token_invalid"
+                                | "obo_token_invalid"
+                                | "obo_token_expired"
+                                | "obo_token_revoked"
+                                | "obo_consent_required"
+                        )
+                    ));
+            return Err(ProviderError::Http {
+                provider: PROVIDER,
+                status: if authorization_required { 401 } else { status.as_u16() },
+                message: "provider response body redacted".into(),
+                retry_after,
+            });
+        }
+        if status != reqwest::StatusCode::OK {
+            return Err(invalid_response("unexpected delegated operation status"));
+        }
+        serde_json::from_slice(&body).map_err(|_| invalid_response("invalid delegated operation response"))
+    }
 }
 
-fn invalid_receipt() -> ProviderError {
-    ProviderError::InvalidResponse {
-        provider: PROVIDER,
-        message: "recording receipt disagreed with approved upload".into(),
-    }
-}
-fn sdk_error(error: briefcase_client::Error) -> ProviderError {
-    // A resource ACL denial is not a revoked grant. Only explicit consent/token
-    // failures (or a changed consent graph) invite the user to authorize again.
-    if matches!(&error, briefcase_client::Error::Api(api) if matches!(api.status, 401 | 412)
-        || (api.status == 403 && matches!(api.code.as_str(),
-            "obo_access_token_invalid" | "obo_token_invalid" | "obo_token_expired" | "obo_token_revoked" | "obo_consent_required")))
+fn validate_status(status: &BriefcaseUploadStatus, operation_id: Uuid, upload_id: Option<Uuid>) -> ProviderResult<()> {
+    if status.operation_id != operation_id
+        || status.operation_id.is_nil()
+        || status.upload_id.is_nil()
+        || upload_id.is_some_and(|expected| expected != status.upload_id)
+        || status.published_entry_id.is_some_and(|id| id.is_nil())
+        || (status.state == BriefcaseUploadState::Committed) != status.published_entry_id.is_some()
     {
-        ProviderError::Http {
-            provider: PROVIDER,
-            status: 401,
-            message: "recording authorization required".into(),
-            retry_after: None,
-        }
-    } else {
-        ProviderError::Transport { provider: PROVIDER, message: "Briefcase request could not be confirmed".into() }
+        return Err(invalid_response("upload status did not match the logical operation"));
     }
+    Ok(())
+}
+
+fn validate_entry(
+    entry: &BriefcaseEntry,
+    org: &str,
+    manifest: &BriefcaseUploadManifest,
+    entry_id: Uuid,
+) -> ProviderResult<()> {
+    if entry.id != entry_id
+        || entry.org_id != org
+        || entry.entry_type != "file"
+        || entry.size != manifest.size
+        || entry.name != manifest.name
+        || entry.content_type.as_deref() != Some(manifest.content_type.as_str())
+        || entry.path.rsplit('/').next() != Some(entry.name.as_str())
+        || !safe_path(&entry.path)
+        || (!manifest.parent_path.is_empty() && entry.path != format!("{}/{}", manifest.parent_path, manifest.name))
+        || clean_url(&entry.permanent_url).is_err()
+    {
+        return Err(invalid_response("published entry did not match the upload contract"));
+    }
+    Ok(())
+}
+
+fn safe_path(path: &str) -> bool {
+    !path.is_empty()
+        && path.len() <= 2048
+        && !path.contains('\\')
+        && !path.chars().any(char::is_control)
+        && !path.split('/').any(|part| matches!(part, "" | "." | ".."))
 }
 
 fn clean_url(value: &str) -> ProviderResult<Url> {
-    let url = (value.len() <= MAX_URL_BYTES)
+    (value.len() <= MAX_URL_BYTES)
         .then(|| Url::parse(value).ok())
         .flatten()
         .filter(|url| {
@@ -355,20 +477,45 @@ fn clean_url(value: &str) -> ProviderResult<Url> {
                 && url.fragment().is_none()
                 && url.port() != Some(0)
         })
-        .ok_or_else(|| {
-            invalid("Briefcase URL must use HTTPS or loopback HTTP without credentials, query, or fragment")
-        })?;
-    Ok(url)
+        .ok_or_else(|| invalid("Briefcase URL must use HTTPS or loopback HTTP without credentials, query, or fragment"))
+}
+
+fn testing_header(value: &str) -> ProviderResult<HeaderValue> {
+    if value.len() != 47
+        || !value.starts_with("ask_")
+        || !value[4..].bytes().all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-'))
+    {
+        return Err(invalid("invalid Briefcase testing application secret"));
+    }
+    secret_header(value)
+}
+
+fn identifier_header(value: &str) -> ProviderResult<HeaderValue> {
+    if value.is_empty() || value.len() > 255 || !value.bytes().all(|byte| byte.is_ascii_graphic()) {
+        return Err(invalid("invalid Briefcase organization or application identifier"));
+    }
+    HeaderValue::from_str(value).map_err(|_| invalid("invalid Briefcase identifier header"))
 }
 
 fn secret_header(value: &str) -> ProviderResult<HeaderValue> {
+    if value.len() <= 4 || value.len() > 8192 || !value.bytes().all(|byte| byte.is_ascii_graphic()) {
+        return Err(invalid("invalid Briefcase credential"));
+    }
     let mut header = HeaderValue::from_str(value).map_err(|_| invalid("invalid Briefcase secret header"))?;
     header.set_sensitive(true);
     Ok(header)
 }
 
+fn require_uuid(value: Uuid) -> ProviderResult<()> {
+    if value.is_nil() { Err(invalid("logical operation and upload IDs must be non-nil")) } else { Ok(()) }
+}
+
 fn invalid(message: &str) -> ProviderError {
     ProviderError::InvalidInput(message.into())
+}
+
+fn invalid_response(message: &str) -> ProviderError {
+    ProviderError::InvalidResponse { provider: PROVIDER, message: message.into() }
 }
 
 #[cfg(test)]

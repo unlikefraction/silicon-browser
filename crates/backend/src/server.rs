@@ -1072,9 +1072,18 @@ async fn create_session(
         .reserve_session(&scope.org_id, &scope.identity, &request, Utc::now())
         .await
         .map_err(ApiFailure::from)?;
-    if let Some((principal, membership)) = delivery_binding
-        && let Err(error) =
-            state.store.bind_session_delivery_owner(&scope.org_id, &reserved.id, &principal, &membership).await
+    if let Some(binding) = delivery_binding
+        && let Err(error) = state
+            .store
+            .bind_session_delivery_owner(
+                &scope.org_id,
+                &reserved.id,
+                &binding.principal_id,
+                &binding.membership_id,
+                &binding.destination_org,
+                &binding.destination_actor,
+            )
+            .await
     {
         let _ = state
             .store

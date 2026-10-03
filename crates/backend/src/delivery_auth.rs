@@ -700,7 +700,7 @@ mod tests {
         ) -> std::result::Result<RecordingProof, IdentityError> {
             assert_eq!(token, "oat_owned_backend");
             Ok(RecordingProof {
-                grant: crate::providers::OnBehalfOfGrant::new("obo_owned_proof").unwrap(),
+                grant: crate::providers::OnBehalfOfGrant::new("oba_owned_access").unwrap(),
                 proof_id: Uuid::new_v4(),
                 expires_at: Utc::now() + chrono::TimeDelta::seconds(60),
             })

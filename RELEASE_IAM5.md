@@ -1,12 +1,12 @@
 # Coordinated IAM 5 release
 
-This release separates feature OBO consent from ordinary login, refreshes the
-vendored IAM client to the exact 5.0.0 release commit, and retires implicit
+This release separates feature OBO consent from ordinary login and retires implicit
 login-derived delegated authority. Existing users keep their ordinary sessions
 and authorize delegated features when needed.
 
-IAM client source: `f1e9c4768029aacabe337ca41be52e05023d1631`.
-See `vendor/silicon-iam-client/VENDORED.md` for package provenance.
+Use the exact IAM client version and checksum in `Cargo.toml` and `Cargo.lock`.
+The earlier vendored client remains historical provenance, not the runtime
+dependency selection.
 
 Production rollout is coordinated with IAM 5 and the receiving providers. Build
 artifacts are candidates until integration checks and database backups pass.
@@ -16,5 +16,13 @@ State and token replay checks precede session creation, popup completion waits f
 backend success, and blocked popups use a full-page fallback. Recording permission
 revocation and changed consent graphs return an explicit reauthorization state.
 
-The public 0.4.0 CLI artifacts remain immutable. Backend and website fixes are
-tracked by their deployment source revision; they preserve the CLI exchange API.
+The 0.4.2 candidate adds Briefcase's separate upload-status root, durable logical
+operation and upload IDs, status-first recovery, and current commit authority
+after byte transfer. Completed receipts remain intact; legacy attempted uploads
+need explicit reconciliation. Existing three-root recording grants require fresh
+feature approval. The accepted Honeycomb configuration must include all four roots
+before enabling new recording consent. See [recording delivery](docs/BRIEFCASE_INTEGRATION.md)
+for the contract and outstanding shared-testing participant blocker.
+
+Published 0.4.0 and 0.4.1 CLI artifacts remain immutable. Publish new bytes under
+0.4.2 and record the deployed source revision and verification independently.

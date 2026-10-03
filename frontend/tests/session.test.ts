@@ -84,3 +84,33 @@ test('legacy cached identities require fresh sign-in before being displayed', ()
     assert.equal(values.size, 0);
   }
 });
+
+
+test('each account and organization retains its own rotating token family', () => {
+  const { saved, storage } = fixture();
+  const otherOrg = { ...renewed, access_token: 'oat_other_org', refresh_token: 'ort_other_org', org: { id: 'other', name: 'Other' } };
+  const otherAccount = { ...renewed, access_token: 'oat_other_actor', refresh_token: 'ort_other_actor', identity: { id: 'si:worker', kind: 'silicon' as const, name: 'Worker' } };
+  saved.save(initial); saved.save(otherOrg); saved.save(otherAccount); saved.save(renewed);
+  assert.equal(saved.all().length, 3);
+  assert.deepEqual(saved.load(), renewed);
+  assert.deepEqual(saved.all().find(item => item.org.id === 'other'), otherOrg);
+  saved.save(null);
+  assert.equal(saved.load(), null);
+  assert.deepEqual(saved.all(), [otherOrg, otherAccount]);
+  const reloaded = new TabSession(origin, () => storage);
+  reloaded.save(reloaded.all().find(item => item.org.id === 'other')!);
+  assert.deepEqual(reloaded.load(), otherOrg);
+  assert.deepEqual(reloaded.all().find(item => item.identity.id === 'si:worker'), otherAccount);
+});
+
+test('existing tab sessions migrate without changing their account, organization or credentials', () => {
+  const { saved, values } = fixture();
+  const key = `silicon-browser:session:v1:${origin}`;
+  values.set(key, JSON.stringify(renewed));
+  assert.deepEqual(saved.load(), renewed);
+  assert.deepEqual(saved.all(), [renewed]);
+  assert.equal(values.has(key), false);
+  saved.save(null);
+  assert.equal(saved.load(), null);
+  assert.equal(values.size, 0);
+});

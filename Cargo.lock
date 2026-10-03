@@ -295,27 +295,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "briefcase-client"
-version = "3.0.0"
-dependencies = [
- "futures-core",
- "libc",
- "mime",
- "reqwest",
- "secrecy",
- "semver",
- "serde",
- "serde_json",
- "sha2 0.10.9",
- "thiserror",
- "time",
- "tokio",
- "tokio-util",
- "url",
- "uuid",
-]
-
-[[package]]
 name = "bstr"
 version = "1.13.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1997,7 +1976,6 @@ dependencies = [
  "hyper-util",
  "js-sys",
  "log",
- "mime_guess",
  "percent-encoding",
  "pin-project-lite",
  "quinn",
@@ -2203,7 +2181,6 @@ version = "0.10.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e891af845473308773346dc847b2c23ee78fe442e0472ac50e22a18a93d3ae5a"
 dependencies = [
- "serde",
  "zeroize",
 ]
 
@@ -2377,7 +2354,7 @@ dependencies = [
 
 [[package]]
 name = "silicon-browser"
-version = "0.4.1"
+version = "0.4.2"
 dependencies = [
  "base64 0.22.1",
  "chrono",
@@ -2396,13 +2373,12 @@ dependencies = [
 
 [[package]]
 name = "silicon-browser-backend"
-version = "0.4.1"
+version = "0.4.2"
 dependencies = [
  "aes-gcm",
  "async-trait",
  "axum",
  "base64 0.22.1",
- "briefcase-client",
  "chrono",
  "hex",
  "hmac 0.12.1",
@@ -2434,7 +2410,7 @@ dependencies = [
 
 [[package]]
 name = "silicon-browser-cli"
-version = "0.4.1"
+version = "0.4.2"
 dependencies = [
  "assert_cmd",
  "chrono",
@@ -2456,7 +2432,7 @@ dependencies = [
 
 [[package]]
 name = "silicon-browser-shared"
-version = "0.4.1"
+version = "0.4.2"
 dependencies = [
  "chrono",
  "serde",
@@ -2468,7 +2444,9 @@ dependencies = [
 
 [[package]]
 name = "silicon-iam-client"
-version = "5.0.0"
+version = "5.2.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "81f64bb22f01eb2afd3ab643ca12e054dfe17c0fc70c86e96662ef05be15abdd"
 dependencies = [
  "base64 0.22.1",
  "hex",
@@ -2842,7 +2820,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "32497e9a4c7b38532efcdebeef879707aa9f794296a4f0244f6f69e9bc8574bd"
 dependencies = [
  "fastrand",
- "getrandom 0.3.4",
+ "getrandom 0.4.3",
  "once_cell",
  "rustix",
  "windows-sys 0.61.2",

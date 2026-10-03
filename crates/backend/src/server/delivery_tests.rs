@@ -207,6 +207,12 @@ async fn paid_session_revalidates_dedicated_storage_and_stops_on_revocation() {
         StatusCode::OK
     );
     assert_eq!(fixture.browser.state.lock().unwrap().browsers.len(), 1);
+    let destination: (Option<String>, Option<String>) =
+        sqlx::query_as("SELECT delivery_destination_org,delivery_destination_actor FROM sessions")
+            .fetch_one(fixture.store.pool())
+            .await
+            .unwrap();
+    assert_eq!(destination, (Some("chosen-storage".into()), Some("si:chosen".into())));
     iam.reset().await;
     Mock::given(path("/api/v1/obo-access/tokens"))
         .respond_with(
@@ -430,7 +436,7 @@ async fn concurrent_refresh_survives_uncertain_response_and_ciphertext_cannot_cr
             ResponseTemplate::new(200).set_body_json(json!({"items":[pair(endpoint,true)]}))
         })
         .with_priority(1)
-        .expect(3)
+        .expect(4)
         .mount(&iam)
         .await;
     let (one, two) = tokio::join!(
@@ -441,7 +447,7 @@ async fn concurrent_refresh_survives_uncertain_response_and_ciphertext_cannot_cr
     assert_eq!(two.unwrap().actor_id, "si:chosen");
     {
         let keys = keys.lock().unwrap();
-        assert_eq!(keys.len(), 4);
+        assert_eq!(keys.len(), 5);
         assert_eq!(keys[0], keys[1]);
     }
     fixture.identity.allow_recording_client(sdk, Some(Uuid::new_v4()));
@@ -517,12 +523,126 @@ async fn popup_consent_binds_fixed_frontend_callback_and_immutable_state() {
     let (fixture, iam) = configured_delivery_fixture().await;
     let id = Uuid::new_v4();
     Mock::given(path("/api/v1/obo-access/authorizations")).respond_with(ResponseTemplate::new(201).set_body_json(json!({"id":id,"app_id":"browser","actor":{"type":"silicon","public_id":"si:owner-1"},"org_id":"org-1","status":"pending","version":1,"expires_at":"2099-01-01T00:00:00Z","endpoints":[],"authorization_url":format!("{}/obo/consent?request={id}",iam.uri())}))).expect(1).mount(&iam).await;
-    let (status, started) = consent_call(&fixture,"/api/v1/auth/delivery/authorizations",json!({"popup":true})).await;
-    assert_eq!(status,StatusCode::OK,"{started}");
-    let calls=iam.received_requests().await.unwrap(); let body:Value=serde_json::from_slice(&calls[0].body).unwrap();
-    assert_eq!(body["redirect_uri"],format!("{}/auth/obo/callback",fixture.state.public_origin));
-    assert_eq!(body["state"],started["data"]["state"]);
-    assert_eq!(body["state"].as_str().unwrap().len(),64);
-    assert_eq!(consent_call(&fixture,"/api/v1/auth/delivery/authorizations",json!({"popup":true})).await.1,started);
-    assert_eq!(consent_call(&fixture,"/api/v1/auth/delivery/authorizations",json!({})).await.0,StatusCode::BAD_REQUEST);
+    let (status, started) = consent_call(&fixture, "/api/v1/auth/delivery/authorizations", json!({"popup":true})).await;
+    assert_eq!(status, StatusCode::OK, "{started}");
+    let calls = iam.received_requests().await.unwrap();
+    let body: Value = serde_json::from_slice(&calls[0].body).unwrap();
+    assert_eq!(body["redirect_uri"], format!("{}/auth/obo/callback", fixture.state.public_origin));
+    assert_eq!(body["state"], started["data"]["state"]);
+    assert_eq!(body["state"].as_str().unwrap().len(), 64);
+    assert_eq!(consent_call(&fixture, "/api/v1/auth/delivery/authorizations", json!({"popup":true})).await.1, started);
+    assert_eq!(
+        consent_call(&fixture, "/api/v1/auth/delivery/authorizations", json!({})).await.0,
+        StatusCode::BAD_REQUEST
+    );
+}
+
+#[tokio::test]
+async fn disable_cancels_pending_consent_and_late_callback_cannot_restore_credentials() {
+    let (fixture, iam) = configured_delivery_fixture().await;
+    let actor = fixture.identity.identify("oat_owner", "org-1").await.unwrap();
+    seed_grant(&fixture, &actor, false).await;
+    let id = Uuid::new_v4();
+    Mock::given(path("/api/v1/obo-access/authorizations"))
+        .respond_with(ResponseTemplate::new(201).set_body_json(json!({
+            "id":id,"app_id":"browser","actor":{"type":"silicon","public_id":"si:owner-1"},
+            "org_id":"org-1","status":"pending","version":1,"expires_at":"2099-01-01T00:00:00Z",
+            "endpoints":[],"authorization_url":format!("{}/obo/consent?request={id}",iam.uri())
+        })))
+        .expect(1)
+        .mount(&iam)
+        .await;
+    let (status, started) = consent_call(&fixture, "/api/v1/auth/delivery/authorizations", json!({})).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(
+        request(&fixture.app, "POST", "/api/v1/auth/delivery/end", Some(("oat_owner", "org-1")), None).await.0,
+        StatusCode::OK
+    );
+    let route = format!(
+        "/api/v1/auth/delivery/authorizations/{}/complete",
+        started["data"]["authorization_id"].as_str().unwrap()
+    );
+    assert_eq!(
+        consent_call(&fixture, &route, json!({"code":"obc_late","state":started["data"]["state"]})).await.0,
+        StatusCode::CONFLICT
+    );
+    let row: (bool, String) = sqlx::query_as("SELECT enabled,tokens_cipher FROM recording_obo_grants")
+        .fetch_one(fixture.store.pool())
+        .await
+        .unwrap();
+    assert_eq!(row, (false, String::new()));
+    assert_eq!(iam.received_requests().await.unwrap().len(), 1);
+}
+
+#[tokio::test]
+async fn worker_recovers_uncertain_commit_with_the_original_operation_and_provider_context() {
+    use crate::providers::test_http::spawn_json_server;
+    let (mut fixture, id, _iam) = failed_retry_fixture("delivery_attempts_exhausted").await;
+    // Exercise command logs independently; the unrelated video failure remains terminal.
+    sqlx::query("UPDATE recording_artifacts SET state='pending',attempts=0,next_attempt_at=0 WHERE session_id=? AND kind='commands'")
+        .bind(&id).execute(fixture.store.pool()).await.unwrap();
+    use sha2::Digest as _;
+    let digest = sha2::Sha256::digest(format!("browser-recording/org-1/{id}/commands").as_bytes());
+    let operation = Uuid::from_slice(&digest[..16]).unwrap().to_string();
+    let upload_id = Uuid::from_u128(300);
+    let entry_id = Uuid::from_u128(301);
+    let status = |state: &str| json!({"operation_id":operation,"upload_id":upload_id,"state":state,"expires_at":Utc::now()+TimeDelta::hours(1),"published_entry_id":if state=="committed" {Some(entry_id)} else {None}});
+    let mut reserved = status("reserved");
+    reserved["capability"] = json!("private-upload-capability");
+    let receipt = format!("https://briefcase.example/chosen-storage/{id}-commands.jsonl");
+    let (base,mut requests,server) = spawn_json_server(vec![
+        (404,json!({"error":"not_found"}).to_string()),
+        (200,reserved.to_string()),
+        (200,status("staged").to_string()),
+        (503,json!({"error":"lost_commit_response"}).to_string()),
+        (200,status("committed").to_string()),
+        (200,json!({"items":[{"id":entry_id,"org_id":"chosen-storage","type":"file","name":format!("{id}-commands.jsonl"),"path":format!("apps/browser/private/si:chosen/{id}-commands.jsonl"),"content_type":"application/x-ndjson","size":0,"permanent_url":receipt,"origin_app_id":"browser"}],"next_cursor":null}).to_string()),
+    ]).await;
+    fixture.state = fixture
+        .state
+        .clone()
+        .with_recording_delivery(BriefcaseClient::new(&base, None).unwrap(), "browser".into(), "briefcase".into())
+        .unwrap();
+    assert_eq!(fixture.state.deliver_recordings_once().await.unwrap(), 1);
+    let pending: (String, i64) =
+        sqlx::query_as("SELECT state,attempts FROM recording_artifacts WHERE session_id=? AND kind='commands'")
+            .bind(&id)
+            .fetch_one(fixture.store.pool())
+            .await
+            .unwrap();
+    assert_eq!(pending, ("pending".into(), 1));
+    sqlx::query("UPDATE recording_artifacts SET next_attempt_at=0 WHERE session_id=? AND kind='commands'")
+        .bind(&id)
+        .execute(fixture.store.pool())
+        .await
+        .unwrap();
+    assert_eq!(fixture.state.deliver_recordings_once().await.unwrap(), 1);
+    tokio::time::timeout(Duration::from_secs(3), server).await.unwrap().unwrap();
+    let completed: (String, i64, Option<String>) = sqlx::query_as(
+        "SELECT state,attempts,entry_id FROM recording_artifacts WHERE session_id=? AND kind='commands'",
+    )
+    .bind(&id)
+    .fetch_one(fixture.store.pool())
+    .await
+    .unwrap();
+    assert_eq!(completed, ("complete".into(), 2, Some(entry_id.to_string())));
+    for endpoint in ["status", "reserve", "content", "commit", "status", "list"] {
+        let request = requests.recv().await.unwrap();
+        assert!(request.target.ends_with(endpoint), "{}", request.target);
+        assert!(request.headers.contains("x-org-id: chosen-storage"));
+        assert!(!request.headers.contains("obr_") && !request.headers.contains("oat_owner"));
+        if endpoint == "content" {
+            assert_eq!(request.method, "PUT");
+            assert!(request.body.is_empty());
+            assert!(request.headers.contains("x-briefcase-upload-capability: private-upload-capability"));
+            assert!(!request.headers.contains("x-iam-obo-access-token:"));
+        } else {
+            let root = if endpoint == "list" { "entries.list".to_owned() } else { format!("uploads.{endpoint}") };
+            assert!(request.headers.contains(&format!("x-iam-obo-access-token: oba_briefcase.{root}")));
+            if endpoint != "list" {
+                assert_eq!(serde_json::from_slice::<Value>(&request.body).unwrap()["operation_id"], operation);
+            }
+        }
+    }
+    assert!(requests.recv().await.is_none(), "a recovered commit must not repeat reserve, transfer, or commit");
 }

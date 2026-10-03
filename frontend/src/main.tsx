@@ -11,8 +11,8 @@ import { BrowserApi, ApiError, acceptAuth, publicError, safeHttps, segment, shel
 import { readEntry, requireLiveEnvironment, completeCallback, signInPopup, PendingLoginStore, type IdentityKind } from './auth';
 import { recordingRecovery } from './recordings';
 import { RecordingConsentFlow, type RecordingConsent } from './recording-consent';
-import { TabSession } from './session';
-import type { AuthSession, Organization, Profile, Session, Recording, Usage, UsageLimits, Location, Delivery, SessionLog } from './types';
+import { TabSession, contextKey } from './session';
+import type { AuthSession, Profile, Session, Recording, Usage, UsageLimits, Location, Delivery, SessionLog } from './types';
 
 const approvalParams = location.pathname === "/auth/obo/callback" ? new URLSearchParams(location.search) : null;
 const entry = readEntry(new URL(location.href));
@@ -43,7 +43,8 @@ function App() {
   const [auth, setAuth] = createSignal<AuthSession | null>(api.currentSession());
   const [testing, setTesting] = createSignal<TestingContext>();
   const [showTesting, setShowTesting] = createSignal(!!entry.pending?.testEnvironmentId);
-  const [organizations, setOrganizations] = createSignal<Organization[]>(api.currentSession() ? [api.currentSession()!.org] : []);
+  const [contexts, setContexts] = createSignal<AuthSession[]>(savedSession.all());
+  const [addingContext, setAddingContext] = createSignal(false);
   const [busy, setBusy] = createSignal(false);
   const [loading, setLoading] = createSignal(false);
   const [notice, setNotice] = createSignal(entry.error);
@@ -124,49 +125,47 @@ function App() {
       if (!complete) return;
       if (!candidate) throw new Error('Sign-in did not complete. Please try again.');
       api.setSession(candidate);
-      resetRecordingConsent(); setAuth(api.currentSession()); await enterWorkspace();
+      const invitation = pendingLive, liveId = pendingLiveId;
+      clearWorkspace(); pendingLive = invitation; pendingLiveId = liveId;
+      setAddingContext(false); setAuth(api.currentSession()); await enterWorkspace();
     } finally { setSigningIn(false); signInAbort = null; }
   }
-  async function loadOrganizations() {
-    const current = api.currentSession(); if (!current) return;
-    const items = await api.call<Organization[]>('/orgs');
-    if (!items.some(item => item.id === current.org.id)) items.unshift(current.org);
-    setOrganizations(items.filter((item, index, all) => all.findIndex(candidate => candidate.id === item.id) === index));
+  function loadContexts() {
+    setContexts(testing() ? (api.currentSession() ? [api.currentSession()!] : []) : savedSession.all());
   }
   async function enterWorkspace() {
     if (pendingLive) requireLiveEnvironment(pendingLive, testing()?.environment_id);
-    await loadOrganizations();
+    loadContexts();
     if (pendingLive) { const link = pendingLive; pendingLive = null; pendingLiveId = null; await openLive(link.id, link.grant); }
     else if (pendingLiveId) {
       const id = pendingLiveId; pendingLiveId = null;
       try { await openLive(id); } catch { throw new Error('You are signed in. Reopen the live invitation to continue; its one-use grant was cleared before sign-in.'); }
     } else await navigate('sessions');
   }
-  async function switchOrganization(next: Organization) {
-    const current = api.currentSession(); if (!current || current.org.id === next.id) return;
-    const previous = current;
-    resetRecordingConsent();
-    api.setSession({ ...current, org: next }); setAuth(api.currentSession());
-    try { await api.call('/me'); await navigate(activeTab() as Tab); }
-    catch (error) { api.setSession(previous); setAuth(previous); throw error; }
+  async function switchContext(next: AuthSession) {
+    if (auth() && contextKey(auth()!) === contextKey(next)) return;
+    const stored = testing() ? next : savedSession.all().find(item => contextKey(item) === contextKey(next));
+    if (!stored) throw new Error('This workspace has signed out. Please sign in again.');
+    clearWorkspace(); api.setSession(stored); setAuth(stored); setAddingContext(false);
+    await enterWorkspace();
   }
   async function attachOrganizations() {
-    if (!testing()) { await login(auth()!.identity.kind); return; }
+    if (!testing()) { setAddingContext(true); return; }
     const token = await tokenFor('organization access');
     const result = acceptAuth(await api.request<AuthSession>('/auth/exchange', 'POST', { short_lived_token: token }, null));
-    resetRecordingConsent(); api.setSession(result); setAuth(result); await enterWorkspace();
+    clearWorkspace(); api.setSession(result); setAuth(result); await enterWorkspace();
     setNotice('Organization access updated.');
   }
   function clearWorkspace() {
     ++revision; setLiveUrl(''); setSession(undefined); setProfile(undefined); pendingLive = null; pendingLiveId = null;
-    setNotice(''); setLoading(false); setDelivery(undefined); resetRecordingConsent(); setSessions([]); setProfiles([]); setRecordings([]); setUsage([]); setTotal(undefined); setLimits(undefined); setLogs([]); setOrganizations([]);
+    setNotice(''); setLoading(false); setDelivery(undefined); resetRecordingConsent(); setSessions([]); setProfiles([]); setRecordings([]); setUsage([]); setTotal(undefined); setLimits(undefined); setLogs([]);
     setLocations([]); setView('sessions'); setFilter('');
     history.replaceState(null, '', '/');
   }
   function logout() {
     if (testing()) { api.close(); setShowTesting(true); }
     else api.setSession(null);
-    setAuth(null); clearWorkspace();
+    setAuth(null); clearWorkspace(); loadContexts();
   }
   async function startTesting(data: FormData) {
     const result = await productionApi.startTesting({
@@ -181,6 +180,7 @@ function App() {
   }
   async function exitTesting() {
     api.close(); api = productionApi; clearWorkspace(); setTesting(undefined); setShowTesting(false); setAuth(api.currentSession());
+    loadContexts();
     if (api.currentSession()) await enterWorkspace();
   }
   function recordingAccessAction() {
@@ -290,11 +290,11 @@ function App() {
     <aside class="rail">
       <a class="brand" href="/" aria-label="Browser home"><img src={brandMark} alt="" width="28" height="28"/><span class="brand-wordmark">Browser</span></a>
       <div class="rail-label">WORKSPACE</div>
-      <Show when={auth()} fallback={<p class="rail-note">A shared browser workspace for Carbons and Silicons.</p>}>
-        <div class="rail-label org-label">ORGANIZATIONS</div>
-        <div class="org-list" aria-label="Organizations"><For each={organizations()}>{item => <button class="org-item" aria-label={`Switch to ${item.name}`} title={item.name} classList={{ selected: auth()?.org.id === item.id }} disabled={busy()} aria-current={auth()?.org.id === item.id ? 'page' : undefined} onClick={() => void perform(() => switchOrganization(item))}><span class="org-dot" aria-hidden="true">{item.name.slice(0, 1).toUpperCase()}</span><span>{item.name}</span></button>}</For><button class="org-add" disabled={busy()} title="Attach another organization" onClick={() => void perform(attachOrganizations)}><span aria-hidden="true">+</span><span>Attach organization</span></button></div>
-        <div class="rail-label workspace-label">WORKSPACE</div>
-        <nav aria-label="Workspace"><For each={tabs}>{tab => <button disabled={busy()} aria-current={activeTab() === tab ? 'page' : undefined} onClick={() => void perform(() => navigate(tab))}><span>{tab === 'settings' ? 'Settings' : tab[0].toUpperCase() + tab.slice(1)}</span><span aria-hidden="true">{activeTab() === tab ? '→' : ''}</span></button>}</For></nav>
+      <Show when={auth() || contexts().length} fallback={<p class="rail-note">A shared browser workspace for Carbons and Silicons.</p>}>
+        <div class="rail-label org-label">WORKSPACES</div>
+        <div class="org-list" aria-label="Workspaces"><For each={contexts()}>{item => <button class="org-item" aria-label={`Switch to ${item.org.name} as ${item.identity.name}`} title={`${item.org.name} · ${item.identity.name}`} classList={{ selected: !!auth() && contextKey(auth()!) === contextKey(item) }} disabled={busy()} aria-current={auth() && contextKey(auth()!) === contextKey(item) ? 'page' : undefined} onClick={() => void perform(() => switchContext(item))}><span class="org-dot" aria-hidden="true">{item.org.name.slice(0, 1).toUpperCase()}</span><span>{item.org.name} · {item.identity.name}</span></button>}</For><button class="org-add" disabled={busy()} title="Sign in to another workspace" onClick={() => void perform(attachOrganizations)}><span aria-hidden="true">+</span><span>Add workspace</span></button></div>
+        <Show when={auth()}><div class="rail-label workspace-label">WORKSPACE</div>
+        <nav aria-label="Workspace"><For each={tabs}>{tab => <button disabled={busy()} aria-current={activeTab() === tab ? 'page' : undefined} onClick={() => void perform(() => navigate(tab))}><span>{tab === 'settings' ? 'Settings' : tab[0].toUpperCase() + tab.slice(1)}</span><span aria-hidden="true">{activeTab() === tab ? '→' : ''}</span></button>}</For></nav></Show>
       </Show>
       <div class="rail-bottom"><a href="/docs/" target="_blank" rel="noopener noreferrer">CLI & documentation ↗</a><span class="mono">TEAM OF SILICONS</span></div>
     </aside>
@@ -302,6 +302,7 @@ function App() {
       <header class="topbar"><span class="breadcrumb">Browser <span>/</span> {showTesting() ? 'Testing environment' : auth() ? activeTab() : 'Welcome'}</span><div class="identity"><button class="quiet" disabled={busy()} aria-expanded={showTesting()} onClick={() => { setNotice(''); setShowTesting(!showTesting()); }}>Testing environment</button><Show when={auth()}>{current => <><span>{current().identity.name} <small>{current().org.id}</small></span><button class="quiet" disabled={busy()} onClick={logout}>Sign out</button></>}</Show></div></header>
       <main classList={{ 'live-main': view() === 'live' && !!auth() }}>
         <Show when={notice()}><div role="status" class="notice">{notice()}</div></Show>
+        <Show when={addingContext() && !testing()}><section class="panel form-panel" aria-label="Add workspace"><h2>Sign in to another workspace</h2><p>Choose an account type, then authorize the account and organization in IAM.</p><div class="actions">{button('Continue as Carbon', () => login('carbon'), true)}{button('Continue as Silicon', () => login('silicon'))}<button disabled={busy()} onClick={() => setAddingContext(false)}>Cancel</button></div></section></Show>
         <Show when={recordingConsent()}>{consent => <section class="panel form-panel" aria-label="Recording approval">
           <h2>Approve Briefcase storage</h2><p>Choose where Browser may save recordings and command logs. This approval is separate from sign-in.</p>
           <Show when={recordingApprovalReceived()}><p class="fine">Approval received. Saving it was interrupted; retry without approving again.</p><button class="primary" disabled={busy()} onClick={()=>void perform(retryRecordingConsent)}>Retry saving approval</button></Show>
@@ -401,7 +402,7 @@ function App() {
             }}</For></div></Show>
           </Show>
           <Show when={view() === 'usage'}><div class="page-heading"><div><span class="eyebrow">WORKSPACE ACTIVITY</span><h1>Usage</h1><p class="muted">Browser time and network usage across your organization.</p></div>{button('Refresh', () => navigate('usage'))}</div><Show when={total()}>{sum => <div class="stats"><div><span>Browser time</span><strong>{(sum().browser_seconds / 60).toFixed(1)} <small>min</small></strong></div><div><span>Proxy traffic</span><strong>{bytes(sum().proxy_bytes_in + sum().proxy_bytes_out + (sum().proxy_bytes_unclassified || 0))}</strong></div><div><span>Organization total</span><strong>{cost(sum())}</strong></div></div>}</Show><Show when={limits()} fallback={<p class="muted">Service capacity is temporarily unavailable.</p>}>{capacity => <p class="muted"><strong>{capacity().concurrent_browser_limit} concurrent browsers</strong> · Shared service limit · Checked {date(capacity().checked_at)}</p>}</Show><div class="table-wrap"><table><thead><tr><th>Session</th><th>Browser time</th><th>Usage</th></tr></thead><tbody><For each={usage()}>{item => <tr><td class="mono">{item.session_id}</td><td>{(item.browser_seconds / 60).toFixed(1)} min</td><td>{cost(item)}</td></tr>}</For></tbody></table><Show when={!usage().length}><Empty>No session usage yet.</Empty></Show></div></Show>
-          <Show when={view() === 'settings'}><div class="page-heading"><div><h1>Settings</h1><p class="muted">Your identity and recording access.</p></div></div><section class="panel form-panel"><h2>Signed in</h2><dl><dt>Identity</dt><dd>{auth()?.identity.name}</dd><dt>Organization</dt><dd>{auth()?.org.id}</dd></dl><p class="fine">{testing() ? 'This test sign-in exists only in memory. Reload or exit test mode to clear it and return to production.' : 'You stay signed in when you refresh this tab. Sign out to clear this tab’s saved sign-in.'}</p></section><section class="panel form-panel"><div class="card-top"><h2>Recording access</h2><Show when={delivery()}><Badge state={delivery()!.state}/></Show></div><p>Browser saves recordings to your private Briefcase after sessions end, even when this tab is closed.</p><div class="actions"><Show when={ready()} fallback={recordingAccessAction()}>{button('Disable recording access', async () => { await api.call('/auth/delivery/end', 'POST'); await navigate('settings'); })}</Show>{button('Refresh status', () => navigate('settings'))}</div></section></Show>
+          <Show when={view() === 'settings'}><div class="page-heading"><div><h1>Settings</h1><p class="muted">Your identity and recording access.</p></div></div><section class="panel form-panel"><h2>Signed in</h2><dl><dt>Identity</dt><dd>{auth()?.identity.name}</dd><dt>Organization</dt><dd>{auth()?.org.id}</dd></dl><p class="fine">{testing() ? 'This test sign-in exists only in memory. Reload or exit test mode to clear it and return to production.' : 'You stay signed in when you refresh this tab. Sign out to remove the current account and organization from this tab. Other saved workspaces stay available.'}</p></section><section class="panel form-panel"><div class="card-top"><h2>Recording access</h2><Show when={delivery()}><Badge state={delivery()!.state}/></Show></div><p>Browser saves recordings to your private Briefcase after sessions end, even when this tab is closed.</p><div class="actions"><Show when={ready()} fallback={recordingAccessAction()}>{button('Disable recording access', async () => { await api.call('/auth/delivery/end', 'POST'); await navigate('settings'); })}</Show>{button('Refresh status', () => navigate('settings'))}</div></section></Show>
           </Show>
         </Show>
         </Show>

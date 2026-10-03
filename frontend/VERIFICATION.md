@@ -1,5 +1,20 @@
 # Frontend verification
 
+## Saved workspace isolation — 3 October 2026
+
+Each account and organization retains its own token family in tab storage.
+Switching selects the latest saved pair, and signing out removes only that
+workspace. Existing single-workspace storage migrates without changing tokens.
+An API replay that finishes after a workspace switch cannot return stale data.
+
+All 53 frontend tests and the TypeScript/Vite production build passed. An
+isolated local Chromium fixture at 1440 × 1000 and 390 × 844 verified three
+workspace switches using each exact token/organization pair, both account choices
+in Add workspace, signing out of one workspace while retaining the others, no
+mobile overflow, and no uncaught JavaScript errors. The fixture blocked external
+requests and used synthetic credentials; it did not exercise real IAM consent or
+create browser sessions. Screenshots are in `/tmp/browser-workspaces-qa/`.
+
 ## Bound IAM 5 sign-in — 3 October 2026
 
 Sign-in now starts a backend attempt with the selected account kind, then

@@ -203,3 +203,22 @@ test('web sign-in binds completion to the server attempt and cancellation cannot
   await assert.rejects(api.login('oac_oneuse', attempt, abort.signal), /Sign-in changed/);
   assert.equal(saves, 0); assert.equal(api.currentSession(), null);
 });
+
+
+test('switching workspaces during a replay rejects the old workspace response', async () => {
+  let finish!: (value: Response) => void, started!: () => void;
+  const begun = new Promise<void>(resolve => { started = resolve; });
+  const api = client(async (url, options) => {
+    if (url.endsWith('/auth/refresh')) return response(session('oat_renewed'));
+    if ((options.headers as Record<string, string>).Authorization === 'Bearer oat_initial') return response({}, 401, { 'x-sb-auth-rejected': '1' });
+    started();
+    return new Promise(resolve => { finish = resolve; });
+  });
+  const pending = api.call('/profiles');
+  await begun;
+  const next = { ...session('oat_other_org'), org: { id: 'other', name: 'Other' } };
+  api.setSession(next);
+  finish(response([{ id: 'previous_workspace_profile' }]));
+  await assert.rejects(pending, /Sign-in changed/);
+  assert.deepEqual(api.currentSession(), next);
+});

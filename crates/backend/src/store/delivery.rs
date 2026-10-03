@@ -1,7 +1,6 @@
 //! Durable, fenced delivery of independent recording artifacts.
 //! Network work stays outside SQLite transactions. A retry uses the same
-//! filename and digest and can add an identical Briefcase version after a lost
-//! response; completed receipts are never uploaded again.
+//! manifest and operation ID after a lost response; completed receipts are never uploaded again.
 
 use super::*;
 use crate::providers::BriefcaseEntry;
@@ -29,6 +28,11 @@ pub struct RecordingDeliveryClaim {
     pub principal_id: Option<String>,
     pub membership_id: Option<String>,
     pub provider_session_id: Option<String>,
+    pub destination_org: Option<String>,
+    pub destination_actor: Option<String>,
+    pub upload_operation_id: Uuid,
+    pub body_sha256: Option<String>,
+    pub size_bytes: Option<u64>,
     pub kind: RecordingArtifactKind,
     pub lease_id: String,
     pub attempt: u32,
@@ -41,9 +45,11 @@ impl Store {
         session: &str,
         principal: &str,
         membership: &str,
+        destination_org: &str,
+        destination_actor: &str,
     ) -> StoreResult<()> {
-        let changed = sqlx::query("UPDATE sessions SET delivery_principal_id = ?, delivery_membership_id = ? WHERE org_id = ? AND id = ? AND status = 'starting' AND delivery_principal_id IS NULL")
-            .bind(principal).bind(membership).bind(org).bind(session).execute(&self.pool).await?.rows_affected();
+        let changed = sqlx::query("UPDATE sessions SET delivery_principal_id = ?, delivery_membership_id = ?, delivery_destination_org = ?, delivery_destination_actor = ? WHERE org_id = ? AND id = ? AND status = 'starting' AND delivery_principal_id IS NULL")
+            .bind(principal).bind(membership).bind(destination_org).bind(destination_actor).bind(org).bind(session).execute(&self.pool).await?.rows_affected();
         if changed != 1 {
             return Err(StoreError::Invalid("session delivery owner could not be bound".into()));
         }
@@ -90,7 +96,7 @@ impl Store {
                WHERE a.state IN ('pending', 'working', 'uploading') AND r.status <> 'trashed' \
                AND a.next_attempt_at <= ? AND (a.lease_until IS NULL OR a.lease_until <= ?) \
                ORDER BY a.next_attempt_at, a.session_id, a.kind LIMIT ?) \
-             RETURNING session_id, kind, attempts",
+             RETURNING session_id, kind, attempts, body_sha256, size_bytes",
         )
         .bind(&lease)
         .bind(timestamp(lease_until))
@@ -102,8 +108,21 @@ impl Store {
         let mut claims = Vec::with_capacity(rows.len());
         for row in rows {
             let session_id: String = row.try_get("session_id")?;
-            let session = sqlx::query("SELECT org_id, started_by, provider_session_id, delivery_principal_id, delivery_membership_id FROM sessions WHERE id = ?")
+            let session = sqlx::query("SELECT org_id, started_by, provider_session_id, delivery_principal_id, delivery_membership_id, delivery_destination_org, delivery_destination_actor FROM sessions WHERE id = ?")
                 .bind(&session_id).fetch_one(&mut *tx).await?;
+            // Preserve the exact operation identity used by released IAM 5 clients.
+            use sha2::Digest as _;
+            let digest = sha2::Sha256::digest(
+                format!(
+                    "browser-recording/{}/{}/{}",
+                    session.try_get::<&str, _>("org_id")?,
+                    session_id,
+                    row.try_get::<&str, _>("kind")?
+                )
+                .as_bytes(),
+            );
+            let upload_operation_id = Uuid::from_slice(&digest[..16])
+                .map_err(|_| corrupt("recording artifact", "invalid upload operation"))?;
             claims.push(RecordingDeliveryClaim {
                 session_id,
                 org_id: session.try_get("org_id")?,
@@ -111,6 +130,14 @@ impl Store {
                 principal_id: session.try_get("delivery_principal_id")?,
                 membership_id: session.try_get("delivery_membership_id")?,
                 provider_session_id: session.try_get("provider_session_id")?,
+                destination_org: session.try_get("delivery_destination_org")?,
+                destination_actor: session.try_get("delivery_destination_actor")?,
+                upload_operation_id,
+                body_sha256: row.try_get("body_sha256")?,
+                size_bytes: row
+                    .try_get::<Option<i64>, _>("size_bytes")?
+                    .map(|n| nonnegative(n, "artifact size"))
+                    .transpose()?,
                 kind: match row.try_get::<&str, _>("kind")? {
                     "video" => RecordingArtifactKind::Video,
                     "commands" => RecordingArtifactKind::Commands,
@@ -178,23 +205,11 @@ impl Store {
     ) -> StoreResult<bool> {
         Ok(sqlx::query(
             "UPDATE recording_artifacts SET state = 'uploading' \
-             WHERE session_id = ? AND kind = ? AND lease_id = ? AND lease_until > ? AND state = 'working' \
+             WHERE session_id = ? AND kind = ? AND lease_id = ? AND lease_until > ? AND state IN ('working', 'uploading') \
              AND body_sha256 IS NOT NULL AND EXISTS(SELECT 1 FROM sessions s JOIN recordings r ON r.session_id = s.id \
                  WHERE s.id = recording_artifacts.session_id AND s.org_id = ? AND s.started_by = ? AND r.status <> 'trashed')",
         ).bind(&claim.session_id).bind(claim.kind.as_str()).bind(&claim.lease_id).bind(timestamp(now))
             .bind(&claim.org_id).bind(&claim.actor_id).execute(&self.pool).await?.rows_affected() == 1)
-    }
-
-    /// Pin the approved destination before the first network mutation. A later
-    /// reapproval cannot redirect an uncertain, already-published operation.
-    pub async fn bind_recording_destination(
-        &self,
-        claim: &RecordingDeliveryClaim,
-        org: &str,
-        actor: &str,
-    ) -> StoreResult<bool> {
-        Ok(sqlx::query("UPDATE recording_artifacts SET storage_org_id=?,storage_actor_id=? WHERE session_id=? AND kind=? AND lease_id=? AND state='working' AND (storage_org_id IS NULL OR (storage_org_id=? AND storage_actor_id=?))")
-            .bind(org).bind(actor).bind(&claim.session_id).bind(claim.kind.as_str()).bind(&claim.lease_id).bind(org).bind(actor).execute(&self.pool).await?.rows_affected()==1)
     }
 
     pub async fn complete_recording_delivery(
@@ -204,16 +219,7 @@ impl Store {
         secrets: &SecretBox,
         now: DateTime<Utc>,
     ) -> StoreResult<bool> {
-        let selected_org: Option<String> = sqlx::query_scalar(
-            "SELECT storage_org_id FROM recording_artifacts WHERE session_id=? AND kind=? AND lease_id=?",
-        )
-        .bind(&claim.session_id)
-        .bind(claim.kind.as_str())
-        .bind(&claim.lease_id)
-        .fetch_optional(&self.pool)
-        .await?
-        .flatten();
-        if entry.org_id != selected_org.as_deref().unwrap_or(&claim.org_id) || entry.entry_type != "file" {
+        if Some(entry.org_id.as_str()) != claim.destination_org.as_deref() || entry.entry_type != "file" {
             return Err(StoreError::Invalid("recording receipt belongs to a different scope".into()));
         }
         let expected_name = match claim.kind {
@@ -230,7 +236,7 @@ impl Store {
         let changed = sqlx::query(
             "UPDATE recording_artifacts SET state = 'complete', entry_id = ?, artifact_path = ?, receipt_url_enc = ?, \
              completed_at = ?, lease_id = NULL, lease_until = NULL, last_error = NULL \
-             WHERE session_id = ? AND kind = ? AND lease_id = ? AND state = 'uploading' AND size_bytes = ? \
+             WHERE session_id = ? AND kind = ? AND lease_id = ? AND state IN ('working','uploading') AND size_bytes = ? \
              AND EXISTS(SELECT 1 FROM sessions s WHERE s.id = recording_artifacts.session_id AND s.org_id = ? AND s.started_by = ?)",
         ).bind(entry.id.to_string()).bind(&entry.path).bind(link).bind(timestamp(now)).bind(&claim.session_id)
             .bind(claim.kind.as_str()).bind(&claim.lease_id).bind(to_i64(entry.size, "recording size")?)

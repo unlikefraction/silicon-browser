@@ -1,7 +1,7 @@
-//! Prepare existing native recordings and command logs for reserved Briefcase delivery.
+//! Prepare existing native recordings and command logs for delegated Briefcase delivery.
 //!
 //! Durable claiming, cancellation, retry identity, and receipt persistence belong to the caller.
-//! Preparation precedes reservation. Durable operation IDs reconcile uncertain publication.
+//! Preparation happens before reservation. The worker owns reserve/transfer/commit orchestration.
 
 use std::{net::SocketAddr, sync::Arc, time::Duration};
 
@@ -10,7 +10,7 @@ use tokio::io::AsyncWriteExt;
 use url::Url;
 
 use crate::{
-    providers::{BriefcaseClient, BriefcaseEntry, BrowserProvider, OnBehalfOfGrant, ProviderError},
+    providers::{BriefcaseClient, BriefcaseUploadManifest, BrowserProvider, ProviderError},
     url_policy::has_forbidden_host,
 };
 
@@ -34,7 +34,7 @@ pub enum DeliveryError {
 }
 
 /// An anonymous private file; the only handle remains owned by this artifact until upload.
-/// Persist the digest and size before reserving the exact artifact.
+/// Persist the digest and size with the logical operation before reserving an upload.
 #[derive(Debug)]
 pub struct StagedArtifact {
     pub name: String,
@@ -42,6 +42,23 @@ pub struct StagedArtifact {
     pub body_sha256: String,
     pub size: u64,
     file: tokio::fs::File,
+}
+
+impl StagedArtifact {
+    pub fn manifest(&self, operation_id: uuid::Uuid) -> BriefcaseUploadManifest {
+        BriefcaseUploadManifest {
+            operation_id,
+            parent_path: String::new(),
+            name: self.name.clone(),
+            content_type: self.content_type.into(),
+            size: self.size,
+            sha256: self.body_sha256.clone(),
+        }
+    }
+
+    pub fn into_file(self) -> tokio::fs::File {
+        self.file
+    }
 }
 
 pub struct RecordingDelivery {
@@ -145,36 +162,8 @@ impl RecordingDelivery {
         self.finish_staging(format!("{session_id}-commands.jsonl"), "application/x-ndjson", file).await
     }
 
-    pub async fn upload_approved(
-        &self,
-        artifact: StagedArtifact,
-        tokens: &crate::delivery_auth::obo::RecordingTokens,
-        app_id: &str,
-        operation_id: uuid::Uuid,
-    ) -> Result<BriefcaseEntry, DeliveryError> {
-        Ok(self
-            .briefcase
-            .upload_recording(
-                app_id,
-                operation_id,
-                tokens,
-                &artifact.name,
-                artifact.content_type,
-                &artifact.body_sha256,
-                artifact.file,
-                artifact.size,
-            )
-            .await?)
-    }
-
-    pub async fn upload(
-        &self,
-        artifact: StagedArtifact,
-        proof: &OnBehalfOfGrant,
-        org_id: &str,
-        app_id: &str,
-    ) -> Result<BriefcaseEntry, DeliveryError> {
-        Ok(self.briefcase.upload_file(org_id, app_id, proof, artifact.file, artifact.size).await?)
+    pub fn briefcase(&self) -> &BriefcaseClient {
+        &self.briefcase
     }
 
     async fn finish_staging(
@@ -415,7 +404,7 @@ mod tests {
         assert_eq!(downloaded, bytes);
         let head = request.await.unwrap().to_ascii_lowercase();
         for forbidden in
-            ["authorization:", "x-browser-use-api-key:", "x-iam-obo-access-proof:", "x-testing-environment-key:"]
+            ["authorization:", "x-browser-use-api-key:", "x-iam-obo-access-token:", "x-testing-environment-key:"]
         {
             assert!(!head.contains(forbidden));
         }
@@ -533,6 +522,22 @@ mod tests {
         assert_eq!(equivalent.size, staged.size);
         staged.file.rewind().await.unwrap();
         assert!(!format!("{staged:?}").contains("evaluate"));
+    }
+
+    #[tokio::test]
+    async fn staged_artifact_manifest_preserves_immutable_bytes_and_destination() {
+        let worker = idle_worker(4096);
+        let staged = worker.prepare_log("local", &[log(1)]).await.unwrap();
+        let operation_id = uuid::Uuid::new_v4();
+        let manifest = staged.manifest(operation_id);
+        assert_eq!(manifest.operation_id, operation_id);
+        assert_eq!(manifest.parent_path, "");
+        assert_eq!(manifest.name, "local-commands.jsonl");
+        assert_eq!(manifest.content_type, "application/x-ndjson");
+        let mut file = staged.into_file();
+        let (digest, size) = worker.briefcase().hash_file(&mut file).await.unwrap();
+        assert_eq!(manifest.sha256, digest);
+        assert_eq!(manifest.size, size);
     }
 
     #[tokio::test]
