@@ -44,6 +44,11 @@ slt=$(iam login --app-id 'browser' --grant-org tos -o json | jq -r .slt)
 browser --org-id tos login "$slt"
 ```
 
+Website sign-in uses a backend-bound attempt for the selected Carbon or Silicon
+account kind. The callback must match its state and verified account kind; the
+popup waits until the backend confirms the exchange. Blocked popups fall back
+to full-page sign-in. The CLI SLT flow above remains compatible.
+
 The SLT is single-use and expires quickly; Browser never receives an IAM
 password, verification code, Silicon token, or refresh credential.
 
@@ -174,7 +179,7 @@ no frontend telemetry proxy or supported `SPACE_STATION_*` configuration yet.
 
 The CLI installs a checksum-verified native controller. It does not yet run an
 hourly update service; rerun the installer to update `browser`. The backend negotiates
-its IAM v1 dependency contract. Browser's public API uses `/api/v1`; automatic
+its IAM 5 dependency contract. Browser's public API uses `/api/v1`; automatic
 Browser client/server protocol negotiation is not implemented. The testing
 routes in 0.2.1 are additive and preserve existing production API behavior.
 
@@ -183,7 +188,7 @@ routes in 0.2.1 are additive and preserve existing production API behavior.
 Install the CLI without authentication; then use `browser login` and `browser setup` when ready.
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/unlikefraction/silicon-browser/managed-v0.3.1/scripts/install.sh | sh -s -- --no-setup && export PATH="$HOME/.local/bin:$PATH"
+curl -fsSL https://raw.githubusercontent.com/unlikefraction/silicon-browser/main/scripts/install.sh | sh -s -- --no-setup && export PATH="$HOME/.local/bin:$PATH"
 ```
 
 ## Recording feature approval

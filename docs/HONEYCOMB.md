@@ -22,6 +22,26 @@ Release 0.2.4 renames the public command from `sb` to `browser`. Existing
 `SB_*` variables, authentication, state paths and the private controller remain
 compatible. The curl installer and Honeycomb use the same native CLI builds.
 
+## Current release — 2026-10-03
+
+[Browser 0.4.0](https://github.com/unlikefraction/silicon-browser/releases/tag/managed-v0.4.0)
+is public in Honeycomb at application revision 3. It separates login from IAM 5
+feature authorization: recording delivery needs an explicit Briefcase approval
+bound to the selected account and organization. Ordinary CLI SLT login remains
+compatible.
+
+The published archive SHA-256 is
+`da326fb6ad3ea1dc8b87f32238cb32079d2887998cda7911f6cfd8937422a7f4`.
+[Native CI](https://github.com/unlikefraction/silicon-browser/actions/runs/37077948674)
+built all six targets from `e2127927c4f29aa65bf38d29c8c4a7691ef5123d`; the
+release includes provenance and per-binary checksums. Keep these published
+artifacts immutable. The curl installer and npm package reuse the macOS/Linux
+CLI bytes from this release.
+
+The current installer is served from `main/scripts/install.sh` and pins the
+0.4.0 release assets and hashes. Older release tags retain their original
+installer scripts; use the current installer when upgrading.
+
 ## Historical rollout status — 2026-09-17
 
 `browser` is public and active, with its IAM webhook approved. The original
@@ -50,21 +70,21 @@ while that wording change is reviewed.
 ## Build a release
 
 Browser 0.3.0 introduced canonical identities; its published artifacts remain
-immutable. This checkout prepares 0.3.1. Follow the [migration procedure](PUBLIC-IDENTIFIER-MIGRATION.md)
+immutable. The current release is 0.4.0, using IAM 5 feature authorization. Follow the [migration procedure](PUBLIC-IDENTIFIER-MIGRATION.md)
 for any retained store that has not completed the identifier cutover.
 
 Keep `Cargo.toml`, workspace versions in `Cargo.lock`, and `honeycomb.yaml` in
 sync. The **Honeycomb package** GitHub Actions workflow builds and checks every
 target on its native operating system and architecture. It runs when CLI source,
 package inputs or the workflow change, and can also be dispatched manually. Download its final
-`honeycomb-browser-0.3.1.tar.gz` artifact.
+`honeycomb-browser-0.4.0.tar.gz` artifact.
 
 For local assembly of the six native workflow artifacts:
 
 ```sh
 python3 scripts/test_honeycomb_package.py
 python3 scripts/package_honeycomb.py --targets target/honeycomb/targets
-honeycomb validate target/honeycomb-browser-0.3.1.tar.gz
+honeycomb validate target/honeycomb-browser-0.4.0.tar.gz
 ```
 
 The packer checks native executable headers and hashes against the versions
@@ -85,10 +105,10 @@ rotate its credentials as part of an ordinary package update.
 
 ```sh
 honeycomb apps get 'browser' --json
-honeycomb --idempotency-key silicon-browser-honeycomb-0.3.1-upload-20260924 \
-  releases upload 'browser' target/honeycomb-browser-0.3.1.tar.gz --revision REVISION
+honeycomb --idempotency-key silicon-browser-honeycomb-0.4.0-upload-YYYYMMDD \
+  releases upload 'browser' target/honeycomb-browser-0.4.0.tar.gz --revision REVISION
 honeycomb releases list 'browser'
-honeycomb install 'browser' --version 0.3.1
+honeycomb install 'browser' --version 0.4.0
 browser --version
 browser --help
 browser setup

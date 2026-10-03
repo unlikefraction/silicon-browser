@@ -16,7 +16,7 @@ The application is public; install it with `honeycomb install 'browser'`.
 Run this in a macOS or Linux terminal:
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/unlikefraction/silicon-browser/managed-v0.3.1/scripts/install.sh | sh && export PATH="$HOME/.local/bin:$PATH"
+curl -fsSL https://raw.githubusercontent.com/unlikefraction/silicon-browser/main/scripts/install.sh | sh && export PATH="$HOME/.local/bin:$PATH"
 ```
 
 Since 0.2.4, the CLI command is `browser` (previously `sb`). Existing `SB_*` settings and saved authentication are reused.
@@ -41,11 +41,13 @@ Four Space Station tables have been provisioned, but Browser does not yet emit
 runtime telemetry to them. See the [current capability status](docs/CLI.md#telemetry-updates-and-compatibility)
 for telemetry, updates, and versioning limits.
 
-For installation without interactive setup, use `curl -fsSL https://raw.githubusercontent.com/unlikefraction/silicon-browser/managed-v0.3.1/scripts/install.sh | sh -s -- --no-setup`, then run `~/.local/bin/browser setup` when ready. You can also [download prebuilt binaries](https://github.com/unlikefraction/silicon-browser/releases/tag/managed-v0.3.1) or build this release using `cargo install silicon-browser-cli --version 0.3.1 --locked` with Rust 1.98 or later. For a source checkout, use `cargo install --path crates/cli`.
+For installation without interactive setup, use `curl -fsSL https://raw.githubusercontent.com/unlikefraction/silicon-browser/main/scripts/install.sh | sh -s -- --no-setup`, then run `~/.local/bin/browser setup` when ready. You can also [download prebuilt binaries](https://github.com/unlikefraction/silicon-browser/releases/tag/managed-v0.4.0) or build this release using `cargo install silicon-browser-cli --version 0.4.0 --locked` with Rust 1.98 or later. For a source checkout, use `cargo install --path crates/cli`.
 
 `browser login <SLT>` exchanges a short-lived IAM token; use `--org-id` when the IAM CLI token authorizes multiple workspaces. For example, `iam login --app-id 'browser' --grant-org tos -o json | jq -r .slt` followed by `browser --org-id tos login '<SLT>'`. `browser login status --json` reports the current session, and `browser iam --json` prints the canonical application ID.
 
-The dashboard is live at [browser.teamofsilicons.com](https://browser.teamofsilicons.com). The CLI uses its production API by default. Install the [Rust client](https://crates.io/crates/silicon-browser) with `cargo add silicon-browser@0.3.1`.
+Website sign-in creates a backend-bound login attempt for the selected Carbon or Silicon account kind. The callback must match its state and verified account kind, and the popup closes only after the backend confirms the exchange. A blocked popup falls back to full-page sign-in. CLI SLT login remains compatible.
+
+The dashboard is live at [browser.teamofsilicons.com](https://browser.teamofsilicons.com). The CLI uses its production API by default. Install the [Rust client](https://crates.io/crates/silicon-browser) with `cargo add silicon-browser@0.4.0`.
 
 Setup accepts a fresh IAM `oac_` token interactively or through `SB_AUTHTOKEN`. IAM supplies the token's organization authorization; `--org` selects one when several are available. Setup exchanges the one-shot token and never persists it. An `oat_` in that variable is an explicit invocation-only bearer override. Setup installs the pinned native controller with integrity checks; it does not install local Chromium, Node or npm. Running setup again is safe.
 
@@ -172,7 +174,7 @@ The frontend uses SolidJS, TypeScript and Vite, with IAM's typography and visual
 - Production IAM authorization snapshots are cached per token and organization for at most 15 seconds and never past token expiry. A verified `/webhooks/iam` delivery invalidates the cache. Configure the matching `IAM_WEBHOOK_SECRET` and key version; without the secret the webhook route is disabled. Undisclosed IAM tags grant no access.
 - The CLI caches a connection for at most 60 seconds, bounded by session expiry. Local invocations in the same controller namespace are serialized. Separate machines can act concurrently; the backend does not order browser actions.
 - Command reports contain command text/flags, client timestamps, exit status and a stable UUID. Silicon-session commands are encrypted at rest; Carbon sessions retain no command history. Logs are cooperative, ordered by receipt, and can omit direct actions or reports still offline when archival begins. Exact retries return the same receipt. A new report after archive closure returns `409 report_window_closed` and stays queued locally. See [command execution](docs/COMMAND_EXECUTION_GAPS.md).
-- Native recording capture belongs to the remote browser provider. The backend copies completed MP4s and Silicon command JSONL into the initiator's Briefcase using an independently authorized IAM family. `browser setup` uses a second fresh Browser SLT (`SB_RECORDING_SLT` or masked prompt), never the CLI refresh token. The web UI obtains that separate authorization through IAM sign-in.
+- Native recording capture belongs to the remote browser provider. The backend copies completed MP4s and Silicon command JSONL into the initiator's Briefcase using an independently authorized IAM family. `browser setup` opens a separate IAM recording approval and completes it using the returned approval code; `SB_RECORDING_SLT` is retired. The website uses the same explicit recording approval, scoped to the selected account and organization. Ordinary sign-in never substitutes for feature consent.
 - Configure `BRIEFCASE_URL` and `BRIEFCASE_APP_ID` together; session creation requires recording authorization. Transfer staging defaults to 512 MiB per artifact. OBO upload must finish within its proof lifetime, at most 60 seconds. A lost successful response can produce an identical additional file version on retry. Briefcase owns paths and retention; `browser recording rm` hides locally. `browser recording send SESSION_ID` retries eligible exhausted failures while preserving completed receipts. See [delivery](docs/BRIEFCASE_INTEGRATION.md) and [remaining integration limits](docs/BRIEFCASE_INTEGRATION_GAPS.md).
 
 Internally, Browser Use provides remote browsers and native recordings, the pinned `agent-browser` binary supplies local control, and TinyFish supplies search/fetch. Provider adapters isolate those integrations from the public product. Browser Use currently reports aggregate proxy traffic/cost, preserved as unclassified usage; explicit-null incognito proxy metering remains an [external finding](docs/BROWSER_PROVIDER_FINDINGS.md). A profile fingerprint is a stable Silicon profile identity, not a disclosed upstream anti-detect fingerprint. Unsupported TinyFish search/fetch flags fail explicitly; `purpose` is retained as audit intent because its API has no matching field.
@@ -192,9 +194,9 @@ cargo fmt --all -- --check
 CARGO_INCREMENTAL=0 cargo test --workspace --all-targets
 CARGO_INCREMENTAL=0 cargo clippy --workspace --all-targets -- -D warnings
 CARGO_INCREMENTAL=0 cargo doc --workspace --no-deps
-npm ci --prefix frontend
-npm test --prefix frontend
-npm run build --prefix frontend
+pnpm --dir frontend install --frozen-lockfile
+pnpm --dir frontend test
+pnpm --dir frontend run build
 ```
 
 Automated tests use fakes and do not read `.env` or create paid browsers. A synthetic file-backed WAL test exercises 500 simultaneous clients fetching connections and reporting commands; it does not establish a deployed SLA or provider quota. [Readiness evidence](docs/PRODUCTION_READINESS.md) distinguishes current code checks from earlier real Carbon/Silicon recording and live-view tests.

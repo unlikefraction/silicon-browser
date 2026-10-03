@@ -30,6 +30,7 @@ for (const [path, bytes] of payloads) {
 
 const check = spawnSync(process.execPath, [join(root, 'scripts/check-package.mjs')], { encoding: 'utf8' });
 if (check.status !== 0) throw new Error(check.stderr || 'native package check failed');
-const pack = spawnSync('npm', ['pack', '--dry-run', '--json'], { cwd: root, encoding: 'utf8' });
-if (pack.status !== 0) throw new Error(pack.stderr || 'npm pack failed');
-console.log(`release package ready: ${Object.values(JSON.parse(pack.stdout))[0].filename}`);
+const pack = spawnSync('pnpm', ['pack', '--dry-run', '--json'], { cwd: root, encoding: 'utf8' });
+if (pack.status !== 0) throw new Error(pack.stderr || 'pnpm pack failed');
+const packed = JSON.parse(pack.stdout);
+console.log(`release package ready: ${(Array.isArray(packed) ? packed[0] : packed).filename}`);
