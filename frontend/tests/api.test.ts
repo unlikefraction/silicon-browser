@@ -179,3 +179,12 @@ test('recording feature rejection preserves its code and does not refresh the lo
  await assert.rejects(api.call('/sessions','POST',{}),(error:unknown)=>{assert.equal((error as {code:string}).code,'recording_authorization_required');return true});
  assert.equal(calls,1);assert.equal(api.currentSession()?.access_token,'oat_initial');
 });
+
+test('typed popup verifies the live account before saving a session', async () => {
+  for (const kind of ['carbon', 'silicon'] as const) {
+    let saves = 0;
+    const api = new BrowserApi('https://backend.browser.test', (async (url) => response(String(url).endsWith('/me') ? session().identity : session())) as typeof fetch, () => saves++);
+    if (kind === 'silicon') { await assert.rejects(api.login('oac_fresh',kind), /silicon account/); assert.equal(saves,0); assert.equal(api.currentSession(),null); }
+    else { await api.login('oac_fresh',kind); assert.equal(saves,1); }
+  }
+});

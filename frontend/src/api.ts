@@ -47,6 +47,15 @@ export class BrowserApi {
       return { api, context };
     } catch (error) { api.close(); throw error; }
   }
+  async login(token: string, kind: 'carbon' | 'silicon'): Promise<AuthSession> {
+    const candidate = acceptAuth(await this.request<AuthSession>('/auth/exchange', 'POST', { short_lived_token: token }, null));
+    const identity = await this.request<AuthSession['identity']>('/me', 'GET', undefined, candidate);
+    if (candidate.identity.kind !== kind || identity?.kind !== kind || identity.id !== candidate.identity.id) {
+      throw new ApiError(`This sign-in did not return a ${kind} account. Start again with the matching account button.`);
+    }
+    this.setSession(candidate);
+    return candidate;
+  }
   close() { this.closed = true; this.session = null; this.testing = undefined; this.generation++; this.refreshing = null; }
   setSession(session: AuthSession | null) {
     this.persist?.(session);

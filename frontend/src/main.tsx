@@ -7,7 +7,7 @@ import '@fontsource/ibm-plex-mono/latin-400.css';
 import './styles.css';
 import brandMark from './assets/mark.svg';
 import { BrowserApi, ApiError, acceptAuth, publicError, safeHttps, segment, shellQuote, dateForApi, type TestingContext } from './api';
-import { readEntry, requireLiveEnvironment, completeCallback, signInPopup } from './auth';
+import { readEntry, requireLiveEnvironment, completeCallback, signInPopup, type IdentityKind } from './auth';
 import { recordingRecovery } from './recordings';
 import { RecordingConsentFlow, type RecordingConsent } from './recording-consent';
 import { TabSession } from './session';
@@ -105,18 +105,18 @@ function App() {
       }
     } finally { if (ticket === revision) setLoading(false); }
   }
-  async function tokenFor(purpose = 'sign-in') {
+  async function tokenFor(purpose = 'sign-in', kind: IdentityKind = auth()?.identity.kind ?? 'carbon') {
     if (testing()) {
       try { return await new Promise<string>((resolve, reject) => setTestTokenRequest({ purpose, accept: resolve, cancel: () => reject(new Error('Test authorization cancelled.')) })); }
       finally { setTestTokenRequest(undefined); }
     }
     signInAbort = new AbortController(); setSigningIn(true);
-    try { return await signInPopup(signInAbort.signal); } finally { setSigningIn(false); signInAbort = null; }
+    try { return await signInPopup(signInAbort.signal, kind); } finally { setSigningIn(false); signInAbort = null; }
   }
-  async function login() {
-    const token = await tokenFor();
-    const result = acceptAuth(await api.request<AuthSession>('/auth/exchange', 'POST', { short_lived_token: token }, null));
-    resetRecordingConsent(); api.setSession(result); setAuth(result);
+  async function login(kind: IdentityKind) {
+    const token = await tokenFor('sign-in', kind);
+    const result = await api.login(token, kind);
+    resetRecordingConsent(); setAuth(result);
     await enterWorkspace();
   }
   async function loadOrganizations() {
@@ -306,7 +306,7 @@ function App() {
         <Show when={!showTesting()}>
         <Show when={auth()} fallback={<section class="welcome">
           <span class="eyebrow">YOUR BROWSER WORKSPACE</span><h1>A browser, ready<br/>when you are.</h1><p>Start a session. Keep your profiles. Work together across the web.</p>
-          <Show when={!testing()} fallback={<div class="login-panel"><h2>Test sign-in has ended</h2><p>Open Testing environment to sign in again with a fresh IAM test token, or exit test mode to return to production.</p><button disabled={busy()} onClick={() => setShowTesting(true)}>Testing environment</button></div>}><form class="login-panel" onSubmit={event => submit(event, login)}><h2>Sign in to Browser</h2><p class="muted">Use your Silicon IAM identity to continue.</p><button class="primary wide" disabled={busy()}>{busy() ? 'Waiting for sign-in…' : 'Continue with IAM'} <span aria-hidden="true">↗</span></button><p class="fine">Sign-in opens in a separate window. You’ll stay signed in when you refresh this tab.</p><button type="button" class="quiet" disabled={busy()} onClick={() => setShowTesting(true)}>Testing environment</button></form></Show>
+          <Show when={!testing()} fallback={<div class="login-panel"><h2>Test sign-in has ended</h2><p>Open Testing environment to sign in again with a fresh IAM test token, or exit test mode to return to production.</p><button disabled={busy()} onClick={() => setShowTesting(true)}>Testing environment</button></div>}><div class="login-panel"><h2>Sign in to Browser</h2><p class="muted">Use your Silicon IAM identity to continue.</p><div class="actions"><button class="primary" disabled={busy()} onClick={() => void perform(() => login('carbon'))}>Continue as Carbon</button><button disabled={busy()} onClick={() => void perform(() => login('silicon'))}>Continue as Silicon</button></div><p class="fine">Sign-in opens in a separate window. You’ll stay signed in when you refresh this tab.</p><button type="button" class="quiet" disabled={busy()} onClick={() => setShowTesting(true)}>Testing environment</button></div></Show>
           <Show when={pendingLive}><p class="hint">You have a live browser invitation. Sign in to its organization to continue.</p></Show>
           <div class="welcome-features"><div><span class="mono">01 / PROFILES</span><p>Keep a consistent identity across sessions.</p></div><div><span class="mono">02 / TOGETHER</span><p>Bring people and agents into the same browser.</p></div><div><span class="mono">03 / RECORDED</span><p>Return to your work when a session ends.</p></div></div>
         </section>}>

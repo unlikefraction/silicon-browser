@@ -45,3 +45,11 @@ test('detached-opener handoff still requires the initiating nonce and bounded SL
   assert.equal(matchingBroadcast({...payload,token:'oac_'+'x'.repeat(16381)},'random-secret'),null);
   assert.equal(matchingBroadcast(null,'random-secret'),null);
 });
+
+test('each account kind is locked into the IAM popup URL', () => {
+  for (const kind of ['carbon', 'silicon'] as const) {
+    const url = new URL(loginUrl('https://browser.teamofsilicons.com', 'nonce', kind));
+    assert.equal(url.searchParams.get('identity_kind'), kind);
+    assert.equal(url.searchParams.get('display'), 'popup');
+  }
+});

@@ -21,9 +21,11 @@ export function requireLiveEnvironment(link: PendingLive, environmentId?: string
     ? `This live invitation requires testing environment ${link.testEnvironmentId}. Open Testing environment and enroll it before continuing.`
     : 'This live invitation belongs to production. Exit test mode before opening it.');
 }
-export function loginUrl(origin: string, nonce: string) {
+export type IdentityKind = 'carbon' | 'silicon';
+export function loginUrl(origin: string, nonce: string, kind: IdentityKind = 'carbon') {
   const callback = new URL('/auth/callback', origin); callback.searchParams.set('nonce', nonce);
   const login = new URL('/login', IAM_AUTH_ORIGIN);
+  login.searchParams.set('identity_kind', kind); login.searchParams.set('display', 'popup');
   login.searchParams.set('app_id', IAM_APP_ID); login.searchParams.set('redirect_uri', callback.href);
   return login.href;
 }
@@ -40,33 +42,28 @@ export function matchingBroadcast(data: unknown, nonce: string): string | null {
   return value.token;
 }
 export function completeCallback(callback: {nonce: string | null; token: string | null}): boolean {
-  if (!callback.nonce || !/^[a-f0-9-]{36}$/.test(callback.nonce) || !callback.token) return false;
+  if (!window.opener || !callback.nonce || !/^[a-f0-9-]{36}$/.test(callback.nonce) || !callback.token) return false;
   const payload = { type: CALLBACK_TYPE, nonce: callback.nonce, token: callback.token };
   if (!matchingBroadcast(payload, callback.nonce)) return false;
-  // Some sign-in pages sever window.opener. A same-origin channel whose name contains
-  // the initiating random nonce preserves the handoff without persisting credentials.
-  const channel = new BroadcastChannel(`silicon-browser:auth:${callback.nonce}`);
-  channel.postMessage(payload);
-  if (window.opener) window.opener.postMessage(payload, location.origin);
-  setTimeout(() => { channel.close(); window.close(); }, 100);
+  window.opener.postMessage(payload, location.origin);
+  setTimeout(() => window.close(), 100);
   return true;
 }
-export function signInPopup(signal?: AbortSignal): Promise<string> {
+export function signInPopup(signal?: AbortSignal, kind: IdentityKind = 'carbon'): Promise<string> {
   const nonce = crypto.randomUUID();
-  const channel = new BroadcastChannel(`silicon-browser:auth:${nonce}`);
   const popup = window.open('about:blank', `browser-sign-in-${nonce}`, 'popup,width=520,height=720');
-  if (!popup) { channel.close(); return Promise.reject(new Error('Allow pop-ups for this website, then select Continue with IAM again.')); }
+  if (!popup) { return Promise.reject(new Error('Allow pop-ups for this website, then select Continue as Carbon or Continue as Silicon again.')); }
   return new Promise((resolve, reject) => {
-    const cleanup = () => { window.removeEventListener('message', receive); signal?.removeEventListener('abort', cancel); channel.close(); clearTimeout(timeout); popup.close(); };
+    const cleanup = () => { window.removeEventListener('message', receive); signal?.removeEventListener('abort', cancel); clearTimeout(timeout); clearInterval(closed); popup.close(); };
     const accept = (token: string | null) => { if (token) { cleanup(); resolve(token); } };
     const receive = (event: MessageEvent) => accept(matchingCallback(event, location.origin, popup, nonce));
     const cancel = () => { cleanup(); reject(new Error('Sign-in cancelled.')); };
     const timeout = setTimeout(() => { cleanup(); reject(new Error('Sign-in timed out. Please try again.')); }, 10 * 60 * 1000);
-    channel.onmessage = event => accept(matchingBroadcast(event.data, nonce));
+    const closed = setInterval(() => { if (popup.closed) cancel(); }, 500);
     window.addEventListener('message', receive);
     signal?.addEventListener('abort', cancel, { once: true });
     if (signal?.aborted) { cancel(); return; }
-    popup.location.href = loginUrl(location.origin, nonce);
+    popup.location.href = loginUrl(location.origin, nonce, kind);
     popup.focus();
   });
 }
