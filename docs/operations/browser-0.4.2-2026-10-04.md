@@ -40,9 +40,9 @@ Vercel production deployment `dpl_Gbkx9thRW95NBpZuSZAmcfPhdp1p` serves commit `4
 
 ## Production authentication and bounded recording check
 
-Live checks passed for Carbon login bound to the selected organization, bad-state rejection, exact login replay, wrong-organization rejection, Carbon/Silicon mismatch rejection without invalidating the legitimate login, and refresh replay. IAM displayed exactly the four expected Briefcase roots with the originating account, organization, callback and state; explicit approval, completion retry and active feature status passed.
+Fifty live checks passed for Carbon login bound to the selected organization, bad-state rejection, exact login replay, wrong-organization rejection, Carbon/Silicon mismatch rejection without invalidating the legitimate login, and refresh replay. IAM displayed exactly the four expected Briefcase roots with the originating account, organization, callback and state; explicit approval, completion retry and active feature status passed.
 
-One incognito session was created and explicitly stopped after 13.052 seconds. It is confirmed ended in both Browser and Browser Use. Browser Use's authenticated GET returns `recordingAvailable: true` with a null `recordingUrl`; both its V3 and V2 lookup agree. Browser is retaining the pending source-resolution job, so no upload artifact or Briefcase receipt exists yet. This verifies live login, consent, session start and stop, but does not certify the full recording-delivery path. No second paid browser was created to repeat this check.
+One incognito session was created and explicitly stopped after 13.052 seconds. It is confirmed ended in both Browser and Browser Use. Browser Use's authenticated GET returns `recordingAvailable: true` with a null `recordingUrl`; both its V3 and V2 lookup agree. Browser is retaining the pending source-resolution job, so no upload artifact or Briefcase receipt exists yet. This verifies live login, consent, session start and stop, but does not certify the full recording-delivery path. The five-minute receipt deadline expired; a final read at 19:09:54 UTC still returned pending with no error or receipt. No second paid browser was created to repeat this check.
 
 ## IAM and Honeycomb permissions
 
