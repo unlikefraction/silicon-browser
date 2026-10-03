@@ -76,6 +76,53 @@ fn upstream(error: silicon_iam_client::Error) -> DeliveryAuthError {
     }
 }
 
+fn validate_consent_url(value: &str, id: Uuid, _sdk: &Client) -> Result<()> {
+    let parsed =
+        (value.len() <= 2048).then(|| url::Url::parse(value).ok()).flatten().ok_or(DeliveryAuthError::Storage)?;
+    let allowed_origin = parsed.origin().ascii_serialization() == "https://auth.iam.teamofsilicons.com";
+    // Local fixture URLs are allowed only in test builds and only on the
+    // exact loopback origin explicitly configured for that fixture's SDK.
+    #[cfg(test)]
+    let allowed_origin = allowed_origin
+        || (matches!(_sdk.base_url().host(), Some(url::Host::Ipv4(ip)) if ip.is_loopback())
+            || matches!(_sdk.base_url().host(), Some(url::Host::Ipv6(ip)) if ip.is_loopback())
+            || _sdk.base_url().host_str() == Some("localhost"))
+            && parsed.origin() == _sdk.base_url().origin();
+    if !allowed_origin
+        || parsed.path() != "/obo/consent"
+        || !parsed.username().is_empty()
+        || parsed.password().is_some()
+        || parsed.fragment().is_some()
+        || parsed.query_pairs().collect::<Vec<_>>() != vec![("request".into(), id.to_string().into())]
+    {
+        return Err(DeliveryAuthError::Storage);
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+#[test]
+fn consent_url_binds_official_origin_route_and_exact_request() {
+    let sdk = Client::new("http://127.0.0.1:8321").unwrap();
+    let id = Uuid::new_v4();
+    let valid = format!("https://auth.iam.teamofsilicons.com/obo/consent?request={id}");
+    assert!(validate_consent_url(&valid, id, &sdk).is_ok());
+    assert!(validate_consent_url(&format!("http://127.0.0.1:8321/obo/consent?request={id}"), id, &sdk).is_ok());
+    for value in [
+        valid.replace("auth.iam", "evil.iam"),
+        valid.replace("/obo/consent", "/login"),
+        valid.replace("https:", "http:"),
+        valid.replace(&id.to_string(), &Uuid::new_v4().to_string()),
+        format!("{valid}&request={id}"),
+        format!("{valid}&redirect_uri=https://evil.example"),
+        format!("{valid}#fragment"),
+        format!("http://127.0.0.1:8322/obo/consent?request={id}"),
+        format!("https://secret@auth.iam.teamofsilicons.com/obo/consent?request={id}"),
+    ] {
+        assert!(validate_consent_url(&value, id, &sdk).is_err());
+    }
+}
+
 #[cfg(test)]
 #[test]
 fn changed_consent_graph_requires_new_authorization_without_rejecting_login() {
@@ -211,18 +258,13 @@ impl DeliveryAuth {
                     (ActorRefType::Carbon, IdentityKind::Carbon) | (ActorRefType::Silicon, IdentityKind::Silicon)
                 )
                 || response.expires_at.unix_timestamp() <= Utc::now().timestamp()
+                || response.redirect_uri != request.redirect_uri
+                || response.state != request.state
             {
                 return Err(DeliveryAuthError::Storage);
             }
             let url = response.authorization_url.ok_or(DeliveryAuthError::Storage)?;
-            let parsed = url::Url::parse(&url).map_err(|_| DeliveryAuthError::Storage)?;
-            if !crate::url_policy::is_https_or_loopback_http(&parsed)
-                || !parsed.username().is_empty()
-                || parsed.password().is_some()
-                || parsed.fragment().is_some()
-            {
-                return Err(DeliveryAuthError::Storage);
-            }
+            validate_consent_url(&url, response.id, &sdk)?;
             row=sqlx::query("UPDATE recording_obo_authorizations SET iam_id=?,consent_url=?,expires_at=MIN(expires_at,?) WHERE id=? RETURNING *").bind(response.id.to_string()).bind(url).bind(response.expires_at.unix_timestamp()).bind(&id).fetch_one(&mut *tx).await.map_err(database)?;
         }
         tx.commit().await.map_err(database)?;

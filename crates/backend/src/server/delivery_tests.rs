@@ -165,6 +165,9 @@ async fn feature_consent_rejects_misbound_or_expired_iam_response_before_saving_
         ("actor", json!({"type":"silicon","public_id":"si:other"})),
         ("actor", json!({"type":"carbon","public_id":"si:owner-1"})),
         ("expires_at", json!("2000-01-01T00:00:00Z")),
+        ("redirect_uri", json!("https://evil.example/callback")),
+        ("state", json!("unexpected callback state")),
+        ("authorization_url", json!("https://evil.example/obo/consent?request=wrong")),
     ] {
         let (fixture, iam) = configured_delivery_fixture().await;
         let id = Uuid::new_v4();
@@ -522,7 +525,19 @@ async fn delayed_rejection_cannot_invalidate_a_replaced_approval() {
 async fn popup_consent_binds_fixed_frontend_callback_and_immutable_state() {
     let (fixture, iam) = configured_delivery_fixture().await;
     let id = Uuid::new_v4();
-    Mock::given(path("/api/v1/obo-access/authorizations")).respond_with(ResponseTemplate::new(201).set_body_json(json!({"id":id,"app_id":"browser","actor":{"type":"silicon","public_id":"si:owner-1"},"org_id":"org-1","status":"pending","version":1,"expires_at":"2099-01-01T00:00:00Z","endpoints":[],"authorization_url":format!("{}/obo/consent?request={id}",iam.uri())}))).expect(1).mount(&iam).await;
+    let consent_url = format!("{}/obo/consent?request={id}", iam.uri());
+    Mock::given(path("/api/v1/obo-access/authorizations"))
+        .respond_with(move |request: &wiremock::Request| {
+            let body: Value = serde_json::from_slice(&request.body).unwrap();
+            ResponseTemplate::new(201).set_body_json(json!({
+                "id":id,"app_id":"browser","actor":{"type":"silicon","public_id":"si:owner-1"},
+                "org_id":"org-1","status":"pending","version":1,"expires_at":"2099-01-01T00:00:00Z",
+                "endpoints":[],"authorization_url":consent_url,"redirect_uri":body["redirect_uri"],"state":body["state"]
+            }))
+        })
+        .expect(1)
+        .mount(&iam)
+        .await;
     let (status, started) = consent_call(&fixture, "/api/v1/auth/delivery/authorizations", json!({"popup":true})).await;
     assert_eq!(status, StatusCode::OK, "{started}");
     let calls = iam.received_requests().await.unwrap();
@@ -645,4 +660,36 @@ async fn worker_recovers_uncertain_commit_with_the_original_operation_and_provid
         }
     }
     assert!(requests.recv().await.is_none(), "a recovered commit must not repeat reserve, transfer, or commit");
+}
+
+#[tokio::test]
+async fn popup_consent_rejects_missing_or_changed_callback_echo() {
+    for (field, value) in [
+        ("redirect_uri", Value::Null),
+        ("redirect_uri", json!("https://evil.example/callback")),
+        ("state", Value::Null),
+        ("state", json!("wrong-state")),
+    ] {
+        let (fixture, iam) = configured_delivery_fixture().await;
+        let id = Uuid::new_v4();
+        let consent_url = format!("{}/obo/consent?request={id}", iam.uri());
+        Mock::given(path("/api/v1/obo-access/authorizations"))
+            .respond_with(move |request: &wiremock::Request| {
+                let body: Value = serde_json::from_slice(&request.body).unwrap();
+                let mut response = json!({
+                    "id":id,"app_id":"browser","actor":{"type":"silicon","public_id":"si:owner-1"},
+                    "org_id":"org-1","status":"pending","version":1,"expires_at":"2099-01-01T00:00:00Z",
+                    "endpoints":[],"authorization_url":consent_url,"redirect_uri":body["redirect_uri"],"state":body["state"]
+                });
+                response[field] = value.clone();
+                ResponseTemplate::new(201).set_body_json(response)
+            }).expect(1).mount(&iam).await;
+        assert_eq!(
+            consent_call(&fixture, "/api/v1/auth/delivery/authorizations", json!({"popup": true})).await.0,
+            StatusCode::SERVICE_UNAVAILABLE
+        );
+        let saved: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM recording_obo_authorizations WHERE iam_id IS NOT NULL OR consent_url IS NOT NULL)")
+            .fetch_one(fixture.store.pool()).await.unwrap();
+        assert!(!saved);
+    }
 }
