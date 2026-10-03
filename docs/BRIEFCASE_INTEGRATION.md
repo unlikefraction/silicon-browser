@@ -1,8 +1,9 @@
 # Briefcase recording delivery
 
-This describes the October 2026 local consumer cutover. It is not a deployed
-release claim. Earlier live recording reports exercised the preceding proof
-protocol and do not validate this implementation.
+This describes the IAM 5.2.1 consumer contract deployed in Browser 0.4.2.
+See the [release evidence](operations/browser-0.4.2-2026-10-04.md) for exact source,
+published artifacts, deployment checks, and remaining shared-testing limitations.
+Earlier live recording reports exercised the preceding proof protocol.
 
 Browser copies its provider's existing native MP4 and, for Silicon initiators,
 cooperatively reported command logs. It does not introduce another recorder.

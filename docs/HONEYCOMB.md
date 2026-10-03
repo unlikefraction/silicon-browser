@@ -22,26 +22,45 @@ Release 0.2.4 renames the public command from `sb` to `browser`. Existing
 `SB_*` variables, authentication, state paths and the private controller remain
 compatible. The curl installer and Honeycomb use the same native CLI builds.
 
-## Current release — 2026-10-03
+## Current release — 0.4.2
 
-[Browser 0.4.1](https://github.com/unlikefraction/silicon-browser/releases/tag/managed-v0.4.1)
-is public in Honeycomb at application revision 3. It separates login from IAM 5
-feature authorization: recording delivery needs an explicit Briefcase approval
-bound to the selected account and organization. Ordinary CLI SLT login remains
-compatible.
+Browser 0.4.2 is public in Honeycomb's production and development channels at
+application revision 4. It uses the accepted four-root Briefcase recording
+contract: reserve, commit, status and entry listing. Recording access remains a
+separate IAM approval bound to the selected account and organization.
 
-The published archive SHA-256 is
+The 45,786,164-byte archive has SHA-256
+`2551aefed906fc9f46d7e83be226af15157fd7fa50d20762196073f3386d4a5e`.
+[Native CI](https://github.com/unlikefraction/silicon-browser/actions/runs/37145497699)
+built and tested all six targets from
+`74e72a307a72eb95d3bffcd3757f54697d652c16`. The identical archive bytes were
+accepted first in development and then in production. Both channels report
+public visibility, configuration revision 4, published approval, and no pending
+permission approval.
+
+Anonymous installations in fresh homes on macOS ARM64 passed in both channels.
+The CLI reports `browser 0.4.2`, its bundled controller reports
+`agent-browser 0.36.0`, CLI help works, and both installed executable hashes match
+the archive. These checks do not require IAM login or create a paid session.
+
+```sh
+honeycomb install 'browser@0.4.2'
+# Optional development-channel install with a distinct command:
+honeycomb install 'browser>test@0.4.2' --alias browser=browser-dev
+```
+
+The current curl installer pins the 0.4.2 native assets and hashes. Older release
+tags and published archive bytes remain immutable.
+
+## Previous release — 0.4.1 (2026-10-03 UTC)
+
+Browser 0.4.1 was published at application revision 3 with the earlier three-root
+recording scope. Its archive SHA-256 remains
 `c7b92980fb09ada4538ded03d6222a0346455c2d4cb7c4831ab9afe4363df86a`.
-[Native CI](https://github.com/unlikefraction/silicon-browser/actions/runs/37142254120)
-built all six targets from `6da8a79f2307483d28091869221f342b817c342d`; the
-release includes provenance and per-binary checksums. Keep these published
-artifacts immutable. The curl installer and npm package reuse the macOS/Linux
-CLI bytes from this release. The Rust client, shared contracts, and CLI crates
-are published as 0.4.1. Older releases, including 0.4.0, remain immutable.
-
-The current installer is served from `main/scripts/install.sh` and pins the
-0.4.1 release assets and hashes. Older release tags retain their original
-installer scripts; use the current installer when upgrading.
+[Its native CI](https://github.com/unlikefraction/silicon-browser/actions/runs/37142254120)
+built all six targets from `6da8a79f2307483d28091869221f342b817c342d`.
+The Rust client, shared contracts and CLI crates were also published as 0.4.1.
+Keep those artifacts unchanged when releasing a newer version.
 
 ## Historical rollout status — 2026-09-17
 
@@ -71,21 +90,21 @@ while that wording change is reviewed.
 ## Build a release
 
 Browser 0.3.0 introduced canonical identities; its published artifacts remain
-immutable. The current release is 0.4.1, with corrected IAM 5 setup guidance and login/recording compatibility fixes. Follow the [migration procedure](PUBLIC-IDENTIFIER-MIGRATION.md)
+immutable. The current release is 0.4.2, with IAM 5 account-bound sessions and recoverable recording delivery. Follow the [migration procedure](PUBLIC-IDENTIFIER-MIGRATION.md)
 for any retained store that has not completed the identifier cutover.
 
 Keep `Cargo.toml`, workspace versions in `Cargo.lock`, and `honeycomb.yaml` in
 sync. The **Honeycomb package** GitHub Actions workflow builds and checks every
 target on its native operating system and architecture. It runs when CLI source,
 package inputs or the workflow change, and can also be dispatched manually. Download its final
-`honeycomb-browser-0.4.1.tar.gz` artifact.
+`honeycomb-browser-0.4.2.tar.gz` artifact.
 
 For local assembly of the six native workflow artifacts:
 
 ```sh
 python3 scripts/test_honeycomb_package.py
 python3 scripts/package_honeycomb.py --targets target/honeycomb/targets
-honeycomb validate target/honeycomb-browser-0.4.1.tar.gz
+honeycomb validate target/honeycomb-browser-0.4.2.tar.gz
 ```
 
 The packer checks native executable headers and hashes against the versions
@@ -106,10 +125,10 @@ rotate its credentials as part of an ordinary package update.
 
 ```sh
 honeycomb apps get 'browser' --json
-honeycomb --idempotency-key silicon-browser-honeycomb-0.4.1-upload-YYYYMMDD \
-  releases upload 'browser' target/honeycomb-browser-0.4.1.tar.gz --channel prod --revision REVISION
+honeycomb --idempotency-key silicon-browser-honeycomb-0.4.2-upload-YYYYMMDD \
+  releases upload 'browser' target/honeycomb-browser-0.4.2.tar.gz --channel prod --revision REVISION
 honeycomb releases list 'browser'
-honeycomb install 'browser' --version 0.4.1
+honeycomb install 'browser' --version 0.4.2
 browser --version
 browser --help
 browser setup
@@ -138,8 +157,9 @@ revision and obtain new feature consent when expanding from the old three roots.
 The 2026-10-03 UTC update and normal review accepted Browser revision 4 with all
 four roots, effective revision 4 and IAM revision 46. Publication request
 `7f9c9101-6d03-4d6c-810d-590ce505d2b2` is published and activation
-`4601391c-cf94-4923-86c3-f63c9593eeaf` is accepted. Package publication remains a
-separate step: the latest package was still 0.4.1 at that check. Re-read current
+`4601391c-cf94-4923-86c3-f63c9593eeaf` is accepted. Release 0.4.2 was subsequently
+accepted under development operation `51f91c31-208d-49b3-8668-edb8131c8dbb` and
+production operation `7c8f0f0b-f10f-46fc-99f2-5f99eada8624`. Re-read current
 revisions before later uploads or edits.
 Honeycomb itself needs its own Briefcase upload/download/publication grants; a
 missing Honeycomb grant must be repaired in that platform, not added to Browser.
