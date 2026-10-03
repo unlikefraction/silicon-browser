@@ -1,3 +1,4 @@
+import { approvalPopup, awaitApproval, deliverApproval } from "./approval-popup";
 import { render } from 'solid-js/web';
 import { createSignal, For, Show, onMount, onCleanup, type JSX } from 'solid-js';
 import '@fontsource/ibm-plex-sans/latin-400.css';
@@ -13,13 +14,14 @@ import { RecordingConsentFlow, type RecordingConsent } from './recording-consent
 import { TabSession } from './session';
 import type { AuthSession, Organization, Profile, Session, Recording, Usage, UsageLimits, Location, Delivery, SessionLog } from './types';
 
+const approvalParams = location.pathname === "/auth/obo/callback" ? new URLSearchParams(location.search) : null;
 const entry = readEntry(new URL(location.href));
 // Remove one-use credentials and live grants before rendering, login, or API requests.
 if (location.hash || location.search) history.replaceState(null, '', entry.cleanPath);
 const savedSession = new TabSession(import.meta.env.SB_BACKEND_ORIGIN);
 const productionApi = new BrowserApi(import.meta.env.SB_BACKEND_ORIGIN, undefined, value => savedSession.save(value));
 // The popup only hands off its one-use code; it must not restore the opener's session.
-const restored = entry.callback ? null : savedSession.load();
+const restored = entry.callback || approvalParams ? null : savedSession.load();
 if (restored) productionApi.setSession(restored);
 const date = (value: string) => new Date(value).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' });
 const cost = (value?: Usage) => value?.cost?.total ? `${(value.cost.total.micros / 1e6).toFixed(4)} ${value.cost.total.currency}` : 'Pending';
@@ -176,13 +178,16 @@ function App() {
   }
   async function authorize() {
     if (!auth()) return;
-    const result = await recordingConsentFlow.start(() => api);
-    if (result.status === 'completed') {
-      resetRecordingConsent(); setDelivery(await api.call<Delivery>('/auth/delivery'));
-      setNotice('Recording access is already approved.'); return;
-    }
-    setRecordingConsent(result);
-    setNotice('Open the approval page, choose your Briefcase account and organization, then paste the returned code below.');
+    const popup = approvalPopup();
+    try {
+      const result = await recordingConsentFlow.start(() => api, true);
+      if (result.status === 'completed') {
+        popup.close(); resetRecordingConsent(); setDelivery(await api.call<Delivery>('/auth/delivery'));
+        setNotice('Recording access is already approved.'); return;
+      }
+      setRecordingConsent(result); setNotice('Review recording access in the IAM popup.');
+      await awaitApproval(popup, result.consent_url!, result.state, completeRecordingConsent);
+    } catch (error) { popup.close(); throw error; }
   }
   async function completeRecordingConsent(code: string) {
     if (!recordingConsent()) return;
@@ -382,4 +387,9 @@ function Callback() {
   onMount(() => { if (entry.callback) setSent(completeCallback(entry.callback)); });
   return <main class="callback"><div class="brand"><img src={brandMark} alt="" width="28" height="28"/><span class="brand-wordmark">Browser</span></div><h1>{sent() ? 'Returning to Browser…' : 'Return to Browser to sign in.'}</h1><p>{sent() ? 'You can close this window and return to your workspace.' : 'This sign-in link is missing its original window. Start sign-in again from Browser.'}</p><a class="button" href="/">Open Browser</a></main>;
 }
-render(() => entry.callback ? <Callback/> : <App/>, document.getElementById('root')!);
+function ApprovalCallback() {
+  const [sent, setSent] = createSignal(false);
+  onMount(() => setSent(deliverApproval(approvalParams!)));
+  return <main class="callback"><h1>{sent() ? 'Finishing approval…' : 'Return to Browser'}</h1><p>{sent() ? 'Your Browser tab is saving the approved access. This window will close when it is ready.' : 'Start a new approval from your Browser workspace.'}</p></main>;
+}
+render(() => approvalParams ? <ApprovalCallback/> : entry.callback ? <Callback/> : <App/>, document.getElementById('root')!);

@@ -271,9 +271,15 @@ pub(super) async fn start_consent(
     payload: Result<Json<serde_json::Value>, JsonRejection>,
 ) -> Result<impl IntoResponse, ApiFailure> {
     let payload = json_payload(payload)?;
-    if payload != serde_json::json!({}) {
-        return Err(ApiFailure::new(StatusCode::BAD_REQUEST, "invalid_request", "Expected an empty object."));
+    let popup = payload == serde_json::json!({"popup":true});
+    if payload != serde_json::json!({}) && !popup {
+        return Err(ApiFailure::new(
+            StatusCode::BAD_REQUEST,
+            "invalid_request",
+            "Expected an empty object or popup: true.",
+        ));
     }
+    let callback = popup.then(|| format!("{}/auth/obo/callback", state.public_origin.trim_end_matches('/')));
     let key = required_header(&headers, "idempotency-key", "idempotency key is required")?;
     let delivery = state.recording_delivery.as_ref().ok_or_else(|| {
         ApiFailure::new(
@@ -284,7 +290,9 @@ pub(super) async fn start_consent(
     })?;
     Ok((
         [(http::header::CACHE_CONTROL, "no-store")],
-        success(delivery.auth.start_consent(&scope.org_id, &scope.principal, &bearer, &key).await?),
+        success(
+            delivery.auth.start_consent(&scope.org_id, &scope.principal, &bearer, &key, callback.as_deref()).await?,
+        ),
     ))
 }
 pub(super) async fn consent_status(

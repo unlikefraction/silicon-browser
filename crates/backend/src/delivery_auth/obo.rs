@@ -115,6 +115,7 @@ impl DeliveryAuth {
         actor: &PrincipalIdentity,
         bearer: &str,
         key: &str,
+        redirect_uri: Option<&str>,
     ) -> Result<RecordingConsent> {
         let public = Self::check_actor(org, actor)?;
         mutation(key)?;
@@ -133,8 +134,8 @@ impl DeliveryAuth {
                     endpoint_id: (*endpoint).into(),
                 })
                 .collect(),
-            redirect_uri: None,
-            state: None,
+            redirect_uri: redirect_uri.map(str::to_owned),
+            state: redirect_uri.map(|_| state.clone()),
         };
         let request_cipher = self
             .secrets
@@ -153,6 +154,22 @@ impl DeliveryAuth {
         let mut row=sqlx::query("SELECT * FROM recording_obo_authorizations WHERE org_id=? AND principal_id=? AND membership_id=? AND retry_key=?").bind(org).bind(&actor.principal_id).bind(&actor.membership_id).bind(key).fetch_one(&mut *tx).await.map_err(database)?;
         if row.try_get::<i64, _>("expires_at").map_err(database)? <= Utc::now().timestamp() {
             return Err(DeliveryAuthError::NeedsAuthorization);
+        }
+        // A pending operation may be retried, but its callback cannot be changed.
+        if row.try_get::<String, _>("status").map_err(database)? == "pending" {
+            let stored_id: String = row.try_get("id").map_err(database)?;
+            let plain = self
+                .secrets
+                .open_for(
+                    &self.obo_context(&format!("{stored_id}/request")),
+                    &row.try_get::<String, _>("request_cipher").map_err(database)?,
+                )
+                .map_err(|_| DeliveryAuthError::Storage)?;
+            let stored: OboAuthorizationRequest =
+                serde_json::from_str(&plain).map_err(|_| DeliveryAuthError::Storage)?;
+            if stored.redirect_uri.as_deref() != redirect_uri {
+                return Err(DeliveryAuthError::InvalidConsent);
+            }
         }
         if row.try_get::<Option<String>, _>("iam_id").map_err(database)?.is_none() {
             let id: String = row.try_get("id").map_err(database)?;

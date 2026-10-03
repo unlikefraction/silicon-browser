@@ -511,3 +511,18 @@ async fn delayed_rejection_cannot_invalidate_a_replaced_approval() {
             .unwrap()
     );
 }
+
+#[tokio::test]
+async fn popup_consent_binds_fixed_frontend_callback_and_immutable_state() {
+    let (fixture, iam) = configured_delivery_fixture().await;
+    let id = Uuid::new_v4();
+    Mock::given(path("/api/v1/obo-access/authorizations")).respond_with(ResponseTemplate::new(201).set_body_json(json!({"id":id,"app_id":"browser","actor":{"type":"silicon","public_id":"si:owner-1"},"org_id":"org-1","status":"pending","version":1,"expires_at":"2099-01-01T00:00:00Z","endpoints":[],"authorization_url":format!("{}/obo/consent?request={id}",iam.uri())}))).expect(1).mount(&iam).await;
+    let (status, started) = consent_call(&fixture,"/api/v1/auth/delivery/authorizations",json!({"popup":true})).await;
+    assert_eq!(status,StatusCode::OK,"{started}");
+    let calls=iam.received_requests().await.unwrap(); let body:Value=serde_json::from_slice(&calls[0].body).unwrap();
+    assert_eq!(body["redirect_uri"],format!("{}/auth/obo/callback",fixture.state.public_origin));
+    assert_eq!(body["state"],started["data"]["state"]);
+    assert_eq!(body["state"].as_str().unwrap().len(),64);
+    assert_eq!(consent_call(&fixture,"/api/v1/auth/delivery/authorizations",json!({"popup":true})).await.1,started);
+    assert_eq!(consent_call(&fixture,"/api/v1/auth/delivery/authorizations",json!({})).await.0,StatusCode::BAD_REQUEST);
+}

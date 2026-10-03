@@ -9,6 +9,10 @@
       "destination": "/docs/index.html"
     },
     {
+      "source": "/auth/obo/callback",
+      "destination": "/index.html"
+    },
+    {
       "source": "/auth/callback",
       "destination": "/index.html"
     },
