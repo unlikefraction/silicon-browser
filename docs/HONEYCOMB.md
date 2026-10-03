@@ -70,21 +70,21 @@ while that wording change is reviewed.
 ## Build a release
 
 Browser 0.3.0 introduced canonical identities; its published artifacts remain
-immutable. The current release is 0.4.0, using IAM 5 feature authorization. Follow the [migration procedure](PUBLIC-IDENTIFIER-MIGRATION.md)
+immutable. This checkout prepares 0.4.1, with corrected IAM 5 setup guidance and login/recording compatibility fixes. Follow the [migration procedure](PUBLIC-IDENTIFIER-MIGRATION.md)
 for any retained store that has not completed the identifier cutover.
 
 Keep `Cargo.toml`, workspace versions in `Cargo.lock`, and `honeycomb.yaml` in
 sync. The **Honeycomb package** GitHub Actions workflow builds and checks every
 target on its native operating system and architecture. It runs when CLI source,
 package inputs or the workflow change, and can also be dispatched manually. Download its final
-`honeycomb-browser-0.4.0.tar.gz` artifact.
+`honeycomb-browser-0.4.1.tar.gz` artifact.
 
 For local assembly of the six native workflow artifacts:
 
 ```sh
 python3 scripts/test_honeycomb_package.py
 python3 scripts/package_honeycomb.py --targets target/honeycomb/targets
-honeycomb validate target/honeycomb-browser-0.4.0.tar.gz
+honeycomb validate target/honeycomb-browser-0.4.1.tar.gz
 ```
 
 The packer checks native executable headers and hashes against the versions
@@ -105,10 +105,10 @@ rotate its credentials as part of an ordinary package update.
 
 ```sh
 honeycomb apps get 'browser' --json
-honeycomb --idempotency-key silicon-browser-honeycomb-0.4.0-upload-YYYYMMDD \
-  releases upload 'browser' target/honeycomb-browser-0.4.0.tar.gz --revision REVISION
+honeycomb --idempotency-key silicon-browser-honeycomb-0.4.1-upload-YYYYMMDD \
+  releases upload 'browser' target/honeycomb-browser-0.4.1.tar.gz --channel prod --revision REVISION
 honeycomb releases list 'browser'
-honeycomb install 'browser' --version 0.4.0
+honeycomb install 'browser' --version 0.4.1
 browser --version
 browser --help
 browser setup
@@ -129,7 +129,7 @@ IAM's fresh verification for `application.webhook.approve` and the exact pending
 endpoint; a stored login is insufficient.
 
 Browser requests identity, membership and tags for authorization, plus
-`obo:briefcase:briefcase.files.create` for user-authorized recording delivery.
+`briefcase.entries.list`, `briefcase.uploads.reserve`, and `briefcase.uploads.commit` for separately approved recording delivery.
 Honeycomb itself needs its own Briefcase upload/download/publication grants; a
 missing Honeycomb grant must be repaired in that platform, not added to Browser.
 

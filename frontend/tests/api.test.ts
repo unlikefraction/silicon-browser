@@ -180,11 +180,26 @@ test('recording feature rejection preserves its code and does not refresh the lo
  assert.equal(calls,1);assert.equal(api.currentSession()?.access_token,'oat_initial');
 });
 
-test('typed popup verifies the live account before saving a session', async () => {
+test('typed popup verifies the live account and leaves session installation to the completed flow', async () => {
   for (const kind of ['carbon', 'silicon'] as const) {
     let saves = 0;
     const api = new BrowserApi('https://backend.browser.test', (async (url) => response(String(url).endsWith('/me') ? session().identity : session())) as typeof fetch, () => saves++);
-    if (kind === 'silicon') { await assert.rejects(api.login('oac_fresh',kind), /silicon account/); assert.equal(saves,0); assert.equal(api.currentSession(),null); }
-    else { await api.login('oac_fresh',kind); assert.equal(saves,1); }
+    if (kind === 'silicon') { await assert.rejects(api.login('oac_fresh',{ attempt_id: '11111111-1111-4111-8111-111111111111', state: 'a'.repeat(64), identity_kind: kind, expires_at: '2099-01-01T00:00:00Z' }), /silicon account/); assert.equal(saves,0); assert.equal(api.currentSession(),null); }
+    else { const candidate = await api.login('oac_fresh',{ attempt_id: '11111111-1111-4111-8111-111111111111', state: 'a'.repeat(64), identity_kind: kind, expires_at: '2099-01-01T00:00:00Z' }); assert.equal(candidate.identity.kind,kind); assert.equal(saves,0); assert.equal(api.currentSession(),null); }
   }
+});
+
+
+test('web sign-in binds completion to the server attempt and cancellation cannot save it', async () => {
+  const attempt = { attempt_id: '11111111-1111-4111-8111-111111111111', state: 'a'.repeat(64), identity_kind: 'carbon' as const, expires_at: '2099-01-01T00:00:00Z' };
+  const abort = new AbortController(); let saves = 0;
+  const api = new BrowserApi('https://backend.browser.test', (async (input, options) => {
+    const url = String(input);
+    if (url.endsWith('/auth/login-attempts')) { assert.deepEqual(JSON.parse(String(options?.body)), { identity_kind: 'carbon' }); return response(attempt); }
+    if (url.endsWith('/complete')) { assert(url.endsWith(`/auth/login-attempts/${attempt.attempt_id}/complete`)); assert.deepEqual(JSON.parse(String(options?.body)), { short_lived_token: 'oac_oneuse', state: attempt.state }); return response(session()); }
+    assert(url.endsWith('/me')); abort.abort(); return response(session().identity);
+  }) as typeof fetch, () => saves++);
+  assert.deepEqual(await api.startLogin('carbon'), attempt);
+  await assert.rejects(api.login('oac_oneuse', attempt, abort.signal), /Sign-in changed/);
+  assert.equal(saves, 0); assert.equal(api.currentSession(), null);
 });

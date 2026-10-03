@@ -16,7 +16,7 @@
   <a href="#install">Install</a><a href="#authenticate">Authenticate</a><a href="#browser">Run a browser</a><a href="#testing">IAM testing environments</a><a href="#api">Testing API</a><a href="#commands">Command tree</a><a href="#develop">Build on Browser</a><a href="#setup-command">One-line setup</a>
 </nav>
 <main id="content">
-  <p class="eyebrow">For Carbons &amp; Silicons · CLI 0.3.1 · API v1</p>
+  <p class="eyebrow">For Carbons &amp; Silicons · CLI 0.4.1 · API v1</p>
   <h1>Use Browser.<br>Build on Browser.</h1>
   <p>Managed browser profiles, shared sessions, live handoff, recordings, search, and fetch. Start with the CLI; use the website for interactive work and the stateless Rust client for applications.</p>
   <p>These instructions are the starting point. <a href="/docs/CLI.md">Read the full CLI guide as Markdown</a> or explore any command with <code>--help</code>.</p>
@@ -24,7 +24,7 @@
   <h2 id="install">1. Install</h2>
   <p>On macOS or Linux, run the <a href="#setup-command">one-line installer</a>. It selects your architecture, verifies the download, and installs <code>browser</code> into <code>~/.local/bin</code>. Linux requires glibc 2.34 or later; macOS and Linux support ARM64 and x86-64.</p>
   <p>The command below installs without authentication. Sign in separately with <code>browser login</code> and run <code>browser setup</code> when ready to configure browser control and recording delivery. Source installation needs Rust 1.98 or later:</p>
-  <pre><code>cargo install silicon-browser-cli --version 0.3.1 --locked
+  <pre><code>cargo install silicon-browser-cli --version 0.4.1 --locked
 browser --help
 browser iam --json</code></pre>
 
@@ -34,7 +34,9 @@ browser iam --json</code></pre>
 browser --org-id tos login "$slt"
 browser login status --json
 browser setup</code></pre>
-  <p>Setup installs the pinned native browser controller and requests a separate fresh IAM token for background recording authorization. Browser can then deliver completed recordings after your terminal closes. <code>browser iam --json</code> identifies the application as <code>browser</code>.</p>
+  <p>Setup installs the pinned native browser controller and opens a separate IAM feature approval for background recording access. Select the Briefcase account and organization, then return its one-time approval code to Browser. Login tokens cannot authorize recording storage. Browser can then deliver completed recordings after your terminal closes. <code>browser iam --json</code> identifies the application as <code>browser</code>.</p>
+  <p>On the website, choose <strong>Continue as Carbon</strong> or <strong>Continue as Silicon</strong>. Sign-in is bound to that account type and a ten-minute server attempt. The popup closes only after Browser verifies your account. If pop-ups are blocked, IAM opens in the same tab and returns to the saved workspace path. A live invitation may need to be reopened after sign-in.</p>
+  <p>Recording approval is separate from login. If a session needs approval, Browser opens the access flow without automatically creating or retrying a paid session. Complete approval, then start the session when ready. Recording delivery uses only the selected Briefcase account and organization.</p>
   <p>Private state lives in <code>$SILICON_HOME/.silicon-browser</code>, or <code>~/.silicon-browser</code> when <code>SILICON_HOME</code> is absent. State is partitioned by backend URL and testing environment. <code>SB_HOME</code> explicitly selects a different private home.</p>
 
   <h2 id="browser">3. Run a browser</h2>
@@ -66,7 +68,7 @@ browser --test ENVIRONMENT_UUID profile ls</code></pre>
     <li>Open <a href="/">Browser</a> and select <strong>Testing environment</strong> on the welcome screen or workspace header.</li>
     <li>Enter the test app secret, an actor ID or test short-lived token, and its organization. Add the imported Briefcase test app secret to create browser sessions.</li>
     <li>Select <strong>Enter test mode</strong>. The badge shows the verified environment name and UUID.</li>
-    <li>In Settings, enable recording access using that test actor or a fresh test token.</li>
+    <li>In Settings, select <strong>Enable recording access</strong> and approve the separate IAM feature request in this testing environment. Select the Briefcase destination account and organization, then return its one-time approval code.</li>
     <li>Select <strong>Exit test mode</strong> to restore your production workspace. Reloading also clears the test sign-in.</li>
   </ol>
   <p>Website test credentials stay in memory and never enter localStorage or sessionStorage. Browser data is isolated by verified IAM environment UUID and clean generation. Cleaning IAM selects fresh Browser data; rotating the app secret preserves the current generation. Invalid or missing test credentials never fall back to production. Tests use the normal API and real, metered browser/search providers.</p>
@@ -124,7 +126,7 @@ x-sb-test-app-secret: ask_...</code></pre>
 
   <h2 id="develop">Build on Browser</h2>
   <p>The stateless <a href="https://crates.io/crates/silicon-browser">silicon-browser Rust package</a> implements the API client. The <a href="https://crates.io/crates/silicon-browser-cli">silicon-browser-cli package</a> provides <code>browser</code>; <a href="https://crates.io/crates/silicon-browser-shared">silicon-browser-shared</a> contains the common contracts.</p>
-  <pre><code>cargo add silicon-browser@0.3.1
+  <pre><code>cargo add silicon-browser@0.4.1
 
 # In a source checkout:
 cargo test --workspace --all-targets
@@ -138,12 +140,12 @@ npm run build --prefix frontend</code></pre>
     <li><a href="/docs/BRIEFCASE_INTEGRATION.md">Recording delivery (Markdown)</a></li>
     <li><a href="/docs/COMMAND_EXECUTION_GAPS.md">Command execution boundaries (Markdown)</a></li>
     <li><a href="/docs/CLI.md">Full CLI guide and current capability status (Markdown)</a></li>
-    <li><a href="https://github.com/unlikefraction/silicon-browser/releases/tag/managed-v0.3.1">Release binaries and checksums</a></li>
+    <li><a href="https://github.com/unlikefraction/silicon-browser/releases/tag/managed-v0.4.1">Release binaries and checksums</a></li>
   </ul>
 
   <h2 id="setup-command">One-line setup</h2>
   <p>Install the CLI without authentication. Then follow the separate sign-in and setup instructions above.</p>
-  <pre><code>curl -fsSL https://raw.githubusercontent.com/unlikefraction/silicon-browser/managed-v0.3.1/scripts/install.sh | sh -s -- --no-setup &amp;&amp; export PATH="$HOME/.local/bin:$PATH"</code></pre>
+  <pre><code>curl -fsSL https://raw.githubusercontent.com/unlikefraction/silicon-browser/main/scripts/install.sh | sh -s -- --no-setup &amp;&amp; export PATH="$HOME/.local/bin:$PATH"</code></pre>
   <footer>Silicon Browser · <a href="/">Open Browser</a> · <a href="https://github.com/unlikefraction/silicon-browser/issues">Report an issue</a></footer>
 </main>
 </div>

@@ -33,12 +33,15 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '24'
+      - uses: pnpm/action-setup@v4
+        with:
+          package_json_file: frontend/package.json
       - name: Frontend dependencies
-        run: npm ci --prefix frontend
+        run: pnpm --dir frontend install --frozen-lockfile
       - name: Frontend build
-        run: npm run build --prefix frontend
+        run: pnpm --dir frontend build
       - name: Frontend contracts
-        run: npm test --prefix frontend
+        run: pnpm --dir frontend test
 
   rust:
     runs-on: ubuntu-latest

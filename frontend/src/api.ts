@@ -1,5 +1,5 @@
 import type { AuthSession } from './types';
-import { IAM_APP_ID } from './auth';
+import { IAM_APP_ID, acceptLoginAttempt, type IdentityKind, type LoginAttempt } from './auth';
 
 export interface TestingCredentials { app_secret: string; iam_test_key?: string; briefcase_test_environment_key?: string }
 export interface TestingContext { environment_id: string; app_id: string; name: string }
@@ -47,13 +47,19 @@ export class BrowserApi {
       return { api, context };
     } catch (error) { api.close(); throw error; }
   }
-  async login(token: string, kind: 'carbon' | 'silicon'): Promise<AuthSession> {
-    const candidate = acceptAuth(await this.request<AuthSession>('/auth/exchange', 'POST', { short_lived_token: token }, null));
+  async startLogin(kind: IdentityKind): Promise<LoginAttempt> {
+    return acceptLoginAttempt(await this.request<LoginAttempt>('/auth/login-attempts', 'POST', { identity_kind: kind }, null));
+  }
+  async login(token: string, attempt: LoginAttempt, signal?: AbortSignal): Promise<AuthSession> {
+    const generation = this.generation, kind = attempt.identity_kind;
+    acceptLoginAttempt(attempt);
+    const candidate = acceptAuth(await this.request<AuthSession>(`/auth/login-attempts/${segment(attempt.attempt_id)}/complete`, 'POST', { short_lived_token: token, state: attempt.state }, null));
     const identity = await this.request<AuthSession['identity']>('/me', 'GET', undefined, candidate);
     if (candidate.identity.kind !== kind || identity?.kind !== kind || identity.id !== candidate.identity.id) {
       throw new ApiError(`This sign-in did not return a ${kind} account. Start again with the matching account button.`);
     }
-    this.setSession(candidate);
+    if (this.generation !== generation || signal?.aborted) throw new ApiError('Sign-in changed. Please try again.');
+    // The caller installs this verified candidate only after the popup or page flow succeeds.
     return candidate;
   }
   close() { this.closed = true; this.session = null; this.testing = undefined; this.generation++; this.refreshing = null; }

@@ -18,7 +18,7 @@ Vercel serves `https://browser.teamofsilicons.com`. A dedicated AWS host runs th
 
 ## Vercel frontend
 
-Set the project Root Directory to `frontend`, Framework Preset to **Vite**, and Node to **24.x**. The frontend uses SolidJS, TypeScript and Vite. `frontend/vercel.json` defines the build, `dist` output, security headers, and rewrites for `/auth/callback`, `/sessions/:id/live`, and `/docs`. The static documentation landing page is published at `/docs/`; the build copies repository Markdown into the same directory. Deploy from the repository root with files outside the frontend root available to the build. There is no API proxy or serverless function. See [frontend setup](../frontend/README.md).
+Set the project Root Directory to `frontend`, Framework Preset to **Vite**, and Node to **24.x**. The frontend uses SolidJS, TypeScript and Vite. `frontend/vercel.json` defines the build, `dist` output, security headers, and rewrites for `/auth/callback`, `/auth/obo/callback`, `/sessions/:id/live`, and `/docs`. The static documentation landing page is published at `/docs/`; the build copies repository Markdown into the same directory. Deploy from the repository root with files outside the frontend root available to the build. There is no API proxy or serverless function. See [frontend setup](../frontend/README.md).
 
 The public API origin defaults to `https://backend.browser.teamofsilicons.com`. `SB_PUBLIC_BACKEND_URL` is build-time public configuration, never a place for credentials. Provider keys, IAM application secrets, webhook secrets and test-environment keys belong only on AWS.
 
@@ -57,14 +57,31 @@ Verify a real signed IAM delivery reaches the configured production endpoint, an
 
 ## Frontend authentication and local verification
 
-The frontend sends explicit bearer/organization headers directly to the API, omits cookies and refuses redirects. Exact-origin CORS exposes `x-sb-auth-rejected` for one safe retry after a pre-handler authentication rejection. IAM sign-in returns to the Vercel callback; its nonce and popup source are checked. Callback tokens and live grants are removed from the URL immediately, and session credentials stay in memory.
+The frontend sends explicit bearer/organization headers directly to the API, omits cookies and refuses redirects. Exact-origin CORS exposes `x-sb-auth-rejected` for one safe retry after a pre-handler authentication rejection. IAM sign-in first creates a ten-minute backend login attempt bound to the selected Carbon or Silicon account kind. The callback state and one-use token are checked against that attempt before the server returns a session. Popup messages are accepted only from the expected same-origin window and attempt; the popup remains open until verified exchange succeeds. A blocked popup falls back to a full-page callback. Callback tokens and live grants are removed from the URL immediately. Sessions remain scoped to the current browser tab and organization. Direct CLI short-lived-token exchange remains supported.
 
 For local verification, run the backend on `http://127.0.0.1:8091` with `SB_ORIGIN=http://127.0.0.1:8092`, then:
 
 ```sh
-npm ci --prefix frontend
-SB_PUBLIC_BACKEND_URL=http://127.0.0.1:8091 npm run build --prefix frontend
+pnpm --dir frontend install --frozen-lockfile
+SB_PUBLIC_BACKEND_URL=http://127.0.0.1:8091 pnpm --dir frontend build
 node frontend/dev.mjs
 ```
 
 Rebuild without the override for production. Actual service installation, DNS/TLS, IAM redirect/webhook registration, account quotas, package publication, sustained load and backup restoration require operational evidence; this layout document does not certify them. Vercel configuration follows its [project configuration](https://vercel.com/docs/project-configuration/vercel-json) and [rewrite](https://vercel.com/docs/routing/rewrites) contracts.
+
+### Browser login attempts
+
+`POST /api/v1/auth/login-attempts` accepts `identity_kind` (`carbon` or
+`silicon`) and returns an attempt ID, unpredictable state, selected kind, and
+ten-minute expiry. The same callback completes through
+`POST /api/v1/auth/login-attempts/{id}/complete` with `short_lived_token` and
+`state`. The backend stores only state and token digests, binds the first token
+before contacting IAM, and reuses one IAM mutation key for exact retries.
+Different tokens, expired attempts, mismatched state, and the wrong account kind
+cannot establish a browser session. Direct CLI `/auth/exchange` remains supported.
+
+Migration 0011 adds the login-attempt table. Before activation, back up the root
+and any registered testing stores and rehearse migrations on copies. An older
+SQLx binary rejects an unknown migration version, so rollback requires a planned
+database rollback while traffic and workers remain stopped; changing only the
+executable symlink is insufficient.

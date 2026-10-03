@@ -1,5 +1,24 @@
 # Frontend verification
 
+## Bound IAM 5 sign-in — 3 October 2026
+
+Sign-in now starts a backend attempt with the selected account kind, then
+completes that exact attempt with its random state and the one-use IAM token.
+Popup messages require the original window, origin, attempt and state. The
+popup waits for verified completion before closing. Blocked popups use the
+same-tab callback; its pending record stores only the attempt and local return
+path. One-use login tokens and live grants remain memory-only. Existing
+interactive session persistence is unchanged.
+
+The frontend contracts cover both account kinds, delayed popup completion,
+exact callback acknowledgement, blocked-popup fallback, rejected state and
+expired attempts, safe local return paths, and cancellation during exchange.
+The package manager is pinned to pnpm 12.5.1 with the imported lockfile and
+explicit permission for esbuild's install script. All 50 frontend tests and the
+TypeScript/Vite production build passed locally (Node 26.9.0); deployment uses
+Node 24.x. No live IAM account or paid browser session was created by these checks.
+
+
 ## Separate recording consent — 3 October 2026
 
 The recording permission flow now starts an explicit IAM feature approval and

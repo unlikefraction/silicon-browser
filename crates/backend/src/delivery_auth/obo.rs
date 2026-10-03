@@ -77,13 +77,13 @@ fn upstream(error: silicon_iam_client::Error) -> DeliveryAuthError {
 #[cfg(test)]
 #[test]
 fn changed_consent_graph_requires_new_authorization_without_rejecting_login() {
-    let error = silicon_iam_client::Error::Api(silicon_iam_client::ApiError {
+    let error = silicon_iam_client::Error::Api(Box::new(silicon_iam_client::ApiError {
         status: 412,
         code: "version_mismatch".into(),
         message: "Review the changed graph".into(),
         details: None,
         request_id: None,
-    });
+    }));
     assert!(matches!(upstream(error), DeliveryAuthError::NeedsAuthorization));
 }
 

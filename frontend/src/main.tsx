@@ -8,7 +8,7 @@ import '@fontsource/ibm-plex-mono/latin-400.css';
 import './styles.css';
 import brandMark from './assets/mark.svg';
 import { BrowserApi, ApiError, acceptAuth, publicError, safeHttps, segment, shellQuote, dateForApi, type TestingContext } from './api';
-import { readEntry, requireLiveEnvironment, completeCallback, signInPopup, type IdentityKind } from './auth';
+import { readEntry, requireLiveEnvironment, completeCallback, signInPopup, PendingLoginStore, type IdentityKind } from './auth';
 import { recordingRecovery } from './recordings';
 import { RecordingConsentFlow, type RecordingConsent } from './recording-consent';
 import { TabSession } from './session';
@@ -18,6 +18,7 @@ const approvalParams = location.pathname === "/auth/obo/callback" ? new URLSearc
 const entry = readEntry(new URL(location.href));
 // Remove one-use credentials and live grants before rendering, login, or API requests.
 if (location.hash || location.search) history.replaceState(null, '', entry.cleanPath);
+const pendingLogin = new PendingLoginStore(import.meta.env.SB_BACKEND_ORIGIN);
 const savedSession = new TabSession(import.meta.env.SB_BACKEND_ORIGIN);
 const productionApi = new BrowserApi(import.meta.env.SB_BACKEND_ORIGIN, undefined, value => savedSession.save(value));
 // The popup only hands off its one-use code; it must not restore the opener's session.
@@ -39,10 +40,10 @@ function Badge(props: { state: string }) { return <span class={`badge ${props.st
 function Empty(props: { children: JSX.Element }) { return <div class="empty">{props.children}</div>; }
 function App() {
   let api = productionApi;
-  const [auth, setAuth] = createSignal<AuthSession | null>(restored);
+  const [auth, setAuth] = createSignal<AuthSession | null>(api.currentSession());
   const [testing, setTesting] = createSignal<TestingContext>();
   const [showTesting, setShowTesting] = createSignal(!!entry.pending?.testEnvironmentId);
-  const [organizations, setOrganizations] = createSignal<Organization[]>(restored ? [restored.org] : []);
+  const [organizations, setOrganizations] = createSignal<Organization[]>(api.currentSession() ? [api.currentSession()!.org] : []);
   const [busy, setBusy] = createSignal(false);
   const [loading, setLoading] = createSignal(false);
   const [notice, setNotice] = createSignal(entry.error);
@@ -74,6 +75,7 @@ function App() {
   let revision = 0;
   let viewerFrame: HTMLIFrameElement | undefined;
   let pendingLive = entry.pending;
+  let pendingLiveId = entry.callback ? readEntry(new URL(location.href)).liveId : entry.liveId;
   let recordingRefreshes = 0;
   const activeTab = () => ['detail', 'live', 'logs', 'new-session'].includes(view()) ? 'sessions' : ['new-profile', 'edit-profile'].includes(view()) ? 'profiles' : view();
   const ready = () => delivery()?.enabled && ['active', 'refreshing'].includes(delivery()?.state || '');
@@ -110,19 +112,20 @@ function App() {
       }
     } finally { if (ticket === revision) setLoading(false); }
   }
-  async function tokenFor(purpose = 'sign-in', kind: IdentityKind = auth()?.identity.kind ?? 'carbon') {
-    if (testing()) {
-      try { return await new Promise<string>((resolve, reject) => setTestTokenRequest({ purpose, accept: resolve, cancel: () => reject(new Error('Test authorization cancelled.')) })); }
-      finally { setTestTokenRequest(undefined); }
-    }
-    signInAbort = new AbortController(); setSigningIn(true);
-    try { return await signInPopup(signInAbort.signal, kind); } finally { setSigningIn(false); signInAbort = null; }
+  async function tokenFor(purpose: string) {
+    try { return await new Promise<string>((resolve, reject) => setTestTokenRequest({ purpose, accept: resolve, cancel: () => reject(new Error('Test authorization cancelled.')) })); }
+    finally { setTestTokenRequest(undefined); }
   }
   async function login(kind: IdentityKind) {
-    const token = await tokenFor('sign-in', kind);
-    const result = await api.login(token, kind);
-    resetRecordingConsent(); setAuth(result);
-    await enterWorkspace();
+    signInAbort = new AbortController(); setSigningIn(true);
+    try {
+      let candidate: AuthSession | undefined;
+      const complete = await signInPopup(kind, () => api.startLogin(kind), async (token, attempt, signal) => { candidate = await api.login(token, attempt, signal); }, pendingLogin, location.pathname, signInAbort.signal);
+      if (!complete) return;
+      if (!candidate) throw new Error('Sign-in did not complete. Please try again.');
+      api.setSession(candidate);
+      resetRecordingConsent(); setAuth(api.currentSession()); await enterWorkspace();
+    } finally { setSigningIn(false); signInAbort = null; }
   }
   async function loadOrganizations() {
     const current = api.currentSession(); if (!current) return;
@@ -133,8 +136,11 @@ function App() {
   async function enterWorkspace() {
     if (pendingLive) requireLiveEnvironment(pendingLive, testing()?.environment_id);
     await loadOrganizations();
-    if (pendingLive) { const link = pendingLive; pendingLive = null; await openLive(link.id, link.grant); }
-    else await navigate('sessions');
+    if (pendingLive) { const link = pendingLive; pendingLive = null; pendingLiveId = null; await openLive(link.id, link.grant); }
+    else if (pendingLiveId) {
+      const id = pendingLiveId; pendingLiveId = null;
+      try { await openLive(id); } catch { throw new Error('You are signed in. Reopen the live invitation to continue; its one-use grant was cleared before sign-in.'); }
+    } else await navigate('sessions');
   }
   async function switchOrganization(next: Organization) {
     const current = api.currentSession(); if (!current || current.org.id === next.id) return;
@@ -145,13 +151,14 @@ function App() {
     catch (error) { api.setSession(previous); setAuth(previous); throw error; }
   }
   async function attachOrganizations() {
+    if (!testing()) { await login(auth()!.identity.kind); return; }
     const token = await tokenFor('organization access');
     const result = acceptAuth(await api.request<AuthSession>('/auth/exchange', 'POST', { short_lived_token: token }, null));
     resetRecordingConsent(); api.setSession(result); setAuth(result); await enterWorkspace();
     setNotice('Organization access updated.');
   }
   function clearWorkspace() {
-    ++revision; setLiveUrl(''); setSession(undefined); setProfile(undefined); pendingLive = null;
+    ++revision; setLiveUrl(''); setSession(undefined); setProfile(undefined); pendingLive = null; pendingLiveId = null;
     setNotice(''); setLoading(false); setDelivery(undefined); resetRecordingConsent(); setSessions([]); setProfiles([]); setRecordings([]); setUsage([]); setTotal(undefined); setLimits(undefined); setLogs([]); setOrganizations([]);
     setLocations([]); setView('sessions'); setFilter('');
     history.replaceState(null, '', '/');
@@ -229,7 +236,7 @@ function App() {
     await refreshRecordings();
   }
   onMount(() => {
-    if (restored && !pendingLive?.testEnvironmentId) void perform(enterWorkspace);
+    if (api.currentSession() && !pendingLive?.testEnvironmentId) void perform(enterWorkspace);
     const timer = window.setInterval(() => {
       if (auth() && view() === 'recordings' && !busy() && !loading() && recordings().some(item => ['recording', 'pending'].includes(item.status))) {
         void refreshRecordings(revision, true).catch(() => {});
@@ -331,7 +338,7 @@ function App() {
         <Show when={!showTesting()}>
         <Show when={auth()} fallback={<section class="welcome">
           <span class="eyebrow">YOUR BROWSER WORKSPACE</span><h1>A browser, ready<br/>when you are.</h1><p>Start a session. Keep your profiles. Work together across the web.</p>
-          <Show when={!testing()} fallback={<div class="login-panel"><h2>Test sign-in has ended</h2><p>Open Testing environment to sign in again with a fresh IAM test token, or exit test mode to return to production.</p><button disabled={busy()} onClick={() => setShowTesting(true)}>Testing environment</button></div>}><div class="login-panel"><h2>Sign in to Browser</h2><p class="muted">Use your Silicon IAM identity to continue.</p><div class="actions"><button class="primary" disabled={busy()} onClick={() => void perform(() => login('carbon'))}>Continue as Carbon</button><button disabled={busy()} onClick={() => void perform(() => login('silicon'))}>Continue as Silicon</button></div><p class="fine">Sign-in opens in a separate window. You’ll stay signed in when you refresh this tab.</p><button type="button" class="quiet" disabled={busy()} onClick={() => setShowTesting(true)}>Testing environment</button></div></Show>
+          <Show when={!testing()} fallback={<div class="login-panel"><h2>Test sign-in has ended</h2><p>Open Testing environment to sign in again with a fresh IAM test token, or exit test mode to return to production.</p><button disabled={busy()} onClick={() => setShowTesting(true)}>Testing environment</button></div>}><div class="login-panel"><h2>Sign in to Browser</h2><p class="muted">Use your Silicon IAM identity to continue.</p><div class="actions"><button class="primary" disabled={busy()} onClick={() => void perform(() => login('carbon'))}>Continue as Carbon</button><button disabled={busy()} onClick={() => void perform(() => login('silicon'))}>Continue as Silicon</button></div><p class="fine">Sign-in opens in a separate window, or continues in this tab if pop-ups are blocked. You’ll stay signed in when you refresh this tab.</p><button type="button" class="quiet" disabled={busy()} onClick={() => setShowTesting(true)}>Testing environment</button></div></Show>
           <Show when={pendingLive}><p class="hint">You have a live browser invitation. Sign in to its organization to continue.</p></Show>
           <div class="welcome-features"><div><span class="mono">01 / PROFILES</span><p>Keep a consistent identity across sessions.</p></div><div><span class="mono">02 / TOGETHER</span><p>Bring people and agents into the same browser.</p></div><div><span class="mono">03 / RECORDED</span><p>Return to your work when a session ends.</p></div></div>
         </section>}>
@@ -403,9 +410,29 @@ function App() {
   </div>;
 }
 function Callback() {
-  const [sent, setSent] = createSignal(false);
-  onMount(() => { if (entry.callback) setSent(completeCallback(entry.callback)); });
-  return <main class="callback"><div class="brand"><img src={brandMark} alt="" width="28" height="28"/><span class="brand-wordmark">Browser</span></div><h1>{sent() ? 'Returning to Browser…' : 'Return to Browser to sign in.'}</h1><p>{sent() ? 'You can close this window and return to your workspace.' : 'This sign-in link is missing its original window. Start sign-in again from Browser.'}</p><a class="button" href="/">Open Browser</a></main>;
+  // A saved same-tab attempt takes priority over an unrelated opener inherited when this tab was opened.
+  const fullPage = (() => { if (!window.opener) return true; try { pendingLogin.load(entry.callback!); return true; } catch { return false; } })();
+  const [sent, setSent] = createSignal(false), [complete, setComplete] = createSignal(false), [error, setError] = createSignal(''), [working, setWorking] = createSignal(false);
+  async function finishPage() {
+    if (!entry.callback || working()) return;
+    setWorking(true); setError('');
+    try {
+      const pending = pendingLogin.load(entry.callback);
+      if (!entry.callback.token || !/^oac_[^\s\x00-\x1f\x7f]{1,16380}$/.test(entry.callback.token)) throw new Error('This sign-in link is missing its one-use token. Start sign-in again.');
+      const candidate = await productionApi.login(entry.callback.token, pending);
+      productionApi.setSession(candidate);
+      pendingLogin.clear(); history.replaceState(null, '', pending.return_path); setComplete(true);
+    } catch (cause) { setError(publicError(cause)); }
+    finally { setWorking(false); }
+  }
+  onMount(() => {
+    if (!entry.callback) return;
+    if (!fullPage) {
+      setSent(completeCallback(entry.callback, () => setError('Sign-in could not be completed. Return to your Browser tab to try again.')));
+      if (!sent()) setError('This sign-in link is invalid. Start sign-in again from Browser.');
+    } else void finishPage();
+  });
+  return <Show when={complete()} fallback={<main class="callback"><div class="brand"><img src={brandMark} alt="" width="28" height="28"/><span class="brand-wordmark">Browser</span></div><h1>{error() ? 'Sign-in could not finish' : 'Finishing sign-in…'}</h1><p>{error() || (sent() ? 'Your Browser tab is verifying your sign-in. This window will close when it is ready.' : 'Verifying your sign-in and returning to your workspace.')}</p><Show when={error() && fullPage}><button disabled={working()} onClick={() => void finishPage()}>Try again</button></Show><a class="button" href="/">Open Browser</a></main>}><App/></Show>;
 }
 function ApprovalCallback() {
   const [sent, setSent] = createSignal(false);
