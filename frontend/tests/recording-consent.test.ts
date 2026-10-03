@@ -28,3 +28,11 @@ test('consent URL refuses credentials, fragments and remote HTTP',()=>{
  for(const consent_url of ['javascript:alert(1)','http://auth.example/consent','https://user:secret@auth.example/consent','https://auth.example/consent#secret'])assert.throws(()=>acceptRecordingConsent({...pending,consent_url}));
  assert.equal(acceptRecordingConsent({...pending,consent_url:'http://127.0.0.1:4310/obo/consent'}).status,'pending');
 });
+
+test('an uncertain completion retains the exact code for retry and clears it on success',async()=>{
+ const bodies:string[]=[];const client=api(async(url,options)=>{if(!url.endsWith('/complete'))return response(pending);bodies.push(String(options.body));if(bodies.length===1)throw new Error('response lost');return response({...pending,status:'completed'});});
+ const flow=new RecordingConsentFlow();await flow.start(()=>client,true);await assert.rejects(flow.complete(()=>client,'obc_approved'),/Connection interrupted/);assert.equal(flow.hasCompletion(),true);await flow.retry(()=>client);assert.equal(bodies[0],bodies[1]);assert.equal(flow.hasCompletion(),false);await assert.rejects(flow.retry(()=>client),/No approval/);
+});
+test('saved approval retry cannot cross accounts or survive cancellation',async()=>{
+ let writes=0;const client=api(async(url)=>{if(!url.endsWith('/complete'))return response(pending);writes++;throw new Error('response lost');});const flow=new RecordingConsentFlow();await flow.start(()=>client);await assert.rejects(flow.complete(()=>client,'obc_approved'));client.setSession(session('other'));await assert.rejects(flow.retry(()=>client),/Start recording approval/);assert.equal(writes,1);assert.equal(flow.hasCompletion(),false);await flow.start(()=>client);await assert.rejects(flow.complete(()=>client,'obc_approved'));flow.reset();await assert.rejects(flow.retry(()=>client),/No approval/);assert.equal(writes,2);
+});

@@ -60,7 +60,10 @@ function App() {
   const [delivery, setDelivery] = createSignal<Delivery>();
   const [recordingConsent, setRecordingConsent] = createSignal<RecordingConsent>();
   const recordingConsentFlow = new RecordingConsentFlow();
-  const resetRecordingConsent = () => { recordingConsentFlow.reset(); setRecordingConsent(undefined); };
+  const [recordingApprovalReceived, setRecordingApprovalReceived] = createSignal(false);
+  let recordingApprovalAbort: AbortController | null = null;
+  const resetRecordingConsent = () => { recordingApprovalAbort?.abort(); recordingApprovalAbort=null; recordingConsentFlow.reset(); setRecordingApprovalReceived(false); setRecordingConsent(undefined); };
+  onCleanup(resetRecordingConsent);
 
   const [session, setSession] = createSignal<Session>();
   const [profile, setProfile] = createSignal<Profile>();
@@ -186,12 +189,28 @@ function App() {
         setNotice('Recording access is already approved.'); return;
       }
       setRecordingConsent(result); setNotice('Review recording access in the IAM popup.');
-      await awaitApproval(popup, result.consent_url!, result.state, completeRecordingConsent);
+      await reviewRecordingConsent(popup);
     } catch (error) { popup.close(); throw error; }
+  }
+  async function reviewRecordingConsent(existingPopup?: Window) {
+    const request = recordingConsent();
+    if (!request) { existingPopup?.close(); return; }
+    const popup = existingPopup ?? approvalPopup();
+    recordingApprovalAbort?.abort(); recordingApprovalAbort = new AbortController();
+    await awaitApproval(popup, request.consent_url!, request.state, completeRecordingConsent, recordingApprovalAbort.signal);
   }
   async function completeRecordingConsent(code: string) {
     if (!recordingConsent()) return;
-    await recordingConsentFlow.complete(() => api, code);
+    try { await recordingConsentFlow.complete(() => api, code); }
+    finally { setRecordingApprovalReceived(recordingConsentFlow.hasCompletion()); }
+    await recordingConsentSaved();
+  }
+  async function retryRecordingConsent() {
+    try { await recordingConsentFlow.retry(() => api); }
+    finally { setRecordingApprovalReceived(recordingConsentFlow.hasCompletion()); }
+    await recordingConsentSaved();
+  }
+  async function recordingConsentSaved() {
     setRecordingConsent(undefined);
     setDelivery(await api.call<Delivery>('/auth/delivery'));
     setNotice('Recording access is ready. Existing pending deliveries can resume; start a new browser session when you are ready.');
@@ -278,7 +297,8 @@ function App() {
         <Show when={notice()}><div role="status" class="notice">{notice()}</div></Show>
         <Show when={recordingConsent()}>{consent => <section class="panel form-panel" aria-label="Recording approval">
           <h2>Approve Briefcase storage</h2><p>Choose where Browser may save recordings and command logs. This approval is separate from sign-in.</p>
-          <a class="button" href={consent().consent_url || undefined} target="_blank" rel="noopener noreferrer" referrerPolicy="no-referrer">Open IAM approval ↗</a>
+          <Show when={recordingApprovalReceived()}><p class="fine">Approval received. Saving it was interrupted; retry without approving again.</p><button class="primary" disabled={busy()} onClick={()=>void perform(retryRecordingConsent)}>Retry saving approval</button></Show>
+          <Show when={!recordingApprovalReceived()}><button class="button" disabled={busy()} onClick={()=>void perform(()=>reviewRecordingConsent())}>Review access in IAM</button></Show>
           <p class="fine">Expires {date(consent().expires_at)}. If you decline, no storage access is granted.</p>
           <form autocomplete="off" onSubmit={event => {event.preventDefault(); const form=event.currentTarget; const code=String(new FormData(form).get('approval_code') || '').trim(); void perform(async()=>{await completeRecordingConsent(code);form.reset();});}}>
             <label>Approval code<input name="approval_code" type="password" required maxlength={16384} autocomplete="off" spellcheck={false} placeholder="obc_…"/></label>
