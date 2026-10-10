@@ -88,8 +88,9 @@ Apps recognizes nine platform targets, but a package can be uploaded only when
 its target's validation worker is live. On October 10, 2026, the four Linux
 workers were live; Windows and macOS workers were not configured. Of Browser's
 six native builds, only `linux-x86_64` and `linux-aarch64` can currently be
-uploaded. The remaining native builds are still produced for standalone
-distribution and future Apps support. Check again before a release:
+uploaded. The remaining native builds are retained in the complete release package for
+future Apps support. macOS and Linux also have standalone archives and npm
+binaries; Windows executables are included in the complete package archive. Check again before a release:
 
 ```sh
 silicon-apps targets
@@ -170,10 +171,10 @@ with development releases only, but users must then choose `browser>dev`.
 Release versions and package bytes cannot be replaced. Keep a mutation's
 idempotency key and exact request when recovering an uncertain response.
 
-This migration prepares source and packaging only. It does not claim a new
-catalog publication, a production Accounts configuration or hosted validation
-for an unavailable target. Previous rollout notes are preserved in
-[the archived distribution notes](legacy/HONEYCOMB.md).
+Browser 1.1.0 deployment and publication evidence is recorded in
+[the release report](operations/browser-1.1.0-2026-10-10.md). Hosted validation
+remains limited to the targets supported by the Apps service. Previous rollout
+notes are preserved in [the archived distribution notes](legacy/HONEYCOMB.md).
 
 References: [manifest](https://developers.teamofsilicons.com/docs/apps/reference/manifest),
 [publishing](https://developers.teamofsilicons.com/docs/apps/start/publish),

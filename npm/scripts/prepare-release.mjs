@@ -30,7 +30,6 @@ for (const [path, bytes] of payloads) {
 
 const check = spawnSync(process.execPath, [join(root, 'scripts/check-package.mjs')], { encoding: 'utf8' });
 if (check.status !== 0) throw new Error(check.stderr || 'native package check failed');
-const pack = spawnSync('npm', ['pack', '--dry-run', '--json'], { cwd: root, encoding: 'utf8' });
+const pack = spawnSync('npm', ['pack', '--dry-run', '--json', '--ignore-scripts'], { cwd: root, encoding: 'utf8' });
 if (pack.status !== 0) throw new Error(pack.stderr || 'npm pack failed');
-const packed = JSON.parse(pack.stdout);
-console.log(`release package ready: ${(Array.isArray(packed) ? packed[0] : packed).filename}`);
+console.log(`release package ready: silicon-browser-${version}.tgz`);

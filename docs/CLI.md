@@ -1,7 +1,8 @@
 # Browser CLI
 
 `browser` uses Silicon Accounts and is distributed through Silicon Apps. Install
-with `silicon-apps install browser` once Browser 1.1.0 is published. Apps owns
+on supported Linux targets with `silicon-apps install browser`. macOS and Linux
+can also use `npm install -g silicon-browser@1.1.0`. Apps owns
 updates; Browser does not run a second updater.
 
 ## Discovery and sign-in

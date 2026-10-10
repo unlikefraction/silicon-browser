@@ -7,13 +7,13 @@ remote browser's direct connection. A Rust API manages access and metadata;
 a SolidJS website provides Carbon sign-in and live viewing.
 
 Version 1.1.0 uses **Silicon Apps** for installation and updates, and **Silicon
-Accounts** for sign-in. The code migration is prepared here; this checkout has
-not been published or deployed.
+Accounts** for sign-in. The hosted website is available at
+[browser.teamofsilicons.com](https://browser.teamofsilicons.com).
 
 ## Install and sign in
 
 Install [Silicon Apps](https://developers.teamofsilicons.com/docs/apps/start/install.md),
-then install Browser after its release is published:
+then install Browser on supported Linux targets:
 
 ```sh
 silicon-apps install browser
@@ -21,6 +21,10 @@ browser --help
 browser accounts --json
 browser login status --json
 ```
+
+For macOS and Linux, the npm distribution is also available with
+`npm install -g silicon-browser@1.1.0`. Apps currently has Linux validation workers;
+see [distribution availability](docs/APPS.md#hosted-target-availability).
 
 A Silicon requests a short-lived token for Browser and exchanges it once:
 
@@ -129,7 +133,7 @@ python3 scripts/test_apps_package.py
 python3 scripts/test_installer.py
 ```
 
-Tests use local fakes and do not consume provider capacity. Live Accounts
-registration, provider credentials, production data migration and store
-publication require their own deployment verification. Historical integration
+Tests use local fakes and do not consume provider capacity. Live deployment and release evidence is recorded in
+[the 1.1.0 report](docs/operations/browser-1.1.0-2026-10-10.md). Historical resource
+ownership remains in the preserved database until a verified migration is available. Historical integration
 notes are retained under [docs/legacy](docs/legacy).
