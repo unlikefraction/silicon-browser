@@ -2,6 +2,15 @@ name: Silicon Apps package
 
 on:
   workflow_dispatch:
+    inputs:
+      candidate_run:
+        description: Successful existing package run for native catalog verification
+        required: false
+        default: ''
+      source_revision:
+        description: Exact candidate source commit
+        required: false
+        default: ''
   push:
     paths:
       - apps.yaml
@@ -16,12 +25,14 @@ on:
 
 permissions:
   contents: read
+  actions: read
 
 env:
   CARGO_TERM_COLOR: always
 
 jobs:
   native:
+    if: inputs.candidate_run == ''
     name: ${{ matrix.target }}
     strategy:
       fail-fast: false
@@ -93,6 +104,7 @@ jobs:
           retention-days: 14
 
   package:
+    if: inputs.candidate_run == ''
     needs: native
     runs-on: ubuntu-22.04
     steps:
@@ -127,3 +139,56 @@ jobs:
           path: target/browser-standalone/*
           if-no-files-found: error
           retention-days: 14
+
+  catalog-proof:
+    if: inputs.candidate_run != ''
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { runner: ubuntu-24.04, target: linux-x86_64 }
+          - { runner: ubuntu-24.04-arm, target: linux-aarch64 }
+          - { runner: macos-15-intel, target: macos-x86_64 }
+          - { runner: macos-15, target: macos-aarch64 }
+          - { runner: windows-2025, target: windows-x86_64 }
+          - { runner: windows-11-arm, target: windows-aarch64 }
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - name: Verify candidate provenance
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CANDIDATE_RUN: ${{ inputs.candidate_run }}
+          SOURCE_REVISION: ${{ inputs.source_revision }}
+        run: |
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/$CANDIDATE_RUN" > candidate.json
+          python - <<'PYPROOF'
+          import json, os
+          r=json.load(open('candidate.json'))
+          assert r['head_sha']==os.environ['SOURCE_REVISION'] and r['conclusion']=='success'
+          assert r['path']=='.github/workflows/apps.yml'
+          PYPROOF
+      - uses: actions/download-artifact@v4
+        with:
+          name: apps-browser-1.1.1.tar.gz
+          path: candidate
+          github-token: ${{ github.token }}
+          run-id: ${{ inputs.candidate_run }}
+      - name: Execute exact packaged bytes
+        shell: bash
+        env:
+          TARGET: ${{ matrix.target }}
+          SOURCE_REVISION: ${{ inputs.source_revision }}
+          CANDIDATE_RUN: ${{ inputs.candidate_run }}
+        run: |
+          archive=$(find candidate -name "apps-browser-*.tar.gz")
+          python scripts/native_catalog_proof.py --app browser --archive "$archive" --target "$TARGET" --source-revision "$SOURCE_REVISION" --candidate-run "$CANDIDATE_RUN" --output "proof/browser-$TARGET.json"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: browser-catalog-proof-${{ matrix.target }}
+          path: proof/
+          if-no-files-found: error
