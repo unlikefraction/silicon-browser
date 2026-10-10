@@ -37,9 +37,10 @@ send `contract_version: 2` for the org-free response. The Rust SDK injects this
 marker automatically; its public exchange and refresh request structs contain
 only their respective token fields.
 
-Access tokens expire after 30 minutes. Refresh tokens rotate once and their
+Access tokens expire after at most 30 minutes. Refresh tokens rotate once and their
 family expires at most 900 days after initial login; rotation does not extend
-that deadline. Serialize refresh and atomically save the new pair before use.
+that deadline. An app sign-in derived from a CI sign-in ends with that shorter
+upstream sign-in. Serialize refresh and atomically save the new pair before use.
 Do not resubmit an SLT, authorization code or refresh token after an uncertain
 response. Browser claims submitted credentials before contacting Accounts,
 and repeated submission requires fresh sign-in. Accounts refresh-token reuse

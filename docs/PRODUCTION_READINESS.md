@@ -15,6 +15,7 @@ their output. See [deployment](DEPLOYMENT.md), [HTTP API](API.md),
 
 | Record | What it establishes |
 | --- | --- |
+| [Browser 2.0.0 release](operations/browser-2.0.0-2026-10-10.md) | Organization-free contract, preserved data, 291 Rust/48 frontend checks, six native artifacts, live account/provider smoke and publication evidence. |
 | [Accounts UUID cutover](ACCOUNT_UUID_CUTOVER.md) | Coordinated migration of the existing Accounts store; stopped-writer backup, authenticated ciphertext, retained resource counts, idempotent replay, integrity/foreign-key checks and preserved IAM backup. |
 | [Accounts UUID cutover: website and account verification](ACCOUNT_UUID_CUTOVER.md#silicon-ui-and-genuine-account-verification-2026-10-10) | AWS static hosting, actual Silicon UI registry source, desktop/mobile checks, six native 1.1.1 packages and genuine new-Carbon sign-in/isolation. |
 | [Browser 1.1.0 release](operations/browser-1.1.0-2026-10-10.md) | Dated Accounts/Apps deployment, native release, provider and publication checks for 1.1.0. |

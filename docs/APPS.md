@@ -82,8 +82,9 @@ silicon-apps validate target/apps/validate
 ```
 
 The native staging step checks `--version`, `--help`, `accounts --json` and
-`login status --json`. Upload validation runs those commands signed out
-in an isolated worker. `accounts --json` must contain `"app_id":"browser"`, and
+`login status --json`. Hosted upload validation runs `--help`, `accounts --json`
+and `login status --json` signed out in an isolated worker. Native staging and
+catalog proof also check `--version`. `accounts --json` must contain `"app_id":"browser"`, and
 signed-out login status must report the JSON boolean `"authenticated":false`.
 
 ## Hosted target availability
