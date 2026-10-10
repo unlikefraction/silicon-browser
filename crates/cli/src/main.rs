@@ -1265,10 +1265,7 @@ fn needs_refresh(state: &State) -> bool {
         return false;
     }
     state.stored_token().is_none()
-        || state
-            .identity_id
-            .as_deref()
-            .is_none_or(|id| account_id(id, "identity").is_err() && actor_id(id, "identity").is_err())
+        || state.identity_id.as_deref().is_none_or(|id| account_id(id, "identity").is_err())
         || state
             .token_expires_at
             .as_deref()
@@ -1475,7 +1472,7 @@ mod tests {
                 Ok(Response {
                     status: 200,
                     body: serde_json::to_vec(&Envelope::new(Identity {
-                        id: "si:public-silicon".into(),
+                        id: "11111111-1111-4111-8111-111111111113".into(),
                         name: "Silicon".into(),
                         kind: IdentityKind::Silicon,
                         tags: vec![],
@@ -1526,7 +1523,7 @@ mod tests {
         let home = root.path().join("state");
         State::update(&home, |state| {
             state.backend_url = "http://127.0.0.1:1".into();
-            state.identity_id = Some("si:actor".into());
+            state.identity_id = Some("11111111-1111-4111-8111-111111111114".into());
             state.credential_generation = Some("generation".into());
             state.set_tokens("jwt.new.signature".into(), Some("sar_new".into()), Some("2099-01-01T00:00:00Z".into()));
         })
@@ -1539,14 +1536,26 @@ mod tests {
             idempotency_key: None,
         };
         assert_eq!(
-            recover_rejected_access(&home, "http://127.0.0.1:1", Some("si:actor"), Some("generation"), &request)
-                .unwrap()
-                .as_deref(),
+            recover_rejected_access(
+                &home,
+                "http://127.0.0.1:1",
+                Some("11111111-1111-4111-8111-111111111114"),
+                Some("generation"),
+                &request
+            )
+            .unwrap()
+            .as_deref(),
             Some("jwt.new.signature")
         );
         assert!(
-            recover_rejected_access(&home, "http://127.0.0.1:1", Some("si:actor"), Some("previous-login"), &request)
-                .is_err()
+            recover_rejected_access(
+                &home,
+                "http://127.0.0.1:1",
+                Some("11111111-1111-4111-8111-111111111114"),
+                Some("previous-login"),
+                &request
+            )
+            .is_err()
         );
     }
 
@@ -1603,7 +1612,7 @@ mod tests {
                 "recording",
                 "ls",
                 "--filter",
-                "profile:p1 -> for:@si:silicon-1 -> name:market* -> description:^research -> is:shared",
+                "profile:p1 -> for:@11111111-1111-4111-8111-111111111111 -> name:market* -> description:^research -> is:shared",
             ],
             vec!["browser", "recording", "rm", "s1"],
             vec!["browser", "usage", "show", "s1"],
@@ -1672,7 +1681,7 @@ mod tests {
         let auth = serde_json::from_value(serde_json::json!({
             "access_token": "jwt.new.signature", "refresh_token": "sar_new",
             "expires_at": "2030-03-17T17:46:40Z",
-            "identity": {"id":"si:silicon-1","name":"Silicon","kind":"silicon"},
+            "identity": {"id":"11111111-1111-4111-8111-111111111111","name":"Silicon","kind":"silicon"},
             "services": ["session"]
         }))
         .unwrap();
@@ -1713,7 +1722,7 @@ mod tests {
         assert!(needs_refresh(&state));
         state.identity_id = Some("old:tos".into());
         assert!(needs_refresh(&state));
-        state.identity_id = Some("si:canonical".into());
+        state.identity_id = Some("11111111-1111-4111-8111-111111111112".into());
         assert!(!needs_refresh(&state));
     }
 
@@ -1755,7 +1764,7 @@ mod tests {
             transport.clone(),
         )
         .unwrap();
-        assert_eq!(validate_setup_client(&allowed).unwrap().id, "si:public-silicon");
+        assert_eq!(validate_setup_client(&allowed).unwrap().id, "11111111-1111-4111-8111-111111111113");
 
         let denied = Client::with_transport(
             "https://backend.example",

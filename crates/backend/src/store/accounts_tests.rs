@@ -26,14 +26,14 @@ async fn native_recording_links_require_visibility_and_safe_provider_urls() {
     let store = Store::in_memory().await.unwrap();
     let secrets = SecretBox::new(&[7; 32]);
     let owner = Identity {
-        id: "8HV".into(),
+        id: "0080c488-a9e9-4c22-aa91-1c7a639f1d7b".into(),
         name: "c:ada".into(),
         kind: IdentityKind::Carbon,
         tags: vec![],
         verified_aliases: vec![],
     };
     let other = Identity {
-        id: "K1E".into(),
+        id: "bc0f6684-df51-4d9f-b945-bbdf88e599ad".into(),
         name: "si:worker".into(),
         kind: IdentityKind::Silicon,
         tags: vec![],
@@ -75,4 +75,25 @@ async fn native_recording_links_require_visibility_and_safe_provider_urls() {
         assert_eq!(recording.status, RecordingStatus::Pending);
     }
     store.ensure_accounts_database().await.unwrap();
+}
+
+#[tokio::test]
+async fn short_accounts_subjects_require_verified_pre_cutover_schema() {
+    let store = Store::in_memory().await.unwrap();
+    sqlx::query("INSERT INTO discovery_log(id,org_id,actor_id,kind,purpose,item_count,created_at) VALUES('legacy','browser','Ab1','search','history',1,'now')").execute(store.pool()).await.unwrap();
+    store.ensure_accounts_database().await.unwrap();
+    sqlx::query("UPDATE _sqlx_migrations SET checksum=x'00' WHERE version=14").execute(store.pool()).await.unwrap();
+    assert!(store.ensure_accounts_database().await.is_err());
+    let migrations = sqlx::migrate!("./migrations");
+    let checksum = migrations.iter().find(|migration| migration.version == 14).unwrap().checksum.as_ref();
+    sqlx::query("UPDATE _sqlx_migrations SET checksum=? WHERE version=14")
+        .bind(checksum)
+        .execute(store.pool())
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO account_uuid_cutover(singleton,map_sha256,migrated_at) VALUES(1,'hash','now')")
+        .execute(store.pool())
+        .await
+        .unwrap();
+    assert!(store.ensure_accounts_database().await.is_err());
 }

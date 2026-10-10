@@ -43,7 +43,8 @@ impl LocalController {
     }
     pub fn namespace(backend: &str, principal: &str, session: &str) -> String {
         let mut hash = Sha256::new();
-        for value in [backend, principal, session] {
+        // Keep existing controller names stable across the removal of workspace selection.
+        for value in [backend, "browser", principal, session] {
             hash.update(value.len().to_be_bytes());
             hash.update(value.as_bytes());
         }

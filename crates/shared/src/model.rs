@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 use url::Url;
 
 use crate::validation::{bounded, collection_len, identifier, purpose, required};
-use crate::{AccessList, ApiError, IdentityId, ProfileId, SessionId, Validate, ValidationError, actor_id};
+use crate::{AccessList, ApiError, IdentityId, ProfileId, SessionId, Validate, ValidationError};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -62,10 +62,7 @@ pub struct AuthExchangeRequest {
 
 impl fmt::Debug for AuthExchangeRequest {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter
-            .debug_struct("AuthExchangeRequest")
-            .field("short_lived_token", &"[REDACTED]")
-            .finish()
+        formatter.debug_struct("AuthExchangeRequest").field("short_lived_token", &"[REDACTED]").finish()
     }
 }
 
@@ -84,10 +81,7 @@ pub struct AuthRefreshRequest {
 
 impl fmt::Debug for AuthRefreshRequest {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter
-            .debug_struct("AuthRefreshRequest")
-            .field("refresh_token", &"[REDACTED]")
-            .finish()
+        formatter.debug_struct("AuthRefreshRequest").field("refresh_token", &"[REDACTED]").finish()
     }
 }
 
@@ -1083,16 +1077,9 @@ mod model_tests {
     fn auth_tokens_are_redacted_and_typed() {
         let exchange = AuthExchangeRequest { short_lived_token: "slt_single_use".into() };
         assert!(exchange.validate().is_ok());
-        assert_eq!(
-            serde_json::to_value(&exchange).unwrap(),
-            json!({"short_lived_token": "slt_single_use"})
-        );
+        assert_eq!(serde_json::to_value(&exchange).unwrap(), json!({"short_lived_token": "slt_single_use"}));
         assert!(!format!("{exchange:?}").contains("slt_single_use"));
-        assert!(
-            AuthExchangeRequest { short_lived_token: "jwt.wrong_family.signature".into() }
-                .validate()
-                .is_err()
-        );
+        assert!(AuthExchangeRequest { short_lived_token: "jwt.wrong_family.signature".into() }.validate().is_err());
         assert!(
             serde_json::from_value::<AuthExchangeRequest>(json!({
                 "short_lived_token": "slt_single_use"
@@ -1121,6 +1108,17 @@ mod model_tests {
             services: vec!["session".into()],
         };
         assert!(session.validate().is_ok());
+        assert!(serde_json::to_value(&session).unwrap().get("org").is_none());
+        assert!(
+            serde_json::from_value::<AuthExchangeRequest>(
+                json!({"short_lived_token":"slt_private","org_id":"browser"})
+            )
+            .is_err()
+        );
+        assert!(
+            serde_json::from_value::<AuthRefreshRequest>(json!({"refresh_token":"sar_private","org_id":"browser"}))
+                .is_err()
+        );
         session.identity.kind = IdentityKind::Carbon;
         assert!(session.validate().is_ok());
         session.identity.id = "c:alice0".into();

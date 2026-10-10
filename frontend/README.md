@@ -14,7 +14,7 @@ silicon-accounts login --app browser
 
 The frontend sends the token directly to `/api/v1/auth/exchange`. A token works once, expires after two minutes, and is bound to Browser. Browser never receives the Silicon's STK.
 
-The API returns a JWT access token, rotating `sar_` refresh token, stable Accounts UUID, and the single `browser` workspace. Account handles can change; saved sign-ins are keyed by UUID. Signed-in accounts persist in origin-scoped localStorage across tabs and browser restarts. Existing tab-scoped Accounts sessions migrate automatically; signing out removes that account across tabs. Legacy saved sessions require a new sign-in. Browser uses one workspace for all signed-in accounts.
+The API returns a JWT access token, rotating `sar_` refresh token, stable Accounts UUID, and optional service grants. Requests authenticate with the bearer token. Account handles can change; saved sign-ins are keyed by UUID. Signed-in accounts persist in origin-scoped localStorage across tabs and browser restarts until their credentials expire, are revoked, or the account signs out. Existing tab-scoped Accounts sessions and saved `browser` context keys migrate automatically without discarding valid tokens or pending refresh claims. Signing out removes that account across tabs.
 
 Native Web Locks serialize refresh across tabs. Each waiting tab rereads the saved pair and adopts an already rotated token. The old token is marked consumed before submission and the new pair is saved on success; pending rotation keeps the workspace visible. A failed or interrupted refresh ends the local sign-in, because retrying a spent Accounts refresh token revokes its entire sign-in. API mutations are replayed only after an explicit pre-handler authentication rejection.
 
@@ -32,7 +32,7 @@ pnpm --dir frontend test
 pnpm --dir frontend run build
 ```
 
-The package manager is pinned to pnpm 12.5.1 in `package.json`. Set the Vercel Root Directory to `frontend`, Framework Preset to Vite, and Node to `24.x`. `vercel.json` supplies pinned pnpm install/build commands, the output directory, security headers, and static callback/live-route rewrites. Keep `ENABLE_EXPERIMENTAL_COREPACK=1` enabled in the Vercel project. The API is called directly, without cookies or redirect following. Hashed assets are cached immutably; HTML is never cached.
+The package manager is pinned to pnpm 10.33.0 in `package.json`. Use that version for a frozen install and build. The output in `frontend/dist` is static and the API is called directly, without cookies or redirect following. Hosting must serve callback/live-route rewrites, immutable hashed assets, uncached HTML, and the security headers in `vercel.json`. See the repository deployment guide for the current production host.
 
 `SB_PUBLIC_BACKEND_URL` is the only frontend configuration. It defaults to `https://backend.browser.teamofsilicons.com` and may be set to `http://127.0.0.1:8091` for local development. Visitor URLs cannot change it. Keep app secrets and provider credentials on the backend.
 

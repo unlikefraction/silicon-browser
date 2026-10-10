@@ -2,7 +2,7 @@
 
 `browser` uses Silicon Accounts and is distributed through Silicon Apps. Install
 on supported Linux targets with `silicon-apps install browser`. macOS and Linux
-can also use `npm install -g silicon-browser@1.1.0`. Apps owns
+can also use `npm install -g silicon-browser@2.0.0`. Apps owns
 updates; Browser does not run a second updater.
 
 ## Discovery and sign-in
@@ -16,6 +16,7 @@ browser login status --json
 silicon-accounts login --app browser
 browser login --slt TOKEN
 browser setup
+browser logout
 ```
 
 The first three commands describe the app and its actions. `accounts --json`
@@ -30,7 +31,11 @@ inside `browser run` belong to the browser action.
 
 Credentials are private and partitioned by normalized backend URL under
 `${SILICON_HOME:-$HOME}/.silicon-browser`. `SB_HOME` selects an isolated state
-root; `SB_BACKEND_URL` selects the API. `SB_AUTHTOKEN` can override the access
+root; `SB_BACKEND_URL` selects the API. The saved login survives subsequent
+commands and restarts. `browser logout` removes that backend's saved login and
+selected session on this machine; it does not end remote browser sessions.
+An explicit `SB_AUTHTOKEN` remains a separate invocation override after logout.
+`SB_AUTHTOKEN` can override the access
 JWT for one invocation, or supply an SLT to `browser setup`. Environment access
 tokens never replace a saved login. Tokens from the retired identity service
 are ignored and require a fresh Accounts sign-in.
@@ -45,10 +50,10 @@ repeated.
 
 ```sh
 browser proxy ls
-browser profile new --name Research --location US --access '[@Account123]'
+browser profile new --name Research --location US --access '[@550e8400-e29b-41d4-a716-446655440000]'
 browser profile ls
 browser profile show PROFILE_ID
-browser profile set PROFILE_ID --access '[@Account123,@si:assistant]'
+browser profile set PROFILE_ID --access '[@550e8400-e29b-41d4-a716-446655440000,@si:assistant]'
 browser profile end PROFILE_ID --note done
 browser session new PROFILE_ID --name Research --description "Read vendor docs" --ttl 30m
 browser session new --incognito --name Quick --description "One task" --ttl 15m
@@ -58,11 +63,13 @@ browser session live SESSION_ID
 browser session end SESSION_ID --note done
 ```
 
-Ownership and grants store Accounts UUIDs, preserving case. A public `c:` or
+Ownership and grants store canonical lowercase, hyphenated Accounts UUIDv4s.
+Legacy short account IDs are retired and cannot be used as authentication or
+sharing aliases. A public `c:` or
 `si:` selector is resolved to the account UUID when access changes. The owner
 is always retained. Accounts provides no tag or organization authority;
-Browser enforces sharing in its application workspace. Existing `--org-id`
-wire compatibility selects that Browser workspace, not an Accounts organization.
+Browser enforces explicit sharing. Login, setup and ordinary commands need no
+organization flag or selection.
 
 Each profile has at most one active session. Profile sessions accept 15m, 30m,
 45m, 60m, 120m or 240m; incognito defaults to 15m.

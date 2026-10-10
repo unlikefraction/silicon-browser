@@ -176,8 +176,7 @@ fn isolated_sb(home: &Path, backend: &str) -> assert_cmd::Command {
         .env_clear()
         .env("SB_HOME", home)
         .env("SB_BACKEND_URL", backend)
-        .env("SB_AUTHTOKEN", "jwt.binary_contract.signature")
-        .env("SB_ORG_ID", "org-contract");
+        .env("SB_AUTHTOKEN", "jwt.binary_contract.signature");
     command
 }
 
@@ -224,7 +223,7 @@ fn bare_command_uses_environment_auth_and_live_service_discovery() {
             200,
             json!({
                 "data": {
-                    "id": "si:silicon-7",
+                    "id": "11111111-1111-4111-8111-111111111117",
                     "name": "Ada Browser",
                     "kind": "silicon",
                     "tags": ["engineering"]
@@ -238,7 +237,7 @@ fn bare_command_uses_environment_auth_and_live_service_discovery() {
     isolated_sb(&state_root.path().join("state"), &server.base_url)
         .assert()
         .success()
-        .stdout("Ada Browser (Silicon)\norg: org-contract\nservices: remote-browser, search-and-fetch\n")
+        .stdout("Ada Browser (Silicon)\nservices: remote-browser, search-and-fetch\n")
         .stderr("");
 
     let requests = server.finish();
@@ -250,7 +249,7 @@ fn bare_command_uses_environment_auth_and_live_service_discovery() {
             request.headers.get("authorization").map(String::as_str),
             Some("Bearer jwt.binary_contract.signature")
         );
-        assert_eq!(request.headers.get("x-org-id").map(String::as_str), Some("org-contract"));
+        assert!(!request.headers.contains_key("x-org-id"));
         assert!(request.body.is_empty());
     }
 }
@@ -264,7 +263,7 @@ fn profile_busy_renders_structured_owner_session_and_expiry_details() {
                 "code": "profile_busy",
                 "message": "profile already has a live session",
                 "details": {
-                    "actor_id": "si:silicon-7",
+                    "actor_id": "11111111-1111-4111-8111-111111111117",
                     "session_id": "session-active",
                     "expires_at": "2026-09-04T12:00:00Z"
                 },
@@ -282,7 +281,7 @@ fn profile_busy_renders_structured_owner_session_and_expiry_details() {
         .stdout("")
         .stderr(
             predicate::str::contains("profile_busy: profile already has a live session")
-                .and(predicate::str::contains("actor_id: si:silicon-7"))
+                .and(predicate::str::contains("actor_id: 11111111-1111-4111-8111-111111111117"))
                 .and(predicate::str::contains("session_id: session-active"))
                 .and(predicate::str::contains("expires_at: 2026-09-04T12:00:00Z")),
         );
@@ -294,7 +293,7 @@ fn profile_busy_renders_structured_owner_session_and_expiry_details() {
     assert_eq!(request.method, "POST");
     assert_eq!(request.path, "/api/v1/sessions");
     assert_eq!(request.headers.get("authorization").map(String::as_str), Some("Bearer jwt.binary_contract.signature"));
-    assert_eq!(request.headers.get("x-org-id").map(String::as_str), Some("org-contract"));
+    assert!(!request.headers.contains_key("x-org-id"));
     assert_eq!(
         request.json(),
         json!({
@@ -310,7 +309,7 @@ fn profile_busy_renders_structured_owner_session_and_expiry_details() {
 fn connection_response() -> StubResponse {
     StubResponse::json(
         200,
-        json!({"data":{"session_id":"session-1","principal_id":"Account123","cdp_url":"wss://direct.example/secret-cdp","expires_at":"2099-01-01T00:00:00Z"}}),
+        json!({"data":{"session_id":"session-1","principal_id":"11111111-1111-4111-8111-111111111119","cdp_url":"wss://direct.example/secret-cdp","expires_at":"2099-01-01T00:00:00Z"}}),
     )
 }
 fn report_response() -> StubResponse {
@@ -363,82 +362,38 @@ fn run_executes_locally_and_sends_only_completed_telemetry() {
 }
 
 #[test]
-fn search_with_one_bound_org_needs_no_setup_or_org_flag() {
-    let server = StubServer::start(vec![
-        StubResponse::json(200, json!({"data": [{"id": "org-only", "name": "Only Org"}]})),
-        StubResponse::json(200, json!({"data": {"results": [], "page": 0, "queued_ms": 0}})),
-    ]);
-    let state_root = tempfile::tempdir().unwrap();
-    let state_home = state_root.path().join("state");
-
-    isolated_sb(&state_home, &server.base_url)
-        .env_remove("SB_ORG_ID")
+fn search_uses_the_account_directly_without_discovery() {
+    let server =
+        StubServer::start(vec![StubResponse::json(200, json!({"data": {"results": [], "page": 0, "queued_ms": 0}}))]);
+    let root = tempfile::tempdir().unwrap();
+    isolated_sb(&root.path().join("state"), &server.base_url)
         .args(["search", "query", "--purpose", "contract test"])
         .assert()
-        .success()
-        .stdout("")
-        .stderr("");
-
-    let _backend_url = server.base_url.clone();
+        .success();
     let requests = server.finish();
-    assert_eq!(requests.len(), 2);
-    assert_eq!(requests[0].path, "/api/v1/orgs");
-    assert_eq!(
-        requests[0].headers.get("authorization").map(String::as_str),
-        Some("Bearer jwt.binary_contract.signature")
-    );
+    assert_eq!(requests.len(), 1);
+    assert_eq!(requests[0].path, "/api/v1/search");
     assert!(!requests[0].headers.contains_key("x-org-id"));
-    assert_eq!(requests[1].path, "/api/v1/search");
-    assert_eq!(requests[1].headers.get("x-org-id").map(String::as_str), Some("org-only"));
-
-    let persisted: Value =
-        serde_json::from_slice(&fs::read(partition_state(&state_home, &_backend_url)).unwrap()).unwrap();
-    assert!(persisted.get("org_id").is_none(), "an environment identity must not change the saved org");
 }
 
 #[cfg(unix)]
 #[test]
-fn a_sole_org_derived_from_stored_auth_is_persisted_owner_only() {
-    use std::os::unix::fs::PermissionsExt as _;
-
-    let server = StubServer::start(vec![
-        StubResponse::json(200, json!({"data": [{"id": "org-only", "name": "Only Org"}]})),
-        StubResponse::json(200, json!({"data": {"results": [], "page": 0, "queued_ms": 0}})),
-    ]);
-    let state_root = tempfile::tempdir().unwrap();
-    let state_home = state_root.path().join("state");
-    fs::create_dir(&state_home).unwrap();
-    fs::set_permissions(&state_home, fs::Permissions::from_mode(0o700)).unwrap();
-    let state_file = state_home.join("state.json");
-    fs::write(
-        &state_file,
-        serde_json::to_vec(&json!({
-            "backend_url": server.base_url,
-            "access_token": "jwt.stored_contract.signature",
-            "refresh_token": "sar_stored_contract",
-            "identity_id": "si:stored-contract",
-            "token_expires_at": "2030-03-17T17:46:40Z"
-        }))
-        .unwrap(),
-    )
-    .unwrap();
-    fs::set_permissions(&state_file, fs::Permissions::from_mode(0o600)).unwrap();
-
-    isolated_sb(&state_home, &server.base_url)
+fn logout_removes_stored_credentials_without_network_access() {
+    let root = tempfile::tempdir().unwrap();
+    let home = root.path().join("state");
+    let backend = "http://127.0.0.1:9";
+    stored_recovery_home(&home, backend);
+    isolated_sb(&home, backend).env_remove("SB_AUTHTOKEN").arg("logout").assert().success().stdout("signed out\n");
+    let state: Value = serde_json::from_slice(&fs::read(partition_state(&home, backend)).unwrap()).unwrap();
+    for key in ["access_token", "refresh_token", "identity_id", "token_expires_at", "credential_generation", "org_id"] {
+        assert!(state.get(key).is_none(), "logout retained {key}");
+    }
+    isolated_sb(&home, backend)
         .env_remove("SB_AUTHTOKEN")
-        .env_remove("SB_ORG_ID")
-        .args(["search", "query", "--purpose", "contract test"])
+        .args(["login", "status"])
         .assert()
-        .success();
-
-    let _backend_url = server.base_url.clone();
-    let requests = server.finish();
-    assert_eq!(requests[0].path, "/api/v1/orgs");
-    assert_eq!(requests[1].headers.get("x-org-id").map(String::as_str), Some("org-only"));
-    let state_file = partition_state(&state_home, &_backend_url);
-    let persisted: Value = serde_json::from_slice(&fs::read(&state_file).unwrap()).unwrap();
-    assert_eq!(persisted["org_id"], "org-only");
-    assert_eq!(fs::metadata(state_file).unwrap().permissions().mode() & 0o777, 0o600);
+        .success()
+        .stdout("not authenticated\n");
 }
 
 #[cfg(unix)]
@@ -449,14 +404,16 @@ fn setup_exchanges_an_environment_slt_without_letting_it_shadow_the_oat() {
             "access_token": "jwt.from_exchange.signature",
             "refresh_token": "sar_from_exchange",
             "expires_at": "2030-03-17T17:46:40Z",
-            "identity": {"id": "si:silicon-7", "name": "Ada Browser", "kind": "silicon"},
-            "org": {"id": "org-contract", "name": "Contract Org"},
+            "identity": {"id": "11111111-1111-4111-8111-111111111117", "name": "Ada Browser", "kind": "silicon"},
             "services": ["remote-browser", "search-and-fetch"]
         }
     });
     let setup_server = StubServer::start(vec![
         StubResponse::json(200, auth),
-        StubResponse::json(200, json!({"data": {"id": "si:silicon-7", "name": "Ada Browser", "kind": "silicon"}})),
+        StubResponse::json(
+            200,
+            json!({"data": {"id": "11111111-1111-4111-8111-111111111117", "name": "Ada Browser", "kind": "silicon"}}),
+        ),
         StubResponse::json(200, json!({"data": ["remote-browser", "search-and-fetch"]})),
         StubResponse::json(200, json!({"data": []})),
     ]);
@@ -470,10 +427,10 @@ fn setup_exchanges_an_environment_slt_without_letting_it_shadow_the_oat() {
     isolated_sb(&state_home, &setup_server.base_url)
         .env("SB_AUTHTOKEN", short_lived)
         .env("PATH", &runner_directory)
-        .args(["setup", "--org-id", "org-contract"])
+        .args(["setup"])
         .assert()
         .success()
-        .stdout(predicate::str::contains("ready: @si:silicon-7 in org-contract"));
+        .stdout(predicate::str::contains("ready: 11111111-1111-4111-8111-111111111117"));
 
     let state_bytes = fs::read(partition_state(&state_home, &exchanged_backend)).unwrap();
     let state_text = String::from_utf8(state_bytes).unwrap();
@@ -482,7 +439,7 @@ fn setup_exchanges_an_environment_slt_without_letting_it_shadow_the_oat() {
     assert!(state_text.contains("sar_from_exchange"));
     let saved: Value = serde_json::from_str(&state_text).unwrap();
     assert_eq!(saved["backend_url"], exchanged_backend);
-    assert_eq!(saved["org_id"], "org-contract");
+    assert!(saved.get("org_id").is_none());
 
     // Keeping the one-shot SLT exported must fall back to the exchanged OAT on
     // later commands instead of shadowing it.
@@ -495,13 +452,13 @@ fn setup_exchanges_an_environment_slt_without_letting_it_shadow_the_oat() {
     assert_eq!(requests.len(), 4);
     assert_eq!(requests[0].path, "/api/v1/auth/exchange");
     assert!(!requests[0].headers.contains_key("authorization"));
-    assert_eq!(requests[0].json(), json!({"short_lived_token": short_lived, "org_id": "org-contract"}));
+    assert_eq!(requests[0].json(), json!({"short_lived_token": short_lived, "contract_version":2}));
     for request in &requests[1..] {
         assert_eq!(
             request.headers.get("authorization").map(String::as_str),
             Some("Bearer jwt.from_exchange.signature")
         );
-        assert_eq!(request.headers.get("x-org-id").map(String::as_str), Some("org-contract"));
+        assert!(!request.headers.contains_key("x-org-id"));
     }
     assert_eq!(
         requests[3].headers.get("authorization").map(String::as_str),
@@ -510,7 +467,7 @@ fn setup_exchanges_an_environment_slt_without_letting_it_shadow_the_oat() {
 }
 
 /// Test group: setup validates an invocation-only environment identity without rewriting
-/// the issuer, org, or metadata bound to a separately stored rotating credential.
+/// the issuer or metadata bound to a separately stored rotating credential.
 #[cfg(unix)]
 #[test]
 fn setup_with_environment_jwt_preserves_the_stored_identity_binding() {
@@ -520,7 +477,7 @@ fn setup_with_environment_jwt_preserves_the_stored_identity_binding() {
         StubResponse::json(
             200,
             json!({"data": {
-                "id": "si:silicon-temporary", "name": "Temporary", "kind": "silicon"
+                "id": "11111111-1111-4111-8111-111111111118", "name": "Temporary", "kind": "silicon"
             }}),
         ),
         StubResponse::json(200, json!({"data": ["search-and-fetch"]})),
@@ -545,10 +502,10 @@ fn setup_with_environment_jwt_preserves_the_stored_identity_binding() {
     isolated_sb(&state_home, &server.base_url)
         .env("SB_AUTHTOKEN", "jwt.temporary.signature")
         .env("PATH", &runner_directory)
-        .args(["setup", "--org", "org-temporary"])
+        .args(["setup"])
         .assert()
         .success()
-        .stdout(predicate::str::contains("ready: @si:silicon-temporary in org-temporary"));
+        .stdout(predicate::str::contains("ready: 11111111-1111-4111-8111-111111111118"));
 
     let _backend_url = server.base_url.clone();
     let requests = server.finish();
@@ -557,7 +514,7 @@ fn setup_with_environment_jwt_preserves_the_stored_identity_binding() {
     assert_eq!(requests[1].path, "/api/v1/services");
     for request in requests {
         assert_eq!(request.headers.get("authorization").map(String::as_str), Some("Bearer jwt.temporary.signature"));
-        assert_eq!(request.headers.get("x-org-id").map(String::as_str), Some("org-temporary"));
+        assert!(!request.headers.contains_key("x-org-id"));
     }
     let after: Value = serde_json::from_slice(&fs::read(state_file).unwrap()).unwrap();
     assert_eq!(after, saved);
@@ -568,7 +525,7 @@ fn setup_rejects_an_unknown_environment_token_family_before_network_access() {
     let state_root = tempfile::tempdir().unwrap();
     isolated_sb(&state_root.path().join("state"), "http://127.0.0.1:9")
         .env("SB_AUTHTOKEN", "mystery_secret")
-        .args(["setup", "--org", "org-contract"])
+        .args(["setup"])
         .assert()
         .failure()
         .stdout("")
@@ -581,7 +538,7 @@ fn setup_rejects_an_unknown_environment_token_family_before_network_access() {
 }
 
 #[test]
-fn setup_exchanges_an_environment_slt_without_an_org() {
+fn setup_slt_exchange_reports_connection_failure() {
     let state_root = tempfile::tempdir().unwrap();
     isolated_sb(&state_root.path().join("state"), "http://127.0.0.1:9")
         .env("SB_AUTHTOKEN", "slt_single_use")
@@ -616,8 +573,7 @@ fn run_help_falls_back_offline_and_still_succeeds() {
 fn session_logs_emit_shell_replayable_commands_and_keep_json_metadata() {
     let home = tempfile::tempdir().unwrap();
     let command = "fill @e1 'hello; $(false)'";
-    let logs =
-        json!([{"sequence":1,"at":"2026-09-05T00:00:00Z","actor_id":"si:actor","command":command,"exit_code":0}]);
+    let logs = json!([{"sequence":1,"at":"2026-09-05T00:00:00Z","actor_id":"11111111-1111-4111-8111-111111111110","command":command,"exit_code":0}]);
     let server = StubServer::start(vec![
         StubResponse::json(200, json!({"data":logs.clone()})),
         StubResponse::json(200, json!({"data":logs})),
@@ -659,7 +615,10 @@ fn setup_remains_usable_without_recording_consent_and_never_exchanges_a_second_l
     let runner = root.path().join("bin");
     install_fake_runner(&runner);
     let server = StubServer::start(vec![
-        StubResponse::json(200, json!({"data":{"id":"si:actor","name":"Actor","kind":"silicon"}})),
+        StubResponse::json(
+            200,
+            json!({"data":{"id":"11111111-1111-4111-8111-111111111110","name":"Actor","kind":"silicon"}}),
+        ),
         StubResponse::json(200, json!({"data":[]})),
     ]);
     isolated_sb(&root.path().join("state"), &server.base_url)
@@ -681,7 +640,7 @@ fn failed_recording_does_not_claim_pending_delivery() {
         200,
         json!({"data":{
             "session_id":"s1","incognito":true,"session_name":"Failed recording","session_description":"test",
-            "owner_id":"si:actor","briefcase_path":"private/actor/apps/browser/file.mp4",
+            "owner_id":"11111111-1111-4111-8111-111111111110","briefcase_path":"private/actor/apps/browser/file.mp4",
             "duration_seconds":1,"size_bytes":0,"status":"failed","created_at":"2026-09-05T00:00:00Z",
         "delivery_error":"authorization_required","command_log_link":"https://briefcase.example/files/log-1"
         }}),
@@ -703,7 +662,7 @@ fn stored_recovery_home(home: &Path, backend: &str) {
     fs::create_dir(home).unwrap();
     fs::set_permissions(home, fs::Permissions::from_mode(0o700)).unwrap();
     let state = json!({"backend_url":backend,"access_token":"jwt.rejected.signature","refresh_token":"sar_owned",
-        "token_expires_at":"2099-01-01T00:00:00Z","org_id":"org-contract","identity_id":"si:actor"});
+        "token_expires_at":"2099-01-01T00:00:00Z","identity_id":"11111111-1111-4111-8111-111111111110"});
     fs::write(home.join("state.json"), serde_json::to_vec(&state).unwrap()).unwrap();
     fs::set_permissions(home.join("state.json"), fs::Permissions::from_mode(0o600)).unwrap();
 }
@@ -716,8 +675,8 @@ fn refreshed_session_response() -> StubResponse {
     StubResponse::json(
         200,
         json!({"data":{"access_token":"jwt.recovered.signature","refresh_token":"sar_rotated",
-        "expires_at":"2099-01-01T00:00:00Z","identity":{"id":"si:actor","name":"Actor","kind":"silicon"},
-        "org":{"id":"org-contract","name":"Org"},"services":[]}}),
+        "expires_at":"2099-01-01T00:00:00Z","identity":{"id":"11111111-1111-4111-8111-111111111110","name":"Actor","kind":"silicon"},
+        "services":[]}}),
     )
 }
 
@@ -726,7 +685,10 @@ fn refreshed_session_response() -> StubResponse {
 fn login_status_refreshes_expired_credentials_and_preserves_service_failures() {
     let server = StubServer::start(vec![
         refreshed_session_response(),
-        StubResponse::json(200, json!({"data":{"id":"si:actor","name":"Actor","kind":"silicon"}})),
+        StubResponse::json(
+            200,
+            json!({"data":{"id":"11111111-1111-4111-8111-111111111110","name":"Actor","kind":"silicon"}}),
+        ),
         StubResponse::json(503, json!({"error":{"code":"unavailable","message":"temporary failure"}})),
     ]);
     let root = tempfile::tempdir().unwrap();
@@ -772,13 +734,13 @@ fn marked_pre_handler_rejection_recovers_owned_auth_once_for_control_plane_reque
     assert_eq!(requests.len(), 3);
     assert_eq!(requests[0].path, "/api/v1/profiles");
     assert_eq!(requests[1].path, "/api/v1/auth/refresh");
-    assert_eq!(requests[1].json(), json!({"refresh_token":"sar_owned","org_id":"org-contract"}));
+    assert_eq!(requests[1].json(), json!({"refresh_token":"sar_owned","contract_version":2}));
     assert_eq!(requests[2].path, requests[0].path);
     assert_eq!(requests[2].body, requests[0].body);
     assert_eq!(requests[2].headers.get("authorization").unwrap(), "Bearer jwt.recovered.signature");
     let saved: Value = serde_json::from_slice(&fs::read(partition_state(&home, &_backend_url)).unwrap()).unwrap();
     assert_eq!(saved["refresh_token"], "sar_rotated");
-    assert_eq!(saved["identity_id"], "si:actor");
+    assert_eq!(saved["identity_id"], "11111111-1111-4111-8111-111111111110");
 }
 
 #[cfg(unix)]
@@ -822,7 +784,10 @@ fn one_cli_invocation_reuses_its_own_recovery_for_later_metadata_requests() {
     let server = StubServer::start(vec![
         rejected_response(true),
         refreshed_session_response(),
-        StubResponse::json(200, json!({"data":{"id":"si:actor","name":"Actor","kind":"silicon"}})),
+        StubResponse::json(
+            200,
+            json!({"data":{"id":"11111111-1111-4111-8111-111111111110","name":"Actor","kind":"silicon"}}),
+        ),
         StubResponse::json(200, json!({"data":["remote-browser"]})),
     ]);
     let root = tempfile::tempdir().unwrap();
@@ -916,18 +881,21 @@ fn a_refresh_only_login_saves_the_rotated_pair_before_continuing() {
             json!({"data":{
                 "access_token":"jwt.recovered.signature","refresh_token":"sar_rotated",
                 "expires_at":"2099-01-01T00:00:00Z",
-                "identity":{"id":"Account123","name":"si:actor","kind":"silicon"},
-                "org":{"id":"org-contract","name":"Org"},"services":[]
+                "identity":{"id":"11111111-1111-4111-8111-111111111119","name":"si:actor","kind":"silicon"},
+                "services":[]
             }}),
         ),
-        StubResponse::json(200, json!({"data":{"id":"Account123","name":"si:actor","kind":"silicon"}})),
+        StubResponse::json(
+            200,
+            json!({"data":{"id":"11111111-1111-4111-8111-111111111119","name":"si:actor","kind":"silicon"}}),
+        ),
     ]);
     let root = tempfile::tempdir().unwrap();
     let home = root.path().join("state");
     stored_recovery_home(&home, &server.base_url);
     let mut state: Value = serde_json::from_slice(&fs::read(home.join("state.json")).unwrap()).unwrap();
     state.as_object_mut().unwrap().remove("access_token");
-    state["identity_id"] = json!("Account123");
+    state["identity_id"] = json!("11111111-1111-4111-8111-111111111119");
     fs::write(home.join("state.json"), state.to_string()).unwrap();
     isolated_sb(&home, &server.base_url)
         .env_remove("SB_AUTHTOKEN")
@@ -938,7 +906,7 @@ fn a_refresh_only_login_saves_the_rotated_pair_before_continuing() {
     let saved: Value = serde_json::from_slice(&fs::read(partition_state(&home, &server.base_url)).unwrap()).unwrap();
     assert_eq!(saved["access_token"], "jwt.recovered.signature");
     assert_eq!(saved["refresh_token"], "sar_rotated");
-    assert_eq!(saved["identity_id"], "Account123");
+    assert_eq!(saved["identity_id"], "11111111-1111-4111-8111-111111111119");
     let requests = server.finish();
     assert_eq!(requests.len(), 2);
     assert_eq!(requests[0].path, "/api/v1/auth/refresh");
@@ -995,7 +963,7 @@ fn a_concurrent_login_during_refresh_never_rebinds_the_pending_command() {
         let mut newer: Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
         newer["access_token"] = json!("jwt.accountB.signature");
         newer["refresh_token"] = json!("sar_accountB");
-        newer["identity_id"] = json!("AccountB");
+        newer["identity_id"] = json!("22222222-2222-4222-8222-222222222222");
         newer["credential_generation"] = json!("login-b");
         newer["token_expires_at"] = json!("2099-01-01T00:00:00Z");
         fs::write(&path, newer.to_string()).unwrap();
@@ -1012,6 +980,6 @@ fn a_concurrent_login_during_refresh_never_rebinds_the_pending_command() {
     listener.set_nonblocking(true).unwrap();
     assert!(matches!(listener.accept(), Err(error) if error.kind() == std::io::ErrorKind::WouldBlock));
     let newer: Value = serde_json::from_slice(&fs::read(partition_state(&home, &backend)).unwrap()).unwrap();
-    assert_eq!(newer["identity_id"], "AccountB");
+    assert_eq!(newer["identity_id"], "22222222-2222-4222-8222-222222222222");
     assert_eq!(newer["refresh_token"], "sar_accountB");
 }

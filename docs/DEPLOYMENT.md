@@ -1,7 +1,8 @@
 # Deployment
 
 The frontend runs at `https://browser.teamofsilicons.com`; a native Rust API runs
-at `https://backend.browser.teamofsilicons.com`. Local CLI controllers connect
+at `https://backend.browser.teamofsilicons.com`. Both are served from the existing
+AWS host, with nginx serving the built website. Local CLI controllers connect
 directly to remote browsers. The API host needs no Chromium or browser controller.
 
 ## Backend configuration
@@ -25,7 +26,10 @@ The Accounts release defaults to `silicon-browser-accounts.db` and checks its
 authorization schema before serving. Do not point it at the previous IAM
 resource database. Preserve that database, encryption key and delivery receipts;
 importing ownership requires an authenticated mapping to permanent Accounts
-UUIDs. Never infer continuity from a reused c:/si: handle. Historical SQL
+UUIDv4s. Never infer continuity from a reused c:/si: handle. The existing
+Accounts database's coordinated UUIDv4 cutover is recorded in
+[the migration runbook and evidence](ACCOUNT_UUID_CUTOVER.md); it is separate
+from the preserved IAM database. Historical SQL
 migrations remain unchanged so backups retain their original checksums.
 
 The backup service reads the API's runtime environment and working directory,
@@ -38,9 +42,11 @@ Configure Browser's Silicon Accounts redirect URI as
 `https://browser.teamofsilicons.com/auth/callback` and allow the frontend origin.
 Carbon login uses server-owned PKCE, state and a one-use callback claim. Silicon
 login uses an application-bound `slt_` token. The server introspects Accounts
-JWTs live, checks audience and membership, and uses the permanent base62 UUID
+JWTs live, checks issuer, `browser` audience/client ID and application membership,
+and uses the permanent canonical lowercase, hyphenated UUIDv4
 for ownership. Accounts has no organizations or tags; Browser maintains one
-application workspace and explicit sharing.
+application and explicit sharing. No login payload or client configuration
+needs an organization selector.
 
 Configure the Accounts webhook at
 `https://backend.browser.teamofsilicons.com/webhooks/accounts` and set
@@ -58,10 +64,25 @@ real redirect and webhook registration before deployment.
 
 ## Frontend
 
-Use Node 24, Vercel root `frontend` and the Vite preset. Set the public
+Use Node 24 or later and the locked frontend dependencies. Set the public
 `SB_PUBLIC_BACKEND_URL` at build time; no service secret belongs in frontend
-configuration. Requests omit cookies and refuse redirects. Sign-ins are saved
-in origin-scoped localStorage shared across tabs; callback codes and live
+configuration:
+
+```sh
+pnpm --dir frontend install --frozen-lockfile
+SB_PUBLIC_BACKEND_URL=https://backend.browser.teamofsilicons.com pnpm --dir frontend build
+```
+
+Stage `frontend/dist` in a new revision-named directory under
+`/opt/silicon-browser/web-releases/`. Verify its index, callback fallback, JS,
+CSS, icons and license files before switching nginx's frontend document root.
+Retain the previous directory for rollback and run `nginx -t` before reloading.
+Preserve the API vhost and HTTP webroot `/var/www/certbot` used for certificate
+renewal. Production no longer depends on the former Vercel project.
+
+Requests omit cookies and refuse redirects. Sign-ins are saved in
+origin-scoped localStorage shared across tabs, so they survive reloads and
+browser restarts until sign-out, expiry or revocation. Callback codes and live
 invitation secrets are removed from URLs.
 
 For local checks:
@@ -78,8 +99,10 @@ sign-in. [Frontend setup](../frontend/README.md) describes the UI and tests.
 ## Release
 
 Silicon Apps hosts CLI packages and updates, not the API/frontend. Follow
-[Apps distribution](APPS.md) to build native packages and publish Browser 1.1.0.
+[Apps distribution](APPS.md) to build native packages and publish Browser 2.0.0.
 Do not release a CLI against an API still running the old auth contract.
 Keep secrets, backups and operational data outside packages. Run an actual
 restore check and a provider session smoke test before production cutover.
 Automatic Briefcase OBO delivery is retired; see [recording status](BRIEFCASE_INTEGRATION.md).
+
+For the coordinated existing-Accounts UUID upgrade, use [the offline cutover runbook](ACCOUNT_UUID_CUTOVER.md). It does not adopt the preserved IAM database.

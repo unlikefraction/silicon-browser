@@ -4,9 +4,9 @@ import '@fontsource/ibm-plex-sans/latin-400.css';
 import '@fontsource/ibm-plex-sans/latin-500.css';
 import '@fontsource/ibm-plex-sans/latin-600.css';
 import '@fontsource/ibm-plex-mono/latin-400.css';
-import './silicon-ui/foundation.css';
+import './components/silicon-ui/foundation.css';
 import './styles.css';
-import './silicon-ui/controls.css';
+import { SiliconButton } from './silicon-button';
 import brandMark from './assets/mark.svg';
 import { BrowserApi, acceptAuth, publicError, safeHttps, segment, shellQuote, dateForApi } from './api';
 import { readEntry, completeCallback, signInPopup, matchingRedirect, clearRedirectAttempt, type LoginAttempt } from './auth';
@@ -106,7 +106,7 @@ function App() {
     signInAbort = new AbortController(); setSigningIn(true);
     try {
       const { attempt_id, ...body } = await signInPopup(() => api.request<LoginAttempt>('/auth/attempts', 'POST', { identity_kind: 'carbon' }, null), signInAbort.signal);
-      const result = acceptAuth(await api.request<AuthSession>(`/auth/attempts/${segment(attempt_id)}/exchange`, 'POST', body, null), undefined, 'carbon');
+      const result = acceptAuth(await api.request<AuthSession>(`/auth/attempts/${segment(attempt_id)}/exchange`, 'POST', { ...body, contract_version: 2 }, null), undefined, 'carbon');
       if (signInAbort.signal.aborted) throw new Error('Sign-in cancelled. Your workspace is unchanged.');
       await finishLogin(result);
     } finally { setSigningIn(false); signInAbort = null; }
@@ -114,15 +114,15 @@ function App() {
   async function siliconLogin(data: FormData) {
     const token = String(data.get('slt') || '').trim();
     if (!/^slt_[A-Za-z0-9_-]{1,16380}$/.test(token)) throw new Error('Enter the short-lived token from silicon-accounts login --app browser.');
-    const result = acceptAuth(await api.request<AuthSession>('/auth/exchange', 'POST', { short_lived_token: token }, null), undefined, 'silicon');
+    const result = acceptAuth(await api.request<AuthSession>('/auth/exchange', 'POST', { short_lived_token: token, contract_version: 2 }, null), undefined, 'silicon');
     await finishLogin(result);
   }
   function SignInOptions() {
-    return <><div class="actions">{button('Continue as Carbon', login, true)}<button disabled={busy()} aria-expanded={showSilicon()} onClick={() => setShowSilicon(!showSilicon())}>Continue as Silicon</button></div>
+    return <><div class="actions">{button('Continue as Carbon', login, true)}<SiliconButton disabled={busy()} aria-expanded={showSilicon()} onClick={() => setShowSilicon(!showSilicon())}>Continue as Silicon</SiliconButton></div>
       <Show when={showSilicon()}><form autocomplete="off" onSubmit={event => { event.preventDefault(); const data = new FormData(event.currentTarget); event.currentTarget.reset(); void perform(() => siliconLogin(data)); }}>
         <p>Get a short-lived token in your terminal:</p><pre>silicon-accounts login --app browser</pre>
         <label>Short-lived token<input name="slt" type="password" required maxlength={16384} placeholder="slt_…" autocomplete="off" spellcheck={false}/></label>
-        <button class="primary" disabled={busy()}>Sign in as Silicon</button><p class="fine">A token works once and expires after two minutes.</p>
+        <SiliconButton variant="primary" disabled={busy()}>Sign in as Silicon</SiliconButton><p class="fine">A token works once and expires after two minutes.</p>
       </form></Show></>;
   }
   function loadContexts() {
@@ -222,7 +222,7 @@ function App() {
     event.preventDefault(); const data = new FormData(event.currentTarget as HTMLFormElement); void perform(() => task(data));
   }
   function button(label: string, task: () => Promise<unknown>, primary = false) {
-    return <button type="button" classList={{ primary }} disabled={busy()} onClick={() => void perform(task)}>{label}</button>;
+    return <SiliconButton type="button" variant={primary ? 'primary' : 'secondary'} disabled={busy()} onClick={() => void perform(task)}>{label}</SiliconButton>;
   }
   const matchingSessions = () => sessions().filter(item => `${item.name} ${item.id} ${item.status}`.toLowerCase().includes(filter().toLowerCase()));
   const matchingProfiles = () => profiles().filter(item => `${item.name} ${item.id} ${item.location.name}`.toLowerCase().includes(filter().toLowerCase()));
@@ -232,19 +232,19 @@ function App() {
       <a class="brand" href="/" aria-label="Browser home"><img src={brandMark} alt="" width="28" height="28"/><span class="brand-wordmark">Browser</span></a>
       <div class="rail-label">WORKSPACE</div>
       <Show when={auth() || contexts().length} fallback={<p class="rail-note">A shared browser workspace for Carbons and Silicons.</p>}>
-        <div class="rail-label org-label">ACCOUNTS</div>
-        <div class="org-list" aria-label="Signed-in accounts"><For each={contexts()}>{item => <button class="org-item" classList={{ selected: !!auth() && contextKey(auth()!) === contextKey(item) }} disabled={busy()} onClick={() => void perform(() => switchContext(item))}><span class="org-dot" aria-hidden="true">{item.identity.name.slice(0, 1).toUpperCase()}</span><span>{item.identity.name}<small class="subtext">{item.identity.kind}</small></span></button>}</For><button class="org-add" disabled={busy()} title="Sign in to another account" onClick={() => void perform(attachAccounts)}><span aria-hidden="true">+</span><span>Add account</span></button></div>
+        <div class="rail-label account-label">ACCOUNTS</div>
+        <div class="account-list" aria-label="Signed-in accounts"><For each={contexts()}>{item => <button class="account-item" classList={{ selected: !!auth() && contextKey(auth()!) === contextKey(item) }} disabled={busy()} onClick={() => void perform(() => switchContext(item))}><span class="account-dot" aria-hidden="true">{item.identity.name.slice(0, 1).toUpperCase()}</span><span>{item.identity.name}<small class="subtext">{item.identity.kind}</small></span></button>}</For><button class="account-add" disabled={busy()} title="Sign in to another account" onClick={() => void perform(attachAccounts)}><span aria-hidden="true">+</span><span>Add account</span></button></div>
         <div class="rail-label workspace-label">WORKSPACE</div>
         <Show when={auth()}><nav aria-label="Workspace"><For each={tabs}>{tab => <button disabled={busy()} aria-current={activeTab() === tab ? 'page' : undefined} onClick={() => void perform(() => navigate(tab))}><span>{tab === 'settings' ? 'Settings' : tab[0].toUpperCase() + tab.slice(1)}</span><span aria-hidden="true">{activeTab() === tab ? '→' : ''}</span></button>}</For></nav></Show>
       </Show>
       <div class="rail-bottom"><a href="/docs/" target="_blank" rel="noopener noreferrer">CLI & documentation ↗</a><span class="mono">TEAM OF SILICONS</span></div>
     </aside>
     <div class="main-shell">
-      <header class="topbar"><span class="breadcrumb">Browser <span>/</span> {auth() ? activeTab() : 'Welcome'}</span><div class="identity"><Show when={auth()}>{current => <><span>{current().identity.name}</span><button class="quiet" disabled={busy()} onClick={logout}>Sign out</button></>}</Show></div></header>
+      <header class="topbar"><span class="breadcrumb">Browser <span>/</span> {auth() ? activeTab() : 'Welcome'}</span><div class="identity"><Show when={auth()}>{current => <><span>{current().identity.name}</span><SiliconButton variant="ghost" disabled={busy()} onClick={logout}>Sign out</SiliconButton></>}</Show></div></header>
       <main classList={{ 'live-main': view() === 'live' && !!auth() }}>
         <Show when={notice()}><div role="status" class="notice">{notice()}</div></Show>
-        <Show when={signingIn()}><div class="notice auth-wait" role="status"><span>Complete sign-in in the Silicon Accounts window.</span><button onClick={() => signInAbort?.abort()}>Cancel sign-in</button></div></Show>
-        <Show when={addingContext()}><section class="panel form-panel"><h2>Add an account</h2><SignInOptions/><button disabled={busy()} onClick={() => setAddingContext(false)}>Cancel</button></section></Show>
+        <Show when={signingIn()}><div class="notice auth-wait" role="status"><span>Complete sign-in in the Silicon Accounts window.</span><SiliconButton onClick={() => signInAbort?.abort()}>Cancel sign-in</SiliconButton></div></Show>
+        <Show when={addingContext()}><section class="panel form-panel"><h2>Add an account</h2><SignInOptions/><SiliconButton disabled={busy()} onClick={() => setAddingContext(false)}>Cancel</SiliconButton></section></Show>
         <Show when={auth()} fallback={<section class="welcome">
           <span class="eyebrow">YOUR BROWSER WORKSPACE</span><h1>A browser, ready<br/>when you are.</h1><p>Start a session. Keep your profiles. Work together across the web.</p>
           <section class="login-panel"><h2>Sign in to Browser</h2><p class="muted">Use your Silicon Accounts identity.</p><SignInOptions/><p class="fine">Carbon sign-in opens in a separate window, or continues in this tab when popups are blocked.</p></section>
@@ -260,10 +260,10 @@ function App() {
             </Show>
           </Show>
           <Show when={view() === 'profiles'}>
-            <div class="page-heading"><div><span class="eyebrow">PERSISTENT IDENTITIES</span><h1>Profiles</h1><p class="muted">A familiar browser, every time you return.</p></div><button class="primary" disabled={busy()} onClick={() => { setProfile(undefined); setView('new-profile'); }}>New profile</button></div>
+            <div class="page-heading"><div><span class="eyebrow">PERSISTENT IDENTITIES</span><h1>Profiles</h1><p class="muted">A familiar browser, every time you return.</p></div><SiliconButton variant="primary" disabled={busy()} onClick={() => { setProfile(undefined); setView('new-profile'); }}>New profile</SiliconButton></div>
             <div class="toolbar"><label class="search"><span class="sr-only">Find a profile</span><input type="search" placeholder="Find a profile…" value={filter()} onInput={event => setFilter(event.currentTarget.value)}/></label>{button('Refresh', () => navigate('profiles'))}</div>
             <Show when={matchingProfiles().length} fallback={<Empty><h2>No profiles yet</h2><p>Create a profile to keep your browser identity and location between sessions.</p></Empty>}>
-              <div class="cards"><For each={matchingProfiles()}>{item => <article class="card"><div class="card-top"><span class="mono">{item.location.code.toUpperCase()}</span><Badge state={item.status}/></div><h2>{item.name}</h2><p class="muted">{item.location.name} · {item.sessions_run} sessions</p><dl><dt>Owner</dt><dd>{item.owner_id}</dd><dt>Access</dt><dd>{item.access.join(', ') || 'Owner only'}</dd></dl><div class="actions"><Show when={item.status === 'active'}>{button('Start session', () => newSession(item), true)}<button disabled={busy()} onClick={() => { setProfile(item); setView('edit-profile'); }}>Edit</button></Show></div></article>}</For></div>
+              <div class="cards"><For each={matchingProfiles()}>{item => <article class="card"><div class="card-top"><span class="mono">{item.location.code.toUpperCase()}</span><Badge state={item.status}/></div><h2>{item.name}</h2><p class="muted">{item.location.name} · {item.sessions_run} sessions</p><dl><dt>Owner</dt><dd>{item.owner_id}</dd><dt>Access</dt><dd>{item.access.join(', ') || 'Owner only'}</dd></dl><div class="actions"><Show when={item.status === 'active'}>{button('Start session', () => newSession(item), true)}<SiliconButton disabled={busy()} onClick={() => { setProfile(item); setView('edit-profile'); }}>Edit</SiliconButton></Show></div></article>}</For></div>
             </Show>
           </Show>
           <Show when={view() === 'new-profile' || view() === 'edit-profile'}>
@@ -271,24 +271,24 @@ function App() {
             <form class="panel form-panel" onSubmit={event => submit(event, async data => { const body = { name: String(data.get('name')).trim(), access: splitAccess(String(data.get('access') || '')) }; if (profile()) await api.call(`/profiles/${segment(profile()!.id)}`, 'PATCH', body); else await api.call('/profiles', 'POST', { ...body, location: data.get('location') }); await navigate('profiles'); })}>
               <label>Profile name<input name="name" required maxlength={100} value={profile()?.name || ''} placeholder="Research workspace"/></label>
               <Show when={!profile()} fallback={<p class="muted">Location: {profile()?.location.name}</p>}><label>Location<select name="location" required><For each={locations()}>{place => <option value={place.code}>{place.name}</option>}</For></select></label></Show>
-              <label>Additional access<input name="access" value={profile()?.access.join(', ') || ''} placeholder="@Ab1, @Cd2"/><span class="fine">Separate account UUIDs with commas. Your account always keeps owner access.</span></label><button class="primary" disabled={busy() || (!profile() && !locations().length)}>Save profile</button>
+              <label>Additional access<input name="access" value={profile()?.access.join(', ') || ''} placeholder="Account UUIDs, separated by commas"/><span class="fine">Separate account UUIDs with commas. Your account always keeps owner access.</span></label><SiliconButton variant="primary" disabled={busy() || (!profile() && !locations().length)}>Save profile</SiliconButton>
             </form>
-            <Show when={profile()}><form class="panel form-panel subtle" onSubmit={event => submit(event, async data => { await api.call(`/profiles/${segment(profile()!.id)}/end`, 'POST', { note: data.get('note') }); await navigate('profiles'); })}><h2>Retire profile</h2><p class="muted">Retired profiles cannot start new sessions.</p><label>Reason<textarea name="note" required maxlength={4000}/></label><button class="danger" disabled={busy()}>Retire profile</button></form></Show>
+            <Show when={profile()}><form class="panel form-panel subtle" onSubmit={event => submit(event, async data => { await api.call(`/profiles/${segment(profile()!.id)}/end`, 'POST', { note: data.get('note') }); await navigate('profiles'); })}><h2>Retire profile</h2><p class="muted">Retired profiles cannot start new sessions.</p><label>Reason<textarea name="note" required maxlength={4000}/></label><SiliconButton variant="danger" disabled={busy()}>Retire profile</SiliconButton></form></Show>
           </Show>
           <Show when={view() === 'new-session'}>
             <div class="page-heading"><div><h1>{profile() ? `Start ${profile()!.name}` : 'New session'}</h1><p class="muted">{profile() ? 'Continue with your saved browser identity.' : 'A fresh browser with no saved profile.'}</p></div>{button('Back to sessions', () => navigate('sessions'))}</div>
             <form class="panel form-panel" onSubmit={event => submit(event, async data => { const selected = profile(); const created = await api.call<Session>('/sessions', 'POST', { name: String(data.get('name')).trim(), description: String(data.get('description')).trim(), ttl: data.get('ttl'), incognito: !selected, ...(selected ? { profile_id: selected.id } : {}) }); await detail(created.id); })}>
-              <label>Session name<input name="name" required maxlength={120} placeholder="What are you working on?"/></label><label>Description<textarea name="description" required maxlength={2000} placeholder="A little context for you and your collaborators."/></label><label>Session length<select name="ttl"><For each={[15, 30, 45, 60, 120, 240]}>{minutes => <option value={`${minutes}m`}>{minutes} minutes</option>}</For></select></label><p class="fine">Usage starts when the browser opens. The session ends automatically at its time limit.</p><button class="primary" disabled={busy()}>Start session</button>
+              <label>Session name<input name="name" required maxlength={120} placeholder="What are you working on?"/></label><label>Description<textarea name="description" required maxlength={2000} placeholder="A little context for you and your collaborators."/></label><label>Session length<select name="ttl"><For each={[15, 30, 45, 60, 120, 240]}>{minutes => <option value={`${minutes}m`}>{minutes} minutes</option>}</For></select></label><p class="fine">Usage starts when the browser opens. The session ends automatically at its time limit.</p><SiliconButton variant="primary" disabled={busy()}>Start session</SiliconButton>
             </form>
           </Show>
           <Show when={view() === 'detail' && session()}>{_current => <>
             <div class="page-heading"><div><span class="eyebrow">SESSION</span><h1>{session()!.name}</h1><p class="muted">{session()!.description}</p></div><Badge state={session()!.status}/></div>
             <div class="panel"><dl class="detail-grid"><dt>Session ID</dt><dd class="mono">{session()!.id}</dd><dt>Started</dt><dd>{date(session()!.started_at)}</dd><dt>Ends by</dt><dd>{date(session()!.expires_at)}</dd><dt>Usage</dt><dd>{cost(session()!.usage)}</dd><dt>Participants</dt><dd>{[session()!.initiator_id, ...(session()!.participant_ids || [])].filter((value, index, list) => list.indexOf(value) === index).join(', ')}</dd></dl><div class="actions"><Show when={session()!.status === 'active'}>{button('Open live browser', () => openLive(session()!.id), true)}</Show>{button('Refresh', () => detail(session()!.id))}{button('Command logs', loadLogs)}</div></div>
             <div class="panel subtle"><h2>Continue in your terminal</h2><p class="muted">Use the same session from the Browser CLI.</p><pre>browser run {session()!.id} snapshot</pre></div>
-            <Show when={session()!.status === 'active'}><form class="panel form-panel" onSubmit={event => submit(event, async data => { await api.call(`/sessions/${segment(session()!.id)}/end`, 'POST', { note: data.get('note') }); await detail(session()!.id); })}><h2>End session</h2><label>Closing note<textarea name="note" required maxlength={4000} placeholder="What did you finish?"/></label><button class="danger" disabled={busy()}>End session</button></form></Show>
+            <Show when={session()!.status === 'active'}><form class="panel form-panel" onSubmit={event => submit(event, async data => { await api.call(`/sessions/${segment(session()!.id)}/end`, 'POST', { note: data.get('note') }); await detail(session()!.id); })}><h2>End session</h2><label>Closing note<textarea name="note" required maxlength={4000} placeholder="What did you finish?"/></label><SiliconButton variant="danger" disabled={busy()}>End session</SiliconButton></form></Show>
           </>}</Show>
           <Show when={view() === 'live'}><div class="page-heading"><div><h1>{session()?.name || 'Live browser'}</h1><p class="muted">Work in this browser together. The original session time limit still applies.</p></div><div class="actions"><Show when={document.fullscreenEnabled && liveUrl()}>{button('Fullscreen', async () => { if (viewerFrame) await viewerFrame.requestFullscreen(); })}</Show><Show when={session()}>{button('Session details', () => detail(session()!.id))}</Show></div></div><Show when={liveUrl()} fallback={<Empty>The live browser is unavailable. Refresh the session to check its status.</Empty>}><iframe ref={element => { viewerFrame = element; }} title="Live browser session" src={liveUrl()} referrerPolicy="no-referrer" sandbox="allow-scripts allow-same-origin allow-forms allow-popups" allow="clipboard-read; clipboard-write; fullscreen"/></Show></Show>
-          <Show when={view() === 'logs'}><div class="page-heading"><div><h1>Command logs</h1><p class="muted">Commands reported by the CLI. Dates use UTC.</p></div>{button('Session details', () => detail(session()!.id))}</div><form class="toolbar" onSubmit={event => submit(event, loadLogs)}><label>Date<input type="date" required value={logDate()} onInput={event => setLogDate(event.currentTarget.value)}/></label><button disabled={busy()}>Load logs</button></form><pre>{logs().map(item => `browser run ${shellQuote(session()!.id)} ${shellQuote(item.command)}`).join('\n') || 'No commands for this date.'}</pre></Show>
+          <Show when={view() === 'logs'}><div class="page-heading"><div><h1>Command logs</h1><p class="muted">Commands reported by the CLI. Dates use UTC.</p></div>{button('Session details', () => detail(session()!.id))}</div><form class="toolbar" onSubmit={event => submit(event, loadLogs)}><label>Date<input type="date" required value={logDate()} onInput={event => setLogDate(event.currentTarget.value)}/></label><SiliconButton disabled={busy()}>Load logs</SiliconButton></form><pre>{logs().map(item => `browser run ${shellQuote(session()!.id)} ${shellQuote(item.command)}`).join('\n') || 'No commands for this date.'}</pre></Show>
           <Show when={view() === 'recordings'}>
             <div class="page-heading"><div><span class="eyebrow">YOUR ARCHIVE</span><h1>Recordings</h1><p class="muted">Revisit available session replays from your browser provider.</p></div>{button('Refresh', () => navigate('recordings'))}</div>
             <Show when={recordings().length} fallback={<Empty><h2>Nothing recorded yet</h2><p>Available session recordings appear here.</p></Empty>}><div class="cards"><For each={recordings()}>{item => {
@@ -322,7 +322,7 @@ function Callback() {
     if (!matchingRedirect(entry.callback) || !entry.callback.code || !entry.callback.attempt) { setMessage('This sign-in link is missing its original attempt. Start sign-in again from Browser.'); return; }
     clearRedirectAttempt();
     try {
-      const result = acceptAuth(await productionApi.request<AuthSession>(`/auth/attempts/${segment(entry.callback.attempt)}/exchange`, 'POST', { state: entry.callback.nonce, code: entry.callback.code }, null), undefined, 'carbon');
+      const result = acceptAuth(await productionApi.request<AuthSession>(`/auth/attempts/${segment(entry.callback.attempt)}/exchange`, 'POST', { state: entry.callback.nonce, code: entry.callback.code, contract_version: 2 }, null), undefined, 'carbon');
       productionApi.setSession(result); clearRedirectAttempt(); location.replace('/');
     } catch (error) { setMessage(`${publicError(error)} Start sign-in again from Browser.`); }
   };

@@ -22,12 +22,10 @@ use uuid::Uuid;
 use crate::crypto::SecretBox;
 use crate::decimal::decimal_to_millionths;
 
+pub mod account_uuids;
 mod command_reports;
 mod delivery;
-mod public_identifiers;
-#[cfg(test)]
-mod public_identifiers_tests;
-pub use public_identifiers::PublicIdentifierMapping;
+// Retired IAM migration source is retained in store/public_identifiers*.rs, outside the compiled API.
 #[cfg(test)]
 mod accounts_tests;
 #[cfg(test)]
@@ -199,9 +197,9 @@ struct UsageWriteTestHook {
     resume: std::sync::Arc<tokio::sync::Notify>,
 }
 
-async fn check_accounts_ownership(pool: &SqlitePool) -> StoreResult<()> {
+async fn check_accounts_ownership(connection: &mut sqlx::SqliteConnection) -> StoreResult<()> {
     let tables: Vec<String> =
-        sqlx::query_scalar("SELECT name FROM sqlite_master WHERE type='table'").fetch_all(pool).await?;
+        sqlx::query_scalar("SELECT name FROM sqlite_master WHERE type='table'").fetch_all(&mut *connection).await?;
     let mut legacy = false;
     for (table, query) in [
         ("identity_projection", "SELECT EXISTS(SELECT 1 FROM identity_projection)"),
@@ -216,19 +214,45 @@ async fn check_accounts_ownership(pool: &SqlitePool) -> StoreResult<()> {
         ("public_identifier_schema", "SELECT EXISTS(SELECT 1 FROM public_identifier_schema)"),
     ] {
         if tables.iter().any(|name| name == table) {
-            let exists: bool = sqlx::query_scalar(query).fetch_one(pool).await?;
+            let exists: bool = sqlx::query_scalar(query).fetch_one(&mut *connection).await?;
             legacy |= exists;
         }
     }
+    // Old short Accounts subjects are accepted only for the guarded UUID cutover,
+    // with verified Accounts schema provenance and no completed cutover ledger.
+    let accounts_schema = if tables.iter().any(|name| name == "_sqlx_migrations") {
+        let checksum: Option<Vec<u8>> =
+            sqlx::query_scalar("SELECT checksum FROM _sqlx_migrations WHERE version=14 AND success=1")
+                .fetch_optional(&mut *connection)
+                .await?;
+        let migrations = sqlx::migrate!("./migrations");
+        checksum.is_some_and(|checksum| {
+            migrations.iter().any(|migration| migration.version == 14 && migration.checksum.as_ref() == checksum)
+        })
+    } else {
+        false
+    };
+    let cutover = if tables.iter().any(|name| name == "account_uuid_cutover") {
+        sqlx::query_scalar::<_, bool>("SELECT EXISTS(SELECT 1 FROM account_uuid_cutover)")
+            .fetch_one(&mut *connection)
+            .await?
+    } else {
+        false
+    };
+    let historical_accounts = accounts_schema && !cutover;
     for (table, query) in [
         ("profiles", "SELECT org_id,owner_id FROM profiles"),
         ("sessions", "SELECT org_id,started_by FROM sessions"),
         ("discovery_log", "SELECT org_id,actor_id FROM discovery_log"),
     ] {
         if tables.iter().any(|name| name == table) {
-            let actors: Vec<(String, String)> = sqlx::query_as(query).fetch_all(pool).await?;
+            let actors: Vec<(String, String)> = sqlx::query_as(query).fetch_all(&mut *connection).await?;
             legacy |= actors.iter().any(|(workspace, id)| {
-                workspace != "browser" || silicon_browser_shared::account_id(id, "stored account").is_err()
+                workspace != "browser"
+                    || (silicon_browser_shared::account_id(id, "stored account").is_err()
+                        && !(historical_accounts
+                            && (3..=128).contains(&id.len())
+                            && id.bytes().all(|byte| byte.is_ascii_alphanumeric())))
             });
         }
     }
@@ -249,14 +273,14 @@ impl Store {
             .max_connections(1)
             .connect_with(options.read_only(true).create_if_missing(false))
             .await?;
-        let result = check_accounts_ownership(&pool).await;
+        let result = check_accounts_ownership(&mut *pool.acquire().await?).await;
         pool.close().await;
         result
     }
 
     /// Accounts UUIDs cannot be inferred from old IAM handles.
     pub async fn ensure_accounts_database(&self) -> StoreResult<()> {
-        check_accounts_ownership(&self.pool).await
+        check_accounts_ownership(&mut *self.pool.acquire().await?).await
     }
 
     pub(crate) fn pool(&self) -> &SqlitePool {
@@ -2912,72 +2936,7 @@ mod tests {
         assert_eq!(total.browser_seconds, 90);
         assert_eq!(total.cost.total.micros, 750_000);
 
-        // Organization billing is intentionally broader than the caller's
-        // profile/session ACL. A second owner's private session is included,
-        // while an otherwise identical session in another org is not.
-        let other_owner = silicon("si:other-owner");
-        let hidden_profile = create_profile(&store, &other_owner, &[], "hidden-usage").await;
-        let hidden_session = active_session(&store, &other_owner, &hidden_profile.id, "hidden-usage").await;
-        store
-            .record_usage(
-                "org-1",
-                &hidden_session.id,
-                &UsageSample {
-                    browser_millis: 30_000,
-                    proxy_bytes_in: Some(0),
-                    proxy_bytes_out: Some(0),
-                    proxy_bytes_unclassified: None,
-                    browser_cost: "0.10".into(),
-                    proxy_cost: "0".into(),
-                    currency: "USD".into(),
-                    sampled_at: at(2, 11),
-                },
-            )
-            .await
-            .unwrap();
-        let other_org = store
-            .reserve_session(
-                "org-2",
-                &other_owner,
-                &SessionCreate::incognito("Other org", "Must not count", SessionTtl::Minutes15),
-                at(2, 10),
-            )
-            .await
-            .unwrap();
-        store
-            .activate_session("org-2", &other_org.id, &provider("other-org-usage"), &secrets(), at(2, 10))
-            .await
-            .unwrap();
-        store
-            .record_usage(
-                "org-2",
-                &other_org.id,
-                &UsageSample {
-                    browser_millis: 300_000,
-                    proxy_bytes_in: None,
-                    proxy_bytes_out: None,
-                    proxy_bytes_unclassified: None,
-                    browser_cost: "1".into(),
-                    proxy_cost: "0".into(),
-                    currency: "USD".into(),
-                    sampled_at: at(2, 11),
-                },
-            )
-            .await
-            .unwrap();
-
         assert_eq!(store.usage_list("org-1", &owner, None).await.unwrap().len(), 1);
-        let window = UsageFilter::parse("between:02-08-2026=02-08-2026").unwrap();
-        let organization = store.org_usage_total("org-1", Some(&window)).await.unwrap();
-        assert_eq!(organization.sessions, 2);
-        assert_eq!(organization.browser_seconds, 120);
-        assert_eq!(organization.cost.total.micros, 850_000);
-
-        // The storage primitive remains exact for internal analytics; the HTTP
-        // aggregate blocks this identity dimension for privacy.
-        let owner_only = store.org_usage_total("org-1", Some(&filter)).await.unwrap();
-        assert_eq!(owner_only.sessions, 1);
-        assert_eq!(owner_only.cost.total.micros, 750_000);
 
         let decreasing = UsageSample {
             browser_millis: 89_000,
@@ -3893,30 +3852,6 @@ impl Store {
         // Accounts grants access to Browser, not billing visibility over other
         // accounts. Only sessions visible through this account's ACLs count.
         usage_total(&self.usage_list(org_id, viewer, filter).await?)
-    }
-
-    /// Aggregate every session in an organization, including sessions hidden
-    /// from the requesting identity by profile/session ACLs.
-    ///
-    /// This has no `viewer` parameter and is for internal accounting only.
-    /// Accounts supplies no authorization for exposing it through HTTP.
-    pub async fn org_usage_total(&self, org_id: &str, filter: Option<&UsageFilter>) -> StoreResult<UsageTotal> {
-        safe_id(org_id, "org_id")?;
-        let session_ids: Vec<String> = sqlx::query_scalar(
-            "SELECT s.id FROM sessions s JOIN usage u ON u.session_id = s.id \
-             WHERE s.org_id = ? ORDER BY s.started_at, s.id",
-        )
-        .bind(org_id)
-        .fetch_all(&self.pool)
-        .await?;
-        let mut rows = Vec::with_capacity(session_ids.len());
-        for session_id in session_ids {
-            let usage = self.usage_unchecked(&session_id).await?;
-            if filter.is_none_or(|filter| filter.matches(&usage)) {
-                rows.push(usage);
-            }
-        }
-        usage_total(&rows)
     }
 
     /// Privacy-minimal discovery audit. Queries, URLs and result bodies are

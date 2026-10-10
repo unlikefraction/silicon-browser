@@ -17,7 +17,9 @@ pub use filter::{
     TextPattern, UsageFilter, UsagePredicate,
 };
 pub use model::*;
-pub use validation::{Validate, ValidationError, account_id, accounts_access_token, actor_id, app_id};
+pub use validation::{
+    Validate, ValidationError, account_id, accounts_access_token, actor_id, app_id, canonical_account_uuid,
+};
 
 pub type IdentityId = String;
 pub type ProfileId = String;

@@ -66,7 +66,7 @@ def main():
                             self.respond(payload, "application/octet-stream")
                     elif self.path.endswith("/connection"):
                         self.respond_json({
-                            "session_id": "local-transfer", "principal_id": "Fixture123",
+                            "session_id": "local-transfer", "principal_id": "11111111-1111-4111-8111-111111111111",
                             "cdp_url": cdp, "expires_at": "2099-01-01T00:00:00Z",
                         })
                     else:
@@ -94,7 +94,7 @@ def main():
             env = {key: value for key, value in os.environ.items()
                    if not key.startswith(("SB_", "IAM_", "ACCOUNTS_", "SILICON_ACCOUNTS_", "BRIEFCASE_", "AGENT_BROWSER_"))}
             env.update({"SB_HOME": str(root / "state"), "SB_BACKEND_URL": backend,
-                        "SB_ORG_ID": "browser", "SB_AUTHTOKEN": "jwt.fixture.signature",
+                        "SB_AUTHTOKEN": "jwt.fixture.signature",
                         "SB_CONTROLLER_BIN": controller})
 
             def run(command, extra=(), expected=0, home=None):

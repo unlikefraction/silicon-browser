@@ -58,12 +58,7 @@ impl AuthorizationCache {
             .map(|entry| entry.identity.clone())
     }
 
-    pub async fn resolve<F, Fut>(
-        &self,
-        bearer: &str,
-        org: &str,
-        mut fetch: F,
-    ) -> Result<PrincipalIdentity, IdentityError>
+    pub async fn resolve<F, Fut>(&self, bearer: &str, mut fetch: F) -> Result<PrincipalIdentity, IdentityError>
     where
         F: FnMut() -> Fut,
         Fut: Future<Output = Result<PrincipalIdentity, IdentityError>>,
@@ -71,7 +66,6 @@ impl AuthorizationCache {
         let mut hash = Sha256::new();
         hash.update((bearer.len() as u64).to_be_bytes());
         hash.update(bearer.as_bytes());
-        hash.update(org.as_bytes());
         let key: [u8; 32] = hash.finalize().into();
         if let Some(identity) = self.cached(&key) {
             return Ok(identity);
@@ -124,17 +118,15 @@ mod tests {
             principal_id: "c:test".into(),
             public_id: Some("c:test".into()),
             tags: None,
-            org_role: Some("member".into()),
             scopes: "self.identity.read self.membership.read".split_whitespace().map(str::to_owned).collect(),
             kind: IdentityKind::Carbon,
-            org_id: "tos".into(),
             membership_id: "c:test[tos]".into(),
             authorization_epoch: 1,
             expires_at: Utc::now() + chrono::Duration::minutes(5),
         }
     }
 
-    /// Test group: concurrent metadata calls collapse, org boundaries hold, and signed changes invalidate.
+    /// Test group: concurrent metadata calls collapse, token boundaries hold, and signed changes invalidate.
     #[tokio::test]
     async fn concurrent_calls_share_one_fetch_and_invalidation_requires_fresh_auth() {
         let cache = Arc::new(AuthorizationCache::default());
@@ -145,7 +137,7 @@ mod tests {
             let calls = calls.clone();
             tasks.spawn(async move {
                 cache
-                    .resolve("oat_same", "tos", || async {
+                    .resolve("oat_same", || async {
                         calls.fetch_add(1, Ordering::SeqCst);
                         tokio::task::yield_now().await;
                         Ok(identity())
@@ -160,11 +152,11 @@ mod tests {
         assert_eq!(calls.load(Ordering::SeqCst), 1);
         cache.invalidate();
         assert_eq!(
-            cache.resolve("oat_same", "tos", || async { Err(IdentityError::Unauthenticated) }).await,
+            cache.resolve("oat_same", || async { Err(IdentityError::Unauthenticated) }).await,
             Err(IdentityError::Unauthenticated)
         );
         assert_eq!(
-            cache.resolve("oat_same", "other", || async { Err(IdentityError::Forbidden) }).await,
+            cache.resolve("oat_other", || async { Err(IdentityError::Forbidden) }).await,
             Err(IdentityError::Forbidden)
         );
     }
@@ -174,7 +166,7 @@ mod tests {
         let cache = AuthorizationCache::default();
         let calls = AtomicUsize::new(0);
         let result = cache
-            .resolve("oat_stale", "tos", || async {
+            .resolve("oat_stale", || async {
                 if calls.fetch_add(1, Ordering::SeqCst) == 0 {
                     cache.invalidate();
                     Ok(identity())
@@ -185,7 +177,7 @@ mod tests {
             .await;
         assert_eq!(result, Err(IdentityError::Unauthenticated));
         let result = cache
-            .resolve("oat_expired", "tos", || async {
+            .resolve("oat_expired", || async {
                 let mut value = identity();
                 value.expires_at = Utc::now() - chrono::Duration::seconds(1);
                 Ok(value)

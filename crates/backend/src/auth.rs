@@ -24,10 +24,8 @@ pub struct PrincipalIdentity {
     pub principal_id: String,
     pub public_id: Option<String>,
     pub tags: Option<Vec<String>>,
-    pub org_role: Option<String>,
     pub scopes: Vec<String>,
     pub kind: IdentityKind,
-    pub org_id: String,
     pub membership_id: String,
     pub authorization_epoch: i64,
     pub expires_at: DateTime<Utc>,
@@ -336,7 +334,7 @@ impl IdentityProvider for AccountsIdentityProvider {
     }
     async fn identify(&self, bearer: &str) -> Result<PrincipalIdentity, IdentityError> {
         if let Some(cache) = &self.cache {
-            cache.resolve(bearer, WORKSPACE, || self.introspect(bearer)).await
+            cache.resolve(bearer, || self.introspect(bearer)).await
         } else {
             self.introspect(bearer).await
         }
@@ -435,10 +433,8 @@ fn identity_from_claims(c: Introspection, issuer: &str, app: &str) -> Result<Pri
         principal_id: id,
         public_id: Some(public),
         tags: None,
-        org_role: None,
         scopes: c.scope.unwrap_or_default().split_whitespace().map(str::to_owned).collect(),
         kind,
-        org_id: WORKSPACE.into(),
         membership_id: membership,
         authorization_epoch: 0,
         expires_at,
@@ -482,13 +478,7 @@ impl FakeIdentityProvider {
 #[async_trait]
 impl IdentityProvider for FakeIdentityProvider {
     async fn identify(&self, bearer: &str) -> Result<PrincipalIdentity, IdentityError> {
-        self.state
-            .read()
-            .unwrap()
-            .identities
-            .get(&token_digest(bearer))
-            .cloned()
-            .ok_or(IdentityError::Unauthenticated)
+        self.state.read().unwrap().identities.get(&token_digest(bearer)).cloned().ok_or(IdentityError::Unauthenticated)
     }
     async fn exchange_short_lived_token(&self, r: ExchangeRequest) -> Result<ExchangedAuth, IdentityError> {
         self.state
@@ -548,7 +538,7 @@ mod tests {
     }
     #[test]
     fn rejects_wrong_audience_revocation_and_refresh_credentials() {
-        for field in ["aud", "client_id", "iss", "membership_id", "token_type"] {
+        for field in ["aud", "client_id", "iss", "membership_id", "token_type", "sub"] {
             let mut value = claims("https://accounts.example");
             value[field] = json!("wrong");
             assert!(
@@ -578,11 +568,7 @@ mod tests {
             let result = match grant {
                 "refresh_token" => {
                     provider
-                        .refresh(RefreshRequest {
-                            refresh_token: credential.into(),
-
-                            idempotency_key: "ignored".into(),
-                        })
+                        .refresh(RefreshRequest { refresh_token: credential.into(), idempotency_key: "ignored".into() })
                         .await
                 }
                 "authorization_code" => {
@@ -623,12 +609,17 @@ mod tests {
     async fn current_handle_lookup_resolves_stable_acl_authority() {
         let (base, mut requests, task) = spawn_json_server(vec![(
             200,
-            json!({"uuid":"0080c488-a9e9-4c22-aa91-1c7a639f1d7b","id":"c:ada","kind":"carbon","status":"active"}).to_string(),
+            json!({"uuid":"0080c488-a9e9-4c22-aa91-1c7a639f1d7b","id":"c:ada","kind":"carbon","status":"active"})
+                .to_string(),
         )])
         .await;
         let provider = AccountsIdentityProvider::connect(&base, "browser".into(), "sa_app_test".into()).await.unwrap();
         assert_eq!(provider.resolve_account_id("c:ada").await.unwrap(), "0080c488-a9e9-4c22-aa91-1c7a639f1d7b");
-        assert_eq!(provider.resolve_account_id("K1E").await.unwrap(), "K1E");
+        assert!(provider.resolve_account_id("K1E").await.is_err());
+        assert_eq!(
+            provider.resolve_account_id("bc0f6684-df51-4d9f-b945-bbdf88e599ad").await.unwrap(),
+            "bc0f6684-df51-4d9f-b945-bbdf88e599ad"
+        );
         let request = requests.recv().await.unwrap();
         assert_eq!(request.method, "GET");
         assert_eq!(request.target, "/v1/accounts/by-id/c:ada");

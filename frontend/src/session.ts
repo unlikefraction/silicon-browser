@@ -25,12 +25,14 @@ export class BrowserSession {
     if (!Array.isArray(value?.sessions) || (value.active !== null && typeof value.active !== 'string')) throw new Error('Invalid saved contexts');
     if (value.refreshing !== undefined && (!value.refreshing || typeof value.refreshing !== 'object' || Array.isArray(value.refreshing) || Object.values(value.refreshing).some(token => typeof token !== 'string'))) throw new Error('Invalid pending renewal');
     const normalizeKey = (key: string | null) => key?.endsWith('/browser') ? key.slice(0, -8) : key;
-    const sessions = value.sessions.map(session => {
-      const legacy = session as AuthSession & { org?: { id: string } };
-      if (legacy.org !== undefined && legacy.org?.id !== 'browser') throw new Error('Invalid legacy workspace');
-      return acceptAuth(session);
+    const sessions = value.sessions.flatMap(session => {
+      try {
+        const legacy = session as AuthSession & { org?: { id: string } };
+        if (legacy.org !== undefined && legacy.org?.id !== 'browser') return [];
+        return [acceptAuth(session)];
+      } catch { return []; }
     });
-    return { active: normalizeKey(value.active), sessions, ...(value.refreshing ? { refreshing: Object.fromEntries(Object.entries(value.refreshing).map(([key, token]) => [normalizeKey(key), token])) } : {}) };
+    return { active: normalizeKey(value.active), sessions, ...(value.refreshing ? { refreshing: Object.fromEntries(Object.entries(value.refreshing).map(([key, token]) => [normalizeKey(key), token]).filter(([key]) => sessions.some(session => contextKey(session) === key))) } : {}) };
   }
   private clearLegacy() { try { this.legacyStorage().removeItem(this.legacyKey); } catch { /* Tab storage can be unavailable. */ } }
   private read(): SavedContexts {
@@ -38,11 +40,7 @@ export class BrowserSession {
       const raw = this.storage().getItem(this.storageKey);
       if (raw !== null) {
         this.clearLegacy();
-        try {
-          const value = this.parse(raw);
-          if (JSON.stringify(value) !== raw) this.write(value);
-          return value;
-        } catch { this.write(empty()); return empty(); }
+        try { return this.parse(raw); } catch { this.write(empty()); return empty(); }
       }
       let legacy: string | null = null;
       try { legacy = this.legacyStorage().getItem(this.legacyKey); } catch { /* No legacy tab storage. */ }
@@ -55,7 +53,9 @@ export class BrowserSession {
     } catch { return empty(); }
   }
   private write(value: SavedContexts) {
-    try { this.storage().setItem(this.storageKey, JSON.stringify(value)); }
+    // Keep the historical private cache shape readable by open 1.1 tabs sharing this token family and Web Lock.
+    const saved = { active: value.active ? `${value.active}/browser` : null, sessions: value.sessions.map(session => ({ ...session, org: { id: 'browser', name: 'Browser' } })), ...(value.refreshing ? { refreshing: Object.fromEntries(Object.entries(value.refreshing).map(([key, token]) => [`${key}/browser`, token])) } : {}) };
+    try { this.storage().setItem(this.storageKey, JSON.stringify(saved)); }
     catch { throw new Error('Browser could not save your sign-in. Allow website storage and try again.'); }
   }
   load(): AuthSession | null {

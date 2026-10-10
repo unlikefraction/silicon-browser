@@ -27,6 +27,10 @@ silicon-accounts login --app browser
 browser login --slt TOKEN
 ```
 
+The saved Browser login survives command invocations; `browser logout` clears
+it locally. Accounts identifies owners by canonical UUIDv4 and requires no
+organization selection.
+
 `browser setup` prepares the pinned local controller. Store packages include that
 controller beside the CLI, so setup can reuse it. The CLI does not run its own
 updater. Silicon Apps follows the installed channel and normally checks every
@@ -38,7 +42,7 @@ Keep `Cargo.toml`, workspace versions in `Cargo.lock` and `apps.yaml` in sync.
 The **Silicon Apps package** GitHub Actions workflow builds and tests the CLI
 natively on Linux, macOS and Windows, each on x86-64 and ARM64. It stages the
 pinned browser controller beside each CLI and assembles
-`apps-browser-1.1.0.tar.gz`. Windows ARM64 builds the controller from its pinned
+`apps-browser-2.0.0.tar.gz`. Windows ARM64 builds the controller from its pinned
 upstream source because that upstream release has no Windows ARM64 asset.
 
 The package's root `apps.yaml` uses this schema:
@@ -46,7 +50,7 @@ The package's root `apps.yaml` uses this schema:
 ```yaml
 schema_version: 1
 app_id: browser
-version: 1.1.0
+version: 2.0.0
 command: browser
 targets:
   linux-x86_64:
@@ -73,12 +77,12 @@ official Apps validator:
 
 ```sh
 mkdir -p target/apps/validate
-tar -xzf target/apps-browser-1.1.0.tar.gz -C target/apps/validate
+tar -xzf target/apps-browser-2.0.0.tar.gz -C target/apps/validate
 silicon-apps validate target/apps/validate
 ```
 
 The native staging step checks `--version`, `--help`, `accounts --json` and
-`login status --json`. Upload validation runs the last three commands signed out
+`login status --json`. Upload validation runs those commands signed out
 in an isolated worker. `accounts --json` must contain `"app_id":"browser"`, and
 signed-out login status must report the JSON boolean `"authenticated":false`.
 
@@ -88,8 +92,10 @@ Apps recognizes nine platform targets, but a package can be uploaded only when
 its target's validation worker is live. On October 10, 2026, the four Linux
 workers were live; Windows and macOS workers were not configured. Of Browser's
 six native builds, only `linux-x86_64` and `linux-aarch64` can currently be
-uploaded. The remaining native builds are retained in the complete release package for
-future Apps support. macOS and Linux also have standalone archives and npm
+uploaded. The remaining native builds are retained in the complete release package.
+Browser 1.1.1 already has six accepted packages from a coordinated offline
+import; that record does not establish availability of public upload workers.
+macOS and Linux also have standalone archives and npm
 binaries; Windows executables are included in the complete package archive. Check again before a release:
 
 ```sh
@@ -144,11 +150,11 @@ Use a fresh immutable version for a new release. Version strings are strict
 target, then copy the accepted package IDs into a development release:
 
 ```sh
-silicon-apps upload browser --target linux-x86_64 target/apps-browser-1.1.0.tar.gz
-silicon-apps upload browser --target linux-aarch64 target/apps-browser-1.1.0.tar.gz
+silicon-apps upload browser --target linux-x86_64 target/apps-browser-2.0.0.tar.gz
+silicon-apps upload browser --target linux-aarch64 target/apps-browser-2.0.0.tar.gz
 silicon-apps packages browser
-silicon-apps release browser --version 1.1.0 --package LINUX_X64_PACKAGE_ID --package LINUX_ARM64_PACKAGE_ID
-silicon-apps install 'browser>dev@1.1.0'
+silicon-apps release browser --version 2.0.0 --package LINUX_X64_PACKAGE_ID --package LINUX_ARM64_PACKAGE_ID
+silicon-apps install 'browser>dev@2.0.0'
 browser --version
 browser --help
 browser accounts --json
@@ -159,7 +165,7 @@ Every release starts in development. Promote the tested development release to
 production, then check readiness and publish the app:
 
 ```sh
-silicon-apps promote browser DEVELOPMENT_RELEASE_ID --version 1.1.0
+silicon-apps promote browser DEVELOPMENT_RELEASE_ID --version 2.0.0
 silicon-apps readiness browser
 silicon-apps publish browser
 ```
@@ -171,9 +177,9 @@ with development releases only, but users must then choose `browser>dev`.
 Release versions and package bytes cannot be replaced. Keep a mutation's
 idempotency key and exact request when recovering an uncertain response.
 
-Browser 1.1.0 deployment and publication evidence is recorded in
-[the release report](operations/browser-1.1.0-2026-10-10.md). Hosted validation
-remains limited to the targets supported by the Apps service. Previous rollout
+Dated deployment and publication evidence is indexed in
+[production readiness](PRODUCTION_READINESS.md). Hosted validation remains
+limited to the targets supported by the Apps service. Previous rollout
 notes are preserved in [the archived distribution notes](legacy/HONEYCOMB.md).
 
 References: [manifest](https://developers.teamofsilicons.com/docs/apps/reference/manifest),

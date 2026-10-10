@@ -23,7 +23,7 @@ async fn usage_limits_contract_coalesces_checks_and_observes_upgraded_capacity_a
     let app = router(state);
     let uri = "/api/v1/usage/limits";
     assert_eq!(request(&app, "GET", uri, None, None).await.0, StatusCode::UNAUTHORIZED);
-    assert_eq!(request(&app, "GET", uri, Some(("oat_owner", "wrong-org")), None).await.0, StatusCode::UNAUTHORIZED);
+    assert_eq!(request(&app, "GET", uri, Some(("oat_invalid", "browser")), None).await.0, StatusCode::UNAUTHORIZED);
     assert!(captured.try_recv().is_err(), "unauthorized callers must never check the account");
 
     let mut callers = tokio::task::JoinSet::new();
@@ -31,7 +31,7 @@ async fn usage_limits_contract_coalesces_checks_and_observes_upgraded_capacity_a
         let app = app.clone();
         callers.spawn(async move {
             let token = if index % 2 == 0 { "oat_owner" } else { "oat_viewer" };
-            request(&app, "GET", uri, Some((token, "org-1")), None).await
+            request(&app, "GET", uri, Some((token, "browser")), None).await
         });
     }
     let mut first = None;
@@ -66,7 +66,7 @@ async fn usage_limits_contract_coalesces_checks_and_observes_upgraded_capacity_a
     tokio::time::pause();
     tokio::time::advance(Duration::from_secs(61)).await;
     tokio::time::resume();
-    let (status, _, body) = request(&app, "GET", uri, Some(("oat_owner", "org-1")), None).await;
+    let (status, _, body) = request(&app, "GET", uri, Some(("oat_owner", "browser")), None).await;
     assert_eq!(status, StatusCode::OK);
     let upgraded: UsageLimits = serde_json::from_value(data(&body)).unwrap();
     assert_eq!(upgraded.concurrent_browser_limit, 50);
@@ -87,7 +87,7 @@ async fn usage_limits_failures_are_suppressed_briefly_and_do_not_return_stale_ca
     state.browser = Arc::new(BrowserUseV3::with_base_url("test-key", &base).unwrap());
     let app = router(state);
     let uri = "/api/v1/usage/limits";
-    let auth = Some(("oat_owner", "org-1"));
+    let auth = Some(("oat_owner", "browser"));
     let (status, _, body) = request(&app, "GET", uri, auth, None).await;
     assert_eq!(status, StatusCode::OK);
     assert!(data(&body)["rate_limit"].is_null(), "missing rate interval must not be invented");

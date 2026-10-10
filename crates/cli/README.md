@@ -14,11 +14,13 @@ browser login --slt TOKEN
 browser setup
 ```
 
-Browser 1.1.0 must be published before the Apps install command is available.
 From this checkout use `cargo install --path crates/cli`. Carbons sign in through
 the hosted Accounts flow on the Browser website. Browser receives no password
 or Silicon STK. Private state is partitioned by backend under
 `${SILICON_HOME:-$HOME}/.silicon-browser`; `SB_HOME` overrides that root.
+Login survives command invocations and restarts. `browser logout` clears the
+saved local login. There is no organization selector; ownership and access use
+canonical Accounts UUIDv4s.
 
 Store packages bundle the pinned native controller. Setup verifies it and your
 Accounts session. The CLI streams actions locally and queues command reports;

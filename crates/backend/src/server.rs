@@ -1,7 +1,6 @@
 //! Axum HTTP boundary for the public, stateless `silicon-browser` client.
 //!
-//! Every scoped operation validates an Accounts bearer in the explicit
-//! `X-Org-ID` context. Provider credentials stay private; an authorized client
+//! Every scoped operation validates an Accounts bearer. Provider credentials stay private; an authorized client
 //! receives its sensitive CDP capability and controls the remote browser directly.
 
 use std::collections::{BTreeMap, HashMap};
@@ -23,7 +22,7 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
 use silicon_browser_shared::{
     AccountsInfo, ApiError, ApiErrorEnvelope, AuthExchangeRequest, AuthRefreshRequest, AuthSession, CommandReport,
-    Envelope, FetchRequest, FetchResponse, FieldError, Identity, LiveRedeemRequest, Org, ProfileCreate, ProfileEnd,
+    Envelope, FetchRequest, FetchResponse, FieldError, Identity, LiveRedeemRequest, ProfileCreate, ProfileEnd,
     ProfileUpdate, ProxyLocation, RecordingFilter, SearchRequest, SearchResponse, Session, SessionConnection,
     SessionCreate, SessionEnd, SessionFilter, SessionStatus, UsageFilter, UsagePredicate, Validate,
 };
@@ -34,8 +33,8 @@ use uuid::Uuid;
 use silicon_browser_shared::{RecordingPredicate, SessionPredicate};
 
 use crate::auth::{
-    ExchangeRequest, ExchangedAuth, IdentityError, IdentityProvider, OrganizationAccess, PrincipalIdentity,
-    RefreshRequest, UpstreamFailure,
+    ExchangeRequest, ExchangedAuth, IdentityError, IdentityProvider, PrincipalIdentity, RefreshRequest,
+    UpstreamFailure, WORKSPACE,
 };
 use crate::crypto::SecretBox;
 use crate::decimal::decimal_to_millionths;
@@ -84,7 +83,6 @@ pub struct AppState {
     proxy_locations: Arc<Vec<ProxyLocation>>,
     session_locks: SessionLocks,
     usage_limits: usage_limits::UsageLimitsCache,
-    testing_environment: Option<Uuid>,
 }
 
 impl AppState {
@@ -118,7 +116,6 @@ impl AppState {
             proxy_locations: Arc::new(default_proxy_locations()),
             session_locks: SessionLocks::default(),
             usage_limits: usage_limits::UsageLimitsCache::default(),
-            testing_environment: None,
         })
     }
 
@@ -570,11 +567,9 @@ fn api_middleware(router: Router, origin: HeaderValue) -> Router {
                 .allow_headers([
                     AUTHORIZATION,
                     CONTENT_TYPE,
+                    // Compatibility for cached 1.1 frontends; ignored by authentication.
                     HeaderName::from_static("x-org-id"),
                     HeaderName::from_static("idempotency-key"),
-                    HeaderName::from_static("x-sb-test-app-secret"),
-                    HeaderName::from_static("x-testing-environment-key"),
-                    HeaderName::from_static("x-sb-test-briefcase-key"),
                 ])
                 .expose_headers([
                     HeaderName::from_static("x-sb-auth-rejected"),
@@ -582,12 +577,7 @@ fn api_middleware(router: Router, origin: HeaderValue) -> Router {
                 ]),
         )
         .layer(tower_http::trace::TraceLayer::new_for_http())
-        .layer(tower_http::sensitive_headers::SetSensitiveRequestHeadersLayer::new([
-            AUTHORIZATION,
-            HeaderName::from_static("x-sb-test-app-secret"),
-            HeaderName::from_static("x-testing-environment-key"),
-            HeaderName::from_static("x-sb-test-briefcase-key"),
-        ]))
+        .layer(tower_http::sensitive_headers::SetSensitiveRequestHeadersLayer::new([AUTHORIZATION]))
 }
 
 pub fn router(state: AppState) -> Router {
@@ -599,7 +589,6 @@ pub fn router(state: AppState) -> Router {
         .route("/api/v1/auth/exchange", post(exchange_auth))
         .route("/api/v1/auth/refresh", post(refresh_auth))
         .route("/api/v1/me", get(me))
-        .route("/api/v1/orgs", get(orgs))
         .route("/api/v1/services", get(services))
         .route("/api/v1/proxy-locations", get(proxy_locations))
         .route("/api/v1/profiles", get(list_profiles).post(create_profile))
@@ -616,7 +605,6 @@ pub fn router(state: AppState) -> Router {
         .route("/api/v1/recordings", get(list_recordings))
         .route("/api/v1/recordings/{session_id}", get(get_recording))
         .route("/api/v1/recordings/{session_id}/trash", post(trash_recording))
-        .route("/api/v1/usage/org", get(org_usage))
         .route("/api/v1/usage/limits", get(usage_limits::get_usage_limits))
         .route("/api/v1/usage", get(list_usage))
         .route("/api/v1/usage/{session_id}", get(get_usage))
@@ -662,32 +650,20 @@ impl FromRequestParts<AppState> for Scope {
 
     async fn from_request_parts(parts: &mut Parts, state: &AppState) -> Result<Self, Self::Rejection> {
         let bearer = bearer(&parts.headers).map_err(ApiFailure::before_handler)?;
-        let org_id = required_header(&parts.headers, "x-org-id", "organization scope is required")?;
-        authenticate_scope(state, &bearer, &org_id).await.map_err(ApiFailure::before_handler)
+        authenticate_scope(state, &bearer).await.map_err(ApiFailure::before_handler)
     }
 }
 
-async fn authenticate_scope(state: &AppState, bearer: &str, org_id: &str) -> Result<Scope, ApiFailure> {
-    let principal = state.identity.identify(bearer, org_id).await.map_err(ApiFailure::from)?;
-    if principal.org_id != org_id {
-        return Err(ApiFailure::forbidden("Accounts returned a different organization scope"));
-    }
+async fn authenticate_scope(state: &AppState, bearer: &str) -> Result<Scope, ApiFailure> {
+    let principal = state.identity.identify(bearer).await.map_err(ApiFailure::from)?;
     let identity = resolve_identity(state, &principal).await?;
-    Ok(Scope { org_id: org_id.to_owned(), identity, principal })
+    Ok(Scope { org_id: WORKSPACE.to_owned(), identity, principal })
 }
 
-#[derive(Clone)]
-struct Bearer(String);
-
-impl FromRequestParts<AppState> for Bearer {
-    type Rejection = ApiFailure;
-
-    async fn from_request_parts(parts: &mut Parts, _state: &AppState) -> Result<Self, Self::Rejection> {
-        Ok(Self(bearer(&parts.headers).map_err(ApiFailure::before_handler)?))
+async fn resolve_identity(state: &AppState, principal: &PrincipalIdentity) -> Result<Identity, ApiFailure> {
+    if state.store.account_subject_retired(&principal.principal_id).await? {
+        return Err(ApiFailure::unauthenticated());
     }
-}
-
-async fn resolve_identity(_state: &AppState, principal: &PrincipalIdentity) -> Result<Identity, ApiFailure> {
     // Display handles never become owners or ACL aliases.
     Ok(Identity {
         id: principal.principal_id.clone(),
@@ -706,62 +682,97 @@ async fn accounts(State(state): State<AppState>) -> impl IntoResponse {
     success(AccountsInfo { app_id: state.identity.app_id().to_owned() })
 }
 
+// Route-local adapters keep already installed 1.1 clients usable during upgrade.
+// New shared contracts never expose a workspace selector or organization.
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ExchangeInput {
+    #[serde(alias = "token")]
+    short_lived_token: String,
+    #[serde(default, rename = "org_id")]
+    legacy_partition: Option<String>,
+    #[serde(default)]
+    contract_version: Option<u8>,
+}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RefreshInput {
+    refresh_token: String,
+    #[serde(default, rename = "org_id")]
+    legacy_partition: Option<String>,
+    #[serde(default)]
+    contract_version: Option<u8>,
+}
+fn legacy_auth_response(session: AuthSession, legacy: bool) -> Result<serde_json::Value, ApiFailure> {
+    let mut value = serde_json::to_value(session)
+        .map_err(|_| ApiFailure::new(StatusCode::INTERNAL_SERVER_ERROR, "internal", "could not encode sign-in"))?;
+    if legacy {
+        value
+            .as_object_mut()
+            .expect("AuthSession serializes as an object")
+            .insert("org".into(), serde_json::json!({"id":WORKSPACE,"name":"Browser"}));
+    }
+    Ok(value)
+}
+fn legacy_partition(value: Option<&str>, contract_version: Option<u8>) -> Result<bool, ApiFailure> {
+    if contract_version.is_some_and(|version| version != 2) {
+        return Err(ApiFailure::field("contract_version", "expected contract version 2"));
+    }
+    if value.is_some_and(|partition| partition != WORKSPACE) {
+        return Err(ApiFailure::forbidden("this sign-in is for Browser"));
+    }
+    Ok(contract_version.is_none())
+}
 async fn exchange_auth(
     State(state): State<AppState>,
-    payload: Result<Json<AuthExchangeRequest>, JsonRejection>,
-) -> Result<impl IntoResponse, ApiFailure> {
-    let request = json_payload(payload)?;
+    payload: Result<Json<ExchangeInput>, JsonRejection>,
+) -> Result<Response, ApiFailure> {
+    let input = json_payload(payload)?;
+    let legacy = legacy_partition(input.legacy_partition.as_deref(), input.contract_version)?;
+    let request = AuthExchangeRequest { short_lived_token: input.short_lived_token };
     request.validate().map_err(ApiFailure::validation)?;
     login::claim_token(&state, "exchange", &request.short_lived_token).await?;
-    let requested_org = request.org_id;
-    let idempotency_key = Uuid::new_v4().to_string();
     let exchanged = state
         .identity
         .exchange_short_lived_token(ExchangeRequest {
-            idempotency_key,
+            idempotency_key: Uuid::new_v4().to_string(),
             short_lived_token: request.short_lived_token,
-            required_org_id: requested_org,
         })
-        .await
-        .map_err(ApiFailure::from)?;
+        .await?;
     let session = auth_session(&state, exchanged).await?;
-    let mut response = success(session).into_response();
+    let mut response = success(legacy_auth_response(session, legacy)?).into_response();
     response.headers_mut().insert("cache-control", HeaderValue::from_static("no-store"));
     Ok(response)
 }
-
 async fn refresh_auth(
     State(state): State<AppState>,
-    payload: Result<Json<AuthRefreshRequest>, JsonRejection>,
-) -> Result<impl IntoResponse, ApiFailure> {
-    let request = json_payload(payload)?;
+    payload: Result<Json<RefreshInput>, JsonRejection>,
+) -> Result<Response, ApiFailure> {
+    let input = json_payload(payload)?;
+    let legacy = legacy_partition(input.legacy_partition.as_deref(), input.contract_version)?;
+    let request = AuthRefreshRequest { refresh_token: input.refresh_token };
     request.validate().map_err(ApiFailure::validation)?;
     login::claim_token(&state, "refresh", &request.refresh_token).await?;
     let exchanged = state
         .identity
         .refresh(RefreshRequest {
-            // Accounts rotates once; the local claim above prevents upstream replay.
-            idempotency_key: stable_idempotency("refresh", &request.refresh_token, "any-organization"),
+            idempotency_key: stable_idempotency("refresh", &request.refresh_token, WORKSPACE),
             refresh_token: request.refresh_token,
-            required_org_id: request.org_id,
         })
-        .await
-        .map_err(ApiFailure::from)?;
+        .await?;
     let session = auth_session(&state, exchanged).await?;
-    let mut response = success(session).into_response();
+    let mut response = success(legacy_auth_response(session, legacy)?).into_response();
     response.headers_mut().insert("cache-control", HeaderValue::from_static("no-store"));
     Ok(response)
 }
 
 async fn auth_session(state: &AppState, exchanged: ExchangedAuth) -> Result<AuthSession, ApiFailure> {
     let identity = resolve_identity(state, &exchanged.identity).await?;
-    let org = Org { id: exchanged.identity.org_id.clone(), name: exchanged.identity.org_id.clone() };
     Ok(AuthSession {
         access_token: exchanged.access_token,
         refresh_token: exchanged.refresh_token,
         expires_at: exchanged.identity.expires_at,
         identity,
-        org,
         services: available_services(state),
     })
 }
@@ -772,11 +783,6 @@ async fn me(scope: Scope) -> impl IntoResponse {
 
 async fn services(State(state): State<AppState>, _scope: Scope) -> impl IntoResponse {
     success(available_services(&state))
-}
-
-async fn orgs(State(state): State<AppState>, bearer: Bearer) -> Result<impl IntoResponse, ApiFailure> {
-    let orgs = state.identity.orgs(&bearer.0).await.map_err(ApiFailure::from)?;
-    Ok(success(orgs.into_iter().map(public_org).collect::<Vec<_>>()))
 }
 
 async fn proxy_locations(State(state): State<AppState>, _scope: Scope) -> impl IntoResponse {
@@ -801,6 +807,17 @@ async fn get_profile(
     Ok(success(state.store.profile(&scope.org_id, &scope.identity, &profile_id).await.map_err(ApiFailure::from)?))
 }
 
+async fn resolve_account_selector(state: &AppState, selector: &str) -> Result<String, ApiFailure> {
+    let id = state.identity.resolve_account_id(selector).await?;
+    if state.store.account_subject_retired(&id).await? {
+        return Err(ApiFailure::field(
+            "account",
+            "This account ID was retired. Resolve its current handle or sign in again.",
+        ));
+    }
+    Ok(id)
+}
+
 async fn resolve_access(
     state: &AppState,
     access: &silicon_browser_shared::AccessList,
@@ -814,7 +831,7 @@ async fn resolve_access(
                 "Accounts has no membership tags; share with @c:handle, @si:handle or @account-uuid",
             )
         })?;
-        resolved.push(format!("@{}", state.identity.resolve_account_id(selector).await?));
+        resolved.push(format!("@{}", resolve_account_selector(state, selector).await?));
     }
     silicon_browser_shared::AccessList::new(resolved).map_err(ApiFailure::validation)
 }
@@ -987,7 +1004,7 @@ async fn list_sessions(
     if let Some(filter) = &mut filter {
         for predicate in &mut filter.predicates {
             if let SessionPredicate::For(selector) = predicate {
-                *selector = state.identity.resolve_account_id(selector).await?;
+                *selector = resolve_account_selector(&state, selector).await?;
             }
         }
     }
@@ -1205,14 +1222,7 @@ async fn live_session(
         // Fragments are never sent in HTTP requests. The authenticated web UI
         // can explicitly redeem this TTL-bounded grant later without putting a
         // provider URL or Accounts bearer in browser history and access logs.
-        // The grant opens only in its issuing organization. Each Accounts sign-in reaches
-        // several, so the link names it for the web UI to select before redeeming.
-        url: format!(
-            "{}/sessions/{session_id}/live#grant={grant}&org={}{}",
-            state.public_origin,
-            url::form_urlencoded::byte_serialize(scope.org_id.as_bytes()).collect::<String>(),
-            state.testing_environment.map(|id| format!("&test={id}")).unwrap_or_default()
-        ),
+        url: format!("{}/sessions/{session_id}/live#grant={grant}", state.public_origin),
         expires_at: session.expires_at,
     }))
 }
@@ -1333,7 +1343,7 @@ async fn list_recordings(
     if let Some(filter) = &mut filter {
         for predicate in &mut filter.predicates {
             if let RecordingPredicate::For(selector) = predicate {
-                *selector = state.identity.resolve_account_id(selector).await?;
+                *selector = resolve_account_selector(&state, selector).await?;
             }
         }
     }
@@ -1396,19 +1406,13 @@ async fn list_usage(
     if let Some(filter) = &mut filter {
         for predicate in &mut filter.predicates {
             if let UsagePredicate::For(selector) = predicate {
-                *selector = state.identity.resolve_account_id(selector).await?;
+                *selector = resolve_account_selector(&state, selector).await?;
             }
         }
     }
 
     Ok(success(
         state.store.usage_list(&scope.org_id, &scope.identity, filter.as_ref()).await.map_err(ApiFailure::from)?,
-    ))
-}
-
-async fn org_usage(_scope: Scope) -> Result<Response, ApiFailure> {
-    Err(ApiFailure::forbidden(
-        "Accounts has no organization billing authority. Use usage for sessions visible to your account.",
     ))
 }
 
@@ -1517,23 +1521,6 @@ fn bearer(headers: &HeaderMap) -> Result<String, ApiFailure> {
     Ok(token.to_owned())
 }
 
-fn required_header(headers: &HeaderMap, name: &'static str, message: &'static str) -> Result<String, ApiFailure> {
-    let value = headers
-        .get(name)
-        .ok_or_else(|| ApiFailure::bad_request("missing_org", message))?
-        .to_str()
-        .map_err(|_| ApiFailure::bad_request("invalid_org", message))?;
-    if value.is_empty()
-        || value.len() > 255
-        || value
-            .chars()
-            .any(|character| character.is_control() || character.is_whitespace() || matches!(character, '/' | '\\'))
-    {
-        return Err(ApiFailure::bad_request("invalid_org", message));
-    }
-    Ok(value.to_owned())
-}
-
 fn stable_idempotency(operation: &str, credential: &str, org_id: &str) -> String {
     let mut digest = Sha256::new();
     digest.update(b"silicon-browser-auth-v1\0");
@@ -1550,11 +1537,6 @@ fn profile_fingerprint(profile_id: &str) -> String {
     digest.update(b"silicon-browser-profile-fingerprint-v1\0");
     digest.update(profile_id.as_bytes());
     format!("sbf_{}", hex::encode(&digest.finalize()[..16]))
-}
-
-fn public_org(org: OrganizationAccess) -> Org {
-    let name = org.name.unwrap_or_else(|| org.id.clone());
-    Org { id: org.id, name }
 }
 
 fn available_services(state: &AppState) -> Vec<String> {
@@ -2098,12 +2080,7 @@ impl From<IdentityError> for ApiFailure {
     fn from(error: IdentityError) -> Self {
         match error {
             IdentityError::Unauthenticated => Self::unauthenticated(),
-            IdentityError::Forbidden => Self::forbidden("not authorized for this organization"),
-            IdentityError::NoOrganization => Self::new(
-                StatusCode::FORBIDDEN,
-                "organization_required",
-                "choose the Browser workspace for this sign-in",
-            ),
+            IdentityError::Forbidden => Self::forbidden("this account is not authorized for Browser"),
             IdentityError::CapabilityUnavailable(_) => Self::new(
                 StatusCode::NOT_IMPLEMENTED,
                 "identity_capability_unavailable",
@@ -2465,7 +2442,7 @@ mod tests {
             }
             self.state.lock().unwrap().browsers.insert(id.into(), stopped.clone());
             if let Some((_, session_id, store)) = finalize_as_ended {
-                store.finalize_end_session("org-1", &session_id, Utc::now()).await.unwrap();
+                store.finalize_end_session("browser", &session_id, Utc::now()).await.unwrap();
             }
             if ambiguous {
                 if self.state.lock().unwrap().malformed_mutation_response {
@@ -2573,7 +2550,6 @@ mod tests {
         let identity = FakeIdentityProvider::new();
         identity.allow_identity("oat_owner", principal("si:owner-1", IdentityKind::Silicon, true));
         identity.allow_identity("oat_viewer", principal("c:viewer-1", IdentityKind::Carbon, true));
-        identity.allow_orgs("oat_owner", vec![OrganizationAccess { id: "org-1".into(), name: Some("The Org".into()) }]);
         let browser = Arc::new(FakeBrowser::default());
         let search_provider: Arc<dyn SearchProvider> = Arc::new(FakeSearch);
         let search = Arc::new(FairSearchPool::new(vec![search_provider]).unwrap());
@@ -2606,13 +2582,13 @@ mod tests {
             "lifecycle test",
             silicon_browser_shared::SessionTtl::Minutes15,
         );
-        let reserved = fixture.store.reserve_session("org-1", &owner(), &request, started_at).await.unwrap();
+        let reserved = fixture.store.reserve_session("browser", &owner(), &request, started_at).await.unwrap();
         let provider = fake_provider_browser(&format!("provider-expired-{suffix}"), false);
         fixture.browser.state.lock().unwrap().browsers.insert(provider.id.clone(), provider.clone());
         fixture
             .store
             .activate_session(
-                "org-1",
+                "browser",
                 &reserved.id,
                 &provider_session(&provider).unwrap(),
                 &fixture.state.secrets,
@@ -2629,13 +2605,13 @@ mod tests {
             "recording reconciliation test",
             silicon_browser_shared::SessionTtl::Minutes15,
         );
-        let reserved = fixture.store.reserve_session("org-1", &owner(), &request, started_at).await.unwrap();
+        let reserved = fixture.store.reserve_session("browser", &owner(), &request, started_at).await.unwrap();
         let provider = fake_provider_browser(&format!("provider-recording-{suffix}"), false);
         fixture.browser.state.lock().unwrap().browsers.insert(provider.id.clone(), provider.clone());
         fixture
             .store
             .activate_session(
-                "org-1",
+                "browser",
                 &reserved.id,
                 &provider_session(&provider).unwrap(),
                 &fixture.state.secrets,
@@ -2646,7 +2622,7 @@ mod tests {
         fixture
             .store
             .begin_end_session(
-                "org-1",
+                "browser",
                 &owner(),
                 &reserved.id,
                 &SessionEnd { note: "done".into() },
@@ -2661,8 +2637,8 @@ mod tests {
         let queued_at = due_at
             - TimeDelta::from_std(RECORDING_SOURCE_INITIAL_DELAY)
                 .expect("the bounded initial recording delay fits chrono::TimeDelta");
-        fixture.store.queue_recording_source_resolution("org-1", &reserved.id, 1_000, queued_at).await.unwrap();
-        fixture.store.finalize_end_session("org-1", &reserved.id, due_at).await.unwrap()
+        fixture.store.queue_recording_source_resolution("browser", &reserved.id, 1_000, queued_at).await.unwrap();
+        fixture.store.finalize_end_session("browser", &reserved.id, due_at).await.unwrap()
     }
 
     fn principal(id: &str, kind: IdentityKind, public: bool) -> PrincipalIdentity {
@@ -2670,14 +2646,12 @@ mod tests {
             principal_id: id.into(),
             public_id: public.then(|| id.into()),
             tags: None,
-            org_role: Some("member".into()),
             scopes: "self.identity.read self.membership.read obo:briefcase:briefcase.files.create"
                 .split_whitespace()
                 .map(str::to_owned)
                 .collect(),
             kind,
-            org_id: "org-1".into(),
-            membership_id: format!("{id}[org-1]"),
+            membership_id: format!("{id}[browser]"),
             authorization_epoch: 1,
             expires_at: Utc::now() + TimeDelta::hours(1),
         }
@@ -2714,9 +2688,9 @@ mod tests {
 
     #[test]
     fn live_grant_crypto_context_is_bound_to_org_and_session() {
-        let original = live_grant_context("org-1", "session-1");
+        let original = live_grant_context("browser", "session-1");
         assert_ne!(original, live_grant_context("org-2", "session-1"));
-        assert_ne!(original, live_grant_context("org-1", "session-2"));
+        assert_ne!(original, live_grant_context("browser", "session-2"));
     }
 
     #[tokio::test]
@@ -2750,7 +2724,7 @@ mod tests {
                     .uri("/api/v1/me")
                     .header("origin", "https://browser.example")
                     .header(AUTHORIZATION, "Bearer oat_expired")
-                    .header("x-org-id", "org-1")
+                    .header("x-org-id", "browser")
                     .body(Body::empty())
                     .unwrap(),
             )
@@ -2791,6 +2765,9 @@ mod tests {
                 assert!(headers.split(',').any(|value| value.trim() == name));
             }
             assert!(!headers.contains('*'));
+            for retired in ["x-sb-test-app-secret", "x-testing-environment-key", "x-sb-test-briefcase-key"] {
+                assert!(!headers.contains(retired));
+            }
             assert!(!response.headers().contains_key("access-control-allow-credentials"));
         }
         let response = app
@@ -2824,7 +2801,7 @@ mod tests {
             assert!(serde_json::from_slice::<Value>(&body).unwrap()["error"].is_object());
         }
         assert_eq!(request(&app, "GET", "/healthz", None, None).await.0, StatusCode::OK);
-        assert_eq!(request(&app, "GET", "/api/v1/me", Some(("oat_owner", "org-1")), None).await.0, StatusCode::OK);
+        assert_eq!(request(&app, "GET", "/api/v1/me", Some(("oat_owner", "browser")), None).await.0, StatusCode::OK);
     }
 
     #[test]
@@ -2950,11 +2927,9 @@ mod tests {
         assert_eq!(params["code_challenge"], URL_SAFE_NO_PAD.encode(Sha256::digest(verifier.as_bytes())));
         let mut account = principal("8HV", IdentityKind::Carbon, false);
         account.public_id = Some("c:ada".into());
-        account.org_id = "browser".into();
         account.membership_id = "browser:8HV".into();
         fixture.identity.allow_exchange(
             "sac_once",
-            "",
             ExchangedAuth {
                 access_token: "header.payload.signature".into(),
                 refresh_token: "sar_new".into(),
@@ -2972,6 +2947,7 @@ mod tests {
         assert_eq!(status, StatusCode::OK);
         assert_eq!(headers["cache-control"], "no-store");
         assert_eq!(data(&body)["identity"]["id"], "8HV");
+        assert_eq!(data(&body)["org"], json!({"id":"browser","name":"Browser"}));
         assert_eq!(request(&fixture.app, "POST", &path, None, Some(payload)).await.0, StatusCode::UNAUTHORIZED);
         assert_eq!(
             request(&fixture.app, "POST", "/api/v1/auth/attempts", None, Some(json!({"identity_kind":"silicon"})))
@@ -2986,7 +2962,6 @@ mod tests {
         let fixture = fixture().await;
         fixture.identity.fail_exchange(
             "slt_uncertain",
-            "",
             IdentityError::Upstream { kind: UpstreamFailure::Transport, request_id: None, retry_after: None },
         );
         let payload = json!({"short_lived_token":"slt_uncertain"});
@@ -3012,6 +2987,118 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn uuid_cutover_rejects_stale_authentication_and_acl_selectors() {
+        let fixture = fixture().await;
+        let fresh = "bc0f6684-df51-4d9f-b945-bbdf88e599ad";
+        fixture.identity.allow_identity("old-token", principal("Ab1", IdentityKind::Silicon, false));
+        fixture.identity.allow_identity("fresh-token", principal(fresh, IdentityKind::Silicon, false));
+        sqlx::query("INSERT INTO account_uuid_cutover(singleton,map_sha256,migrated_at) VALUES(1,'hash','now')")
+            .execute(fixture.store.pool())
+            .await
+            .unwrap();
+        let (status, headers, _) =
+            request(&fixture.app, "GET", "/api/v1/sessions", Some(("old-token", "browser")), None).await;
+        assert_eq!(status, StatusCode::UNAUTHORIZED);
+        assert_eq!(headers.get("x-sb-auth-rejected").unwrap(), "1");
+        assert_eq!(
+            request(&fixture.app, "GET", "/api/v1/sessions", Some(("fresh-token", "browser")), None).await.0,
+            StatusCode::OK
+        );
+        assert!(resolve_account_selector(&fixture.state, "Ab1").await.is_err());
+        assert_eq!(resolve_account_selector(&fixture.state, fresh).await.unwrap(), fresh);
+    }
+
+    #[tokio::test]
+    async fn auth_contract_is_org_free_with_narrow_legacy_exchange_and_refresh_adapters() {
+        let fixture = fixture().await;
+        for variant in 0..3 {
+            let legacy = variant != 2;
+            for refresh in [false, true] {
+                let token = format!("{}contract_{variant}", if refresh { "sar_" } else { "slt_" });
+                let exchanged = ExchangedAuth {
+                    access_token: "header.payload.signature".into(),
+                    refresh_token: "sar_rotated".into(),
+                    identity: principal("0080c488-a9e9-4c22-aa91-1c7a639f1d7b", IdentityKind::Silicon, false),
+                    scope: "profile".into(),
+                };
+                if refresh {
+                    fixture.identity.allow_refresh(&token, exchanged);
+                } else {
+                    fixture.identity.allow_exchange(&token, exchanged);
+                }
+                let (path, field) = if refresh {
+                    ("/api/v1/auth/refresh", "refresh_token")
+                } else {
+                    ("/api/v1/auth/exchange", "short_lived_token")
+                };
+                let mut payload = json!({field:token});
+                if variant == 1 {
+                    payload["org_id"] = json!("browser");
+                }
+                if variant == 2 {
+                    payload["contract_version"] = json!(2);
+                }
+                let (status, headers, body) = request(&fixture.app, "POST", path, None, Some(payload)).await;
+                assert_eq!(status, StatusCode::OK);
+                assert_eq!(headers["cache-control"], "no-store");
+                assert_eq!(data(&body).get("org").is_some(), legacy);
+                assert!(data(&body).get("org_id").is_none());
+            }
+        }
+        let payload = json!({"short_lived_token":"slt_wrong_partition","org_id":"other"});
+        assert_eq!(
+            request(&fixture.app, "POST", "/api/v1/auth/exchange", None, Some(payload)).await.0,
+            StatusCode::FORBIDDEN
+        );
+        let claimed: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM accounts_token_operations")
+            .fetch_one(fixture.store.pool())
+            .await
+            .unwrap();
+        assert_eq!(claimed, 6, "invalid legacy input must not consume credentials");
+        for (path, body) in [
+            ("/api/v1/auth/exchange", json!({"short_lived_token":"slt_invalid_version","contract_version":1})),
+            ("/api/v1/auth/refresh", json!({"refresh_token":"sar_invalid_version","contract_version":3})),
+        ] {
+            assert_eq!(request(&fixture.app, "POST", path, None, Some(body)).await.0, StatusCode::BAD_REQUEST);
+        }
+        assert_eq!(
+            sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM accounts_token_operations")
+                .fetch_one(fixture.store.pool())
+                .await
+                .unwrap(),
+            claimed
+        );
+    }
+
+    #[tokio::test]
+    async fn hosted_login_v2_response_omits_organization() {
+        let fixture = fixture().await;
+        let (_, _, body) =
+            request(&fixture.app, "POST", "/api/v1/auth/attempts", None, Some(json!({"identity_kind":"carbon"}))).await;
+        let attempt = data(&body);
+        fixture.identity.allow_exchange(
+            "sac_v2",
+            ExchangedAuth {
+                access_token: "header.payload.signature".into(),
+                refresh_token: "sar_new".into(),
+                identity: principal("0080c488-a9e9-4c22-aa91-1c7a639f1d7b", IdentityKind::Carbon, false),
+                scope: "profile".into(),
+            },
+        );
+        let path = format!("/api/v1/auth/attempts/{}/exchange", attempt["attempt_id"].as_str().unwrap());
+        let (status, _, body) = request(
+            &fixture.app,
+            "POST",
+            &path,
+            None,
+            Some(json!({"state":attempt["state"],"code":"sac_v2","contract_version":2})),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        assert!(data(&body).get("org").is_none());
+    }
+
+    #[tokio::test]
     async fn auth_exchange_without_org_is_forwarded_to_accounts() {
         let fixture = fixture().await;
         let (status, _, _body) = request(
@@ -3028,7 +3115,7 @@ mod tests {
     #[tokio::test]
     async fn auth_exchange_without_workspace_is_actionable() {
         let fixture = fixture().await;
-        fixture.identity.fail_exchange("slt_single_use", "", IdentityError::NoOrganization);
+        fixture.identity.fail_exchange("slt_single_use", IdentityError::Forbidden);
         let (status, _, body) = request(
             &fixture.app,
             "POST",
@@ -3038,7 +3125,7 @@ mod tests {
         )
         .await;
         assert_eq!(status, StatusCode::FORBIDDEN);
-        assert_eq!(serde_json::from_slice::<Value>(&body).unwrap()["error"]["code"], "organization_required");
+        assert_eq!(serde_json::from_slice::<Value>(&body).unwrap()["error"]["code"], "forbidden");
     }
 
     #[test]
@@ -3068,7 +3155,6 @@ mod tests {
         exchanged_principal.public_id = Some("si:public-owner".into());
         fixture.identity.allow_exchange(
             "slt_single_use",
-            "org-1",
             ExchangedAuth {
                 access_token: "oat_projected".into(),
                 refresh_token: "sar_projected".into(),
@@ -3081,7 +3167,7 @@ mod tests {
             "POST",
             "/api/v1/auth/exchange",
             None,
-            Some(json!({"short_lived_token":"slt_single_use","org_id":"org-1"})),
+            Some(json!({"short_lived_token":"slt_single_use","org_id":"browser"})),
         )
         .await;
         assert_eq!(status, StatusCode::OK);
@@ -3096,7 +3182,7 @@ mod tests {
         later.public_id = Some("si:renamed-owner".into());
         fixture.identity.allow_identity("oat_projected", later);
         let (status, _, body) =
-            request(&fixture.app, "GET", "/api/v1/me", Some(("oat_projected", "org-1")), None).await;
+            request(&fixture.app, "GET", "/api/v1/me", Some(("oat_projected", "browser")), None).await;
         assert_eq!(status, StatusCode::OK);
         assert_eq!(data(&body)["id"], "K1E");
         assert_eq!(data(&body)["name"], "si:renamed-owner");
@@ -3117,7 +3203,7 @@ mod tests {
             &fixture.app,
             "POST",
             "/api/v1/profiles",
-            Some(("oat_owner", "org-1")),
+            Some(("oat_owner", "browser")),
             Some(json!({"name":"Tag protected","location":"in","access":["growth"]})),
         )
         .await;
@@ -3126,13 +3212,13 @@ mod tests {
         viewer.tags = Some(vec!["growth".into()]);
         fixture.identity.allow_identity("oat_tagged", viewer);
         let (status, _, body) =
-            request(&fixture.app, "GET", "/api/v1/profiles", Some(("oat_tagged", "org-1")), None).await;
+            request(&fixture.app, "GET", "/api/v1/profiles", Some(("oat_tagged", "browser")), None).await;
         assert_eq!(status, StatusCode::OK);
         assert!(data(&body).as_array().unwrap().is_empty());
     }
 
     #[tokio::test]
-    async fn scoped_routes_require_bearer_and_org_with_enveloped_errors() {
+    async fn scoped_routes_require_bearer_without_an_organization_header() {
         let fixture = fixture().await;
         let (status, headers, body) = request(&fixture.app, "GET", "/api/v1/profiles", None, None).await;
         assert_eq!(status, StatusCode::UNAUTHORIZED);
@@ -3152,13 +3238,13 @@ mod tests {
             )
             .await
             .unwrap();
-        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+        assert_eq!(response.status(), StatusCode::OK);
     }
 
     #[tokio::test]
     async fn invalid_proxy_and_profile_lookup_fail_before_provider_or_session_reservation() {
         let fixture = fixture().await;
-        let auth = Some(("oat_owner", "org-1"));
+        let auth = Some(("oat_owner", "browser"));
         let (status, _, body) = request(
             &fixture.app,
             "POST",
@@ -3193,7 +3279,7 @@ mod tests {
     #[tokio::test]
     async fn profile_create_rejects_missing_or_mismatched_provider_user_id_without_activation() {
         let fixture = fixture().await;
-        let auth = Some(("oat_owner", "org-1"));
+        let auth = Some(("oat_owner", "browser"));
 
         fixture.browser.state.lock().unwrap().next_profile_user_id = Some(None);
         let (status, _, body) = request(
@@ -3230,7 +3316,7 @@ mod tests {
     #[tokio::test]
     async fn profile_update_rejects_a_different_provider_id_or_user_id_echo() {
         let fixture = fixture().await;
-        let auth = Some(("oat_owner", "org-1"));
+        let auth = Some(("oat_owner", "browser"));
         let (status, _, body) = request(
             &fixture.app,
             "POST",
@@ -3281,8 +3367,8 @@ mod tests {
             verified_aliases: Vec::new(),
         };
         let request = ProfileCreate { name: "Recover me".into(), location: "in".into(), access: Default::default() };
-        let reserved = fixture.store.reserve_profile("org-1", &owner, &request, Utc::now()).await.unwrap();
-        assert!(fixture.store.profiles("org-1", &owner).await.unwrap().is_empty());
+        let reserved = fixture.store.reserve_profile("browser", &owner, &request, Utc::now()).await.unwrap();
+        assert!(fixture.store.profiles("browser", &owner).await.unwrap().is_empty());
         fixture.browser.state.lock().unwrap().profiles.insert(
             reserved.id.clone(),
             ProviderProfile {
@@ -3297,10 +3383,10 @@ mod tests {
         );
 
         assert_eq!(fixture.state.reconcile_profiles_once().await.unwrap(), 1);
-        let active = fixture.store.profile("org-1", &owner, &reserved.id).await.unwrap();
+        let active = fixture.store.profile("browser", &owner, &reserved.id).await.unwrap();
         assert!(active.fingerprint.starts_with("sbf_"));
         assert_eq!(
-            fixture.store.provider_profile_id("org-1", &owner, &reserved.id).await.unwrap(),
+            fixture.store.provider_profile_id("browser", &owner, &reserved.id).await.unwrap(),
             "provider-reconciled"
         );
         assert_eq!(fixture.state.reconcile_profiles_once().await.unwrap(), 0);
@@ -3318,7 +3404,7 @@ mod tests {
             fixture
                 .store
                 .reserve_profile(
-                    "org-1",
+                    "browser",
                     &owner(),
                     &ProfileCreate {
                         name: format!("Unresolved {index}"),
@@ -3333,7 +3419,7 @@ mod tests {
         let later = fixture
             .store
             .reserve_profile(
-                "org-1",
+                "browser",
                 &owner(),
                 &ProfileCreate { name: "Later match".into(), location: "in".into(), access: Default::default() },
                 base + TimeDelta::milliseconds(100),
@@ -3356,7 +3442,7 @@ mod tests {
 
         assert_eq!(activated, 1);
         assert_eq!(
-            fixture.store.provider_profile_id("org-1", &owner(), &later.id).await.unwrap(),
+            fixture.store.provider_profile_id("browser", &owner(), &later.id).await.unwrap(),
             "provider-later-match"
         );
     }
@@ -3368,7 +3454,7 @@ mod tests {
         fixture
             .store
             .reserve_profile(
-                "org-1",
+                "browser",
                 &owner(),
                 &ProfileCreate { name: "Pending".into(), location: "in".into(), access: Default::default() },
                 Utc::now(),
@@ -3387,7 +3473,10 @@ mod tests {
 
         assert_eq!(count, 1);
         assert_eq!(fixture.browser.stopped(), vec!["provider-expired-before-reconcile"]);
-        assert_eq!(fixture.store.session("org-1", &owner(), &expired.id).await.unwrap().status, SessionStatus::Expired);
+        assert_eq!(
+            fixture.store.session("browser", &owner(), &expired.id).await.unwrap().status,
+            SessionStatus::Expired
+        );
     }
 
     #[test]
@@ -3438,8 +3527,11 @@ mod tests {
             Some(("provider-expired-raced-finalize".into(), raced.id.clone(), fixture.store.clone()));
 
         assert_eq!(fixture.state.reap_expired_once_with_profile_budget(Duration::from_millis(10)).await.unwrap(), 2);
-        assert_eq!(fixture.store.session("org-1", &owner(), &raced.id).await.unwrap().status, SessionStatus::Ended);
-        assert_eq!(fixture.store.session("org-1", &owner(), &healthy.id).await.unwrap().status, SessionStatus::Expired);
+        assert_eq!(fixture.store.session("browser", &owner(), &raced.id).await.unwrap().status, SessionStatus::Ended);
+        assert_eq!(
+            fixture.store.session("browser", &owner(), &healthy.id).await.unwrap().status,
+            SessionStatus::Expired
+        );
         let stopped = fixture.browser.stopped();
         assert!(stopped.contains(&"provider-expired-raced-finalize".into()));
         assert!(stopped.contains(&"provider-expired-healthy-finalize".into()));
@@ -3457,7 +3549,7 @@ mod tests {
             .unwrap()
             .pop()
             .unwrap();
-        let gate = fixture.state.session_locks.for_session("org-1", &session.id).await;
+        let gate = fixture.state.session_locks.for_session("browser", &session.id).await;
         let guard = gate.lock.lock().await;
         let state = fixture.state.clone();
         let claimed = claim.clone();
@@ -3468,7 +3560,7 @@ mod tests {
         let runtime = fixture
             .store
             .begin_end_session(
-                "org-1",
+                "browser",
                 &owner(),
                 &session.id,
                 &SessionEnd { note: "manual won".into() },
@@ -3477,18 +3569,18 @@ mod tests {
             .await
             .unwrap();
         stop_browser_confirmed(fixture.browser.as_ref(), &runtime.provider_session_id).await.unwrap();
-        fixture.store.finalize_end_session("org-1", &session.id, Utc::now()).await.unwrap();
+        fixture.store.finalize_end_session("browser", &session.id, Utc::now()).await.unwrap();
         drop(guard);
         tokio::time::timeout(Duration::from_millis(250), reaper).await.unwrap().unwrap();
 
         assert_eq!(fixture.browser.stopped(), vec!["provider-expired-manual-race"]);
-        assert_eq!(fixture.store.session("org-1", &owner(), &session.id).await.unwrap().status, SessionStatus::Ended);
+        assert_eq!(fixture.store.session("browser", &owner(), &session.id).await.unwrap().status, SessionStatus::Ended);
     }
 
     #[tokio::test]
     async fn manual_end_retries_until_the_recording_url_materializes() {
         let fixture = fixture().await;
-        let auth = Some(("oat_owner", "org-1"));
+        let auth = Some(("oat_owner", "browser"));
         let (status, _, body) = request(
             &fixture.app,
             "POST",
@@ -3518,7 +3610,7 @@ mod tests {
         assert_eq!(status, StatusCode::OK, "{}", String::from_utf8_lossy(&body));
         assert_eq!(data(&body)["status"], "ended");
         assert_eq!(
-            fixture.store.recording("org-1", &owner(), &session.id, &fixture.state.secrets).await.unwrap().status,
+            fixture.store.recording("browser", &owner(), &session.id, &fixture.state.secrets).await.unwrap().status,
             silicon_browser_shared::RecordingStatus::Pending
         );
 
@@ -3535,8 +3627,8 @@ mod tests {
         );
         assert_eq!(fixture.browser.state.lock().unwrap().get_calls, 2);
         assert_eq!(
-            fixture.store.recording("org-1", &owner(), &session.id, &fixture.state.secrets).await.unwrap().status,
-            silicon_browser_shared::RecordingStatus::Pending
+            fixture.store.recording("browser", &owner(), &session.id, &fixture.state.secrets).await.unwrap().status,
+            silicon_browser_shared::RecordingStatus::Available
         );
     }
 
@@ -3558,7 +3650,7 @@ mod tests {
         assert_eq!(fixture.state.reconcile_recording_sources_once(now + TimeDelta::hours(24)).await.unwrap(), 0);
         assert_eq!(fixture.browser.state.lock().unwrap().get_calls, 1);
         assert_eq!(
-            fixture.store.recording("org-1", &owner(), &session.id, &fixture.state.secrets).await.unwrap().status,
+            fixture.store.recording("browser", &owner(), &session.id, &fixture.state.secrets).await.unwrap().status,
             silicon_browser_shared::RecordingStatus::Failed
         );
     }
@@ -3582,7 +3674,7 @@ mod tests {
             assert_eq!(fixture.state.reconcile_recording_sources_once(now + TimeDelta::hours(1)).await.unwrap(), 1);
             assert_eq!(fixture.browser.state.lock().unwrap().get_calls, 2);
             assert_eq!(
-                fixture.store.recording("org-1", &owner(), &session.id, &fixture.state.secrets).await.unwrap().status,
+                fixture.store.recording("browser", &owner(), &session.id, &fixture.state.secrets).await.unwrap().status,
                 silicon_browser_shared::RecordingStatus::Pending
             );
         }
@@ -3603,8 +3695,8 @@ mod tests {
         assert_eq!(fixture.state.reconcile_recording_sources_once(now + TimeDelta::hours(1)).await.unwrap(), 0);
         assert_eq!(fixture.browser.state.lock().unwrap().get_calls, 1);
         assert_eq!(
-            fixture.store.recording("org-1", &owner(), &session.id, &fixture.state.secrets).await.unwrap().status,
-            silicon_browser_shared::RecordingStatus::Pending
+            fixture.store.recording("browser", &owner(), &session.id, &fixture.state.secrets).await.unwrap().status,
+            silicon_browser_shared::RecordingStatus::Available
         );
     }
 
@@ -3622,9 +3714,12 @@ mod tests {
             .insert(provider_id.into(), RECORDING_RECONCILIATION_MAX_ATTEMPTS + 1);
 
         assert_eq!(fixture.state.reap_expired_once_with_profile_budget(Duration::from_millis(10)).await.unwrap(), 1);
-        assert_eq!(fixture.store.session("org-1", &owner(), &session.id).await.unwrap().status, SessionStatus::Expired);
         assert_eq!(
-            fixture.store.recording("org-1", &owner(), &session.id, &fixture.state.secrets).await.unwrap().status,
+            fixture.store.session("browser", &owner(), &session.id).await.unwrap().status,
+            SessionStatus::Expired
+        );
+        assert_eq!(
+            fixture.store.recording("browser", &owner(), &session.id, &fixture.state.secrets).await.unwrap().status,
             silicon_browser_shared::RecordingStatus::Pending
         );
 
@@ -3644,7 +3739,7 @@ mod tests {
             0
         );
         assert_eq!(
-            fixture.store.recording("org-1", &owner(), &session.id, &fixture.state.secrets).await.unwrap().status,
+            fixture.store.recording("browser", &owner(), &session.id, &fixture.state.secrets).await.unwrap().status,
             silicon_browser_shared::RecordingStatus::Failed
         );
         assert_eq!(
@@ -3682,7 +3777,7 @@ mod tests {
         );
         assert_eq!(fixture.browser.state.lock().unwrap().get_calls, 0);
         assert_eq!(
-            fixture.store.recording("org-1", &owner(), &session.id, &fixture.state.secrets).await.unwrap().status,
+            fixture.store.recording("browser", &owner(), &session.id, &fixture.state.secrets).await.unwrap().status,
             silicon_browser_shared::RecordingStatus::Failed
         );
     }
@@ -3730,13 +3825,13 @@ mod tests {
             "maintenance isolation",
             silicon_browser_shared::SessionTtl::Minutes15,
         );
-        let awaiting = fixture.store.reserve_session("org-1", &owner(), &request, started_at).await.unwrap();
+        let awaiting = fixture.store.reserve_session("browser", &owner(), &request, started_at).await.unwrap();
         let provider = fake_provider_browser("provider-await-recording", false);
         fixture.browser.state.lock().unwrap().browsers.insert(provider.id.clone(), provider.clone());
         fixture
             .store
             .activate_session(
-                "org-1",
+                "browser",
                 &awaiting.id,
                 &provider_session(&provider).unwrap(),
                 &fixture.state.secrets,
@@ -3747,7 +3842,7 @@ mod tests {
         fixture
             .store
             .begin_end_session(
-                "org-1",
+                "browser",
                 &owner(),
                 &awaiting.id,
                 &SessionEnd { note: "done".into() },
@@ -3761,17 +3856,17 @@ mod tests {
         );
         fixture
             .store
-            .queue_recording_source_resolution("org-1", &awaiting.id, 1_000, Utc::now() - TimeDelta::minutes(1))
+            .queue_recording_source_resolution("browser", &awaiting.id, 1_000, Utc::now() - TimeDelta::minutes(1))
             .await
             .unwrap();
-        fixture.store.finalize_end_session("org-1", &awaiting.id, Utc::now()).await.unwrap();
+        fixture.store.finalize_end_session("browser", &awaiting.id, Utc::now()).await.unwrap();
 
         let expiring = seed_expired_incognito(&fixture, "while-recording-hangs").await;
         fixture.browser.state.lock().unwrap().hang_recording_reconciliation = true;
         let maintenance = spawn_ttl_reaper(fixture.state.clone(), Duration::from_millis(10));
         tokio::time::timeout(Duration::from_millis(500), async {
             loop {
-                let expired = fixture.store.session("org-1", &owner(), &expiring.id).await.unwrap().status
+                let expired = fixture.store.session("browser", &owner(), &expiring.id).await.unwrap().status
                     == SessionStatus::Expired;
                 let recording_lookup_started = fixture.browser.state.lock().unwrap().get_calls >= 1;
                 if expired && recording_lookup_started {
@@ -3788,7 +3883,7 @@ mod tests {
     #[tokio::test]
     async fn provider_profile_success_with_local_activation_failure_remains_reconcilable() {
         let fixture = fixture().await;
-        let auth = Some(("oat_owner", "org-1"));
+        let auth = Some(("oat_owner", "browser"));
         let (status, _, body) = request(
             &fixture.app,
             "POST",
@@ -3821,7 +3916,7 @@ mod tests {
             tags: Vec::new(),
             verified_aliases: Vec::new(),
         };
-        assert_eq!(fixture.store.profiles("org-1", &owner).await.unwrap().len(), 1);
+        assert_eq!(fixture.store.profiles("browser", &owner).await.unwrap().len(), 1);
         assert_eq!(fixture.browser.state.lock().unwrap().profiles.len(), 2);
     }
 
@@ -3838,7 +3933,7 @@ mod tests {
         let profile = fixture
             .store
             .create_profile(
-                "org-1",
+                "browser",
                 &owner,
                 &ProfileCreate { name: "Lifecycle".into(), location: "in".into(), access: Default::default() },
                 "provider-profile-lifecycle",
@@ -3853,7 +3948,7 @@ mod tests {
             "retain remote runtime",
             silicon_browser_shared::SessionTtl::Minutes30,
         );
-        let reserved = fixture.store.reserve_session("org-1", &owner, &request, Utc::now()).await.unwrap();
+        let reserved = fixture.store.reserve_session("browser", &owner, &request, Utc::now()).await.unwrap();
         let provider = fake_provider_browser("provider-browser-recovery", false);
         let runtime = provider_session(&provider).unwrap();
         {
@@ -3866,7 +3961,7 @@ mod tests {
         // activate_session error. The first stop remains ambiguous and active.
         recover_failed_session_start(
             &fixture.state,
-            "org-1",
+            "browser",
             &reserved,
             &runtime.id,
             Some(&runtime),
@@ -3874,31 +3969,31 @@ mod tests {
         )
         .await;
         assert!(matches!(
-            fixture.store.reserve_session("org-1", &owner, &request, Utc::now()).await,
+            fixture.store.reserve_session("browser", &owner, &request, Utc::now()).await,
             Err(StoreError::ProfileBusy { .. })
         ));
 
         fixture.browser.state.lock().unwrap().unconfirmed_browser_stop = false;
         recover_failed_session_start(
             &fixture.state,
-            "org-1",
+            "browser",
             &reserved,
             &runtime.id,
             Some(&runtime),
             "injected local activation failure",
         )
         .await;
-        assert!(fixture.store.reserve_session("org-1", &owner, &request, Utc::now()).await.is_ok());
+        assert!(fixture.store.reserve_session("browser", &owner, &request, Utc::now()).await.is_ok());
         assert_eq!(
-            fixture.store.recording("org-1", &owner, &reserved.id, &fixture.state.secrets).await.unwrap().status,
-            silicon_browser_shared::RecordingStatus::Pending
+            fixture.store.recording("browser", &owner, &reserved.id, &fixture.state.secrets).await.unwrap().status,
+            silicon_browser_shared::RecordingStatus::Available
         );
     }
 
     #[tokio::test]
     async fn profile_session_run_live_redeem_end_recording_and_usage_match_client_wire() {
         let fixture = fixture().await;
-        let auth = Some(("oat_owner", "org-1"));
+        let auth = Some(("oat_owner", "browser"));
         let (status, _, body) = request(
             &fixture.app,
             "POST",
@@ -3944,7 +4039,7 @@ mod tests {
         assert_eq!(status, StatusCode::OK);
         assert_eq!(fixture.browser.state.lock().unwrap().get_calls, 1);
 
-        let active_usage = fixture.store.usage("org-1", &owner(), &session.id).await.unwrap();
+        let active_usage = fixture.store.usage("browser", &owner(), &session.id).await.unwrap();
         assert_eq!(active_usage.proxy_bytes_unclassified, 400_000);
         assert_eq!(active_usage.cost.browser.micros, 1_000_000);
         assert_eq!(active_usage.cost.proxy_unclassified.micros, 200_000);
@@ -3971,14 +4066,15 @@ mod tests {
         assert!(!public_live.contains("provider.invalid"));
         let fragment: HashMap<String, String> =
             url::form_urlencoded::parse(public_live.split_once('#').unwrap().1.as_bytes()).into_owned().collect();
-        assert_eq!(fragment.get("org").map(String::as_str), Some("org-1"));
+        assert_eq!(fragment.len(), 1);
+        assert!(fragment.contains_key("grant"));
         let grant = fragment["grant"].as_str();
 
         let (status, headers, body) = request(
             &fixture.app,
             "POST",
             &format!("/api/v1/sessions/{}/live/redeem", session.id),
-            Some(("oat_viewer", "org-1")),
+            Some(("oat_viewer", "browser")),
             Some(json!({"grant":grant})),
         )
         .await;
@@ -4015,8 +4111,8 @@ mod tests {
             request(&fixture.app, "GET", &format!("/api/v1/recordings/{}", session.id), auth, None).await;
         assert_eq!(status, StatusCode::OK);
         let recording: Recording = serde_json::from_value(data(&body)).unwrap();
-        assert_eq!(recording.status, silicon_browser_shared::RecordingStatus::Pending);
-        assert!(recording.briefcase_link.is_none());
+        assert_eq!(recording.status, silicon_browser_shared::RecordingStatus::Available);
+        assert!(recording.briefcase_link.is_some());
 
         let (status, _, body) =
             request(&fixture.app, "GET", &format!("/api/v1/usage/{}", session.id), auth, None).await;
@@ -4030,82 +4126,18 @@ mod tests {
         assert_eq!(usage.cost.total.micros, 433_334);
 
         let (status, _, _) = request(&fixture.app, "GET", "/api/v1/usage/org", auth, None).await;
-        assert_eq!(status, StatusCode::FORBIDDEN);
+        assert_eq!(status, StatusCode::NOT_FOUND);
     }
 
-    /// Browser accounts have no organization-wide billing authority.
     #[tokio::test]
-    async fn organization_usage_refuses_global_cost_disclosure() {
-        async fn seed(
-            fixture: &Fixture,
-            org_id: &str,
-            initiator: &Identity,
-            suffix: &str,
-            browser_millis: u64,
-            browser_cost: &str,
-            started_at: DateTime<Utc>,
-        ) -> Session {
-            let request = SessionCreate::incognito(
-                format!("Usage {suffix}"),
-                "organization usage authorization test",
-                silicon_browser_shared::SessionTtl::Minutes15,
-            );
-            let reserved = fixture.store.reserve_session(org_id, initiator, &request, started_at).await.unwrap();
-            let provider = fake_provider_browser(&format!("provider-usage-{suffix}"), false);
-            fixture
-                .store
-                .activate_session(
-                    org_id,
-                    &reserved.id,
-                    &provider_session(&provider).unwrap(),
-                    &fixture.state.secrets,
-                    started_at,
-                )
-                .await
-                .unwrap();
-            fixture
-                .store
-                .record_usage(
-                    org_id,
-                    &reserved.id,
-                    &UsageSample {
-                        browser_millis,
-                        proxy_bytes_in: None,
-                        proxy_bytes_out: None,
-                        proxy_bytes_unclassified: None,
-                        browser_cost: browser_cost.into(),
-                        proxy_cost: "0".into(),
-                        currency: "USD".into(),
-                        sampled_at: started_at,
-                    },
-                )
-                .await
-                .unwrap();
-            reserved
-        }
-
+    async fn retired_organization_routes_are_absent() {
         let fixture = fixture().await;
-        let hidden_owner = Identity {
-            id: "si:hidden-owner".into(),
-            name: "si:hidden-owner".into(),
-            kind: IdentityKind::Silicon,
-            tags: Vec::new(),
-            verified_aliases: Vec::new(),
-        };
-        let started_at = Utc::now() - TimeDelta::minutes(1);
-        seed(&fixture, "org-1", &owner(), "owner", 60_000, "0.10", started_at).await;
-        seed(&fixture, "org-1", &hidden_owner, "hidden", 120_000, "0.20", started_at).await;
-        seed(&fixture, "org-2", &hidden_owner, "other-org", 900_000, "9", started_at).await;
-
-        let auth = Some(("oat_viewer", "org-1"));
-        let (status, _, body) = request(&fixture.app, "GET", "/api/v1/usage", auth, None).await;
-        assert_eq!(status, StatusCode::OK);
-        assert_eq!(data(&body), json!([]), "session usage must remain ACL-scoped");
-
-        let (status, _, body) = request(&fixture.app, "GET", "/api/v1/usage/org", auth, None).await;
-        assert_eq!(status, StatusCode::FORBIDDEN);
-        let error: Value = serde_json::from_slice(&body).unwrap();
-        assert!(!error.to_string().contains("300000"));
+        for path in ["/api/v1/orgs", "/api/v1/usage/org"] {
+            assert_eq!(
+                request(&fixture.app, "GET", path, Some(("oat_owner", "browser")), None).await.0,
+                StatusCode::NOT_FOUND
+            );
+        }
     }
 
     #[tokio::test]
@@ -4115,7 +4147,7 @@ mod tests {
             &fixture.app,
             "POST",
             "/api/v1/search",
-            Some(("oat_owner", "org-1")),
+            Some(("oat_owner", "browser")),
             Some(json!({"query":"browser testing","purpose":"contract test","type":"web","page":0})),
         )
         .await;
@@ -4131,7 +4163,7 @@ mod tests {
             let reserved = fixture
                 .store
                 .reserve_session(
-                    "org-1",
+                    "browser",
                     &owner(),
                     &SessionCreate::incognito(
                         "Delayed retry",
@@ -4146,7 +4178,7 @@ mod tests {
             fixture
                 .store
                 .activate_session(
-                    "org-1",
+                    "browser",
                     &reserved.id,
                     &provider_session(&provider).unwrap(),
                     &fixture.state.secrets,
@@ -4159,7 +4191,7 @@ mod tests {
             fixture
                 .store
                 .begin_end_session(
-                    "org-1",
+                    "browser",
                     &owner(),
                     &reserved.id,
                     &SessionEnd { note: "previous uncertain stop".into() },
@@ -4174,14 +4206,14 @@ mod tests {
                 &fixture.app,
                 "POST",
                 &format!("/api/v1/sessions/{}/end", reserved.id),
-                Some(("oat_owner", "org-1")),
+                Some(("oat_owner", "browser")),
                 Some(json!({"note":"retry"})),
             )
             .await;
             assert_eq!(status, StatusCode::OK);
             let recording =
-                fixture.store.recording("org-1", &owner(), &reserved.id, &fixture.state.secrets).await.unwrap();
-            let usage = fixture.store.usage("org-1", &owner(), &reserved.id).await.unwrap();
+                fixture.store.recording("browser", &owner(), &reserved.id, &fixture.state.secrets).await.unwrap();
+            let usage = fixture.store.usage("browser", &owner(), &reserved.id).await.unwrap();
             assert_eq!(recording.duration_seconds, 90);
             assert_eq!(recording.duration_seconds, usage.browser_seconds);
         }
@@ -4190,7 +4222,7 @@ mod tests {
     #[tokio::test]
     async fn incognito_terminal_usage_keeps_provider_proxy_bytes_and_cost() {
         let fixture = fixture().await;
-        let auth = Some(("oat_owner", "org-1"));
+        let auth = Some(("oat_owner", "browser"));
         let (status, _, body) = request(&fixture.app, "POST", "/api/v1/sessions", auth,
             Some(json!({"incognito":true,"name":"Metering discrepancy","description":"preserve reported counters","ttl":"15m"}))).await;
         assert_eq!(status, StatusCode::OK);
@@ -4260,7 +4292,7 @@ mod tests {
             &fixture.app,
             "POST",
             "/api/v1/profiles",
-            Some(("oat_owner", "org-1")),
+            Some(("oat_owner", "browser")),
             Some(json!({"name":"Recovered","location":"in","access":[]})),
         )
         .await;
@@ -4277,7 +4309,7 @@ mod tests {
             &fixture.app,
             "POST",
             "/api/v1/sessions",
-            Some(("oat_owner", "org-1")),
+            Some(("oat_owner", "browser")),
             Some(json!({
                 "profile_id":profile.id,
                 "name":"Recovered",
@@ -4300,7 +4332,7 @@ mod tests {
             &fixture.app,
             "POST",
             "/api/v1/sessions",
-            Some(("oat_owner", "org-1")),
+            Some(("oat_owner", "browser")),
             Some(json!({
                 "profile_id":profile.id,
                 "name":"Must remain blocked",

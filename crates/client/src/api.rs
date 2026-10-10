@@ -65,8 +65,9 @@ impl Client {
         request.validate().map_err(validation)?;
         let placeholder = Auth::new("pre-auth")?;
         let client = Self::with_transport(base, placeholder, transport)?;
-        let session: AuthSession =
-            client.send_without_auth(Method::Post, "/api/v1/auth/exchange", Some(json(request)?))?;
+        let mut body = json(request)?;
+        body["contract_version"] = 2.into();
+        let session: AuthSession = client.send_without_auth(Method::Post, "/api/v1/auth/exchange", Some(body))?;
         session.validate().map_err(protocol)?;
         Ok(session)
     }
@@ -83,8 +84,9 @@ impl Client {
         request.validate().map_err(validation)?;
         let placeholder = Auth::new("pre-auth")?;
         let client = Self::with_transport(base, placeholder, transport)?;
-        let session: AuthSession =
-            client.send_without_auth(Method::Post, "/api/v1/auth/refresh", Some(json(request)?))?;
+        let mut body = json(request)?;
+        body["contract_version"] = 2.into();
+        let session: AuthSession = client.send_without_auth(Method::Post, "/api/v1/auth/refresh", Some(body))?;
         session.validate().map_err(protocol)?;
         Ok(session)
     }

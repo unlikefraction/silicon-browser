@@ -5,7 +5,7 @@ import { BrowserSession } from '../src/session';
 import type { AuthSession } from '../src/types';
 
 const origin = 'https://backend.browser.teamofsilicons.com';
-const initial: AuthSession = { access_token: 'eyJheader.eyJpayload.original', refresh_token: 'sar_original', expires_at: '2020-01-01T00:00:00Z', identity: { id: 'Ab1', name: 'Owner', kind: 'carbon' } };
+const initial: AuthSession = { access_token: 'eyJheader.eyJpayload.original', refresh_token: 'sar_original', expires_at: '2020-01-01T00:00:00Z', identity: { id: '11111111-1111-4111-8111-111111111111', name: 'Owner', kind: 'carbon' } };
 const renewed: AuthSession = { ...initial, access_token: 'eyJheader.eyJpayload.renewed', refresh_token: 'sar_renewed', expires_at: '2099-01-01T00:00:00Z' };
 function fixture() {
   const values = new Map<string, string>();
@@ -90,13 +90,13 @@ test('legacy cached identities cannot be saved as Accounts logins', () => {
 
 test('accounts retain separate rotating credential families in one Browser workspace', () => {
   const { saved } = fixture();
-  const second = { ...renewed, access_token: 'eyJheader.eyJpayload.second', refresh_token: 'sar_second', identity: {id:'Cd2', name:'Other', kind:'carbon' as const} };
-  const otherActor = { ...renewed, access_token: 'eyJheader.eyJpayload.other', refresh_token: 'sar_other', identity: { id: 'Ef3', kind: 'silicon' as const, name: 'Worker' } };
+  const second = { ...renewed, access_token: 'eyJheader.eyJpayload.second', refresh_token: 'sar_second', identity: {id:'22222222-2222-4222-8222-222222222222', name:'Other', kind:'carbon' as const} };
+  const otherActor = { ...renewed, access_token: 'eyJheader.eyJpayload.other', refresh_token: 'sar_other', identity: { id: '33333333-3333-4333-8333-333333333333', kind: 'silicon' as const, name: 'Worker' } };
   saved.save(initial); saved.save(second); saved.save(otherActor);
   assert.equal(saved.all().length, 3);
   saved.save(renewed);
   assert.equal(saved.load()?.access_token, 'eyJheader.eyJpayload.renewed');
-  assert.deepEqual(saved.all().find(item => item.identity.id === 'Cd2'), second);
+  assert.deepEqual(saved.all().find(item => item.identity.id === '22222222-2222-4222-8222-222222222222'), second);
   saved.save(null);
   assert.equal(saved.load(), null);
   assert.equal(saved.all().length, 2);
@@ -165,7 +165,7 @@ test('explicit sign-out in another tab prevents a pending refresh from restoring
 test('a tab closing mid-refresh cannot cause another tab to resend its spent token', async () => {
   const { saved, storage, lock, values } = fixture(); saved.save(initial);
   const state = JSON.parse(values.get(saved.storageKey)!);
-  state.refreshing = { Ab1: initial.refresh_token };
+  state.refreshing = { '11111111-1111-4111-8111-111111111111/browser': initial.refresh_token };
   values.set(saved.storageKey, JSON.stringify(state));
   const other = new BrowserSession(origin, () => storage, lock);
   let requests = 0;
@@ -180,12 +180,12 @@ test('existing tab login migrates once and explicit sign-out prevents stale reim
   const key = `silicon-browser:session:v3:${origin}`;
   const oldStorage = { getItem: (key: string) => legacy.get(key) ?? null, removeItem: (key: string) => { legacy.delete(key); } } as Storage;
   const oldSession = { ...initial, org: { id: 'browser', name: 'Browser' } };
-  legacy.set(key, JSON.stringify({ active: 'Ab1/browser', sessions: [oldSession] }));
+  legacy.set(key, JSON.stringify({ active: '11111111-1111-4111-8111-111111111111/browser', sessions: [oldSession] }));
   const migrated = new BrowserSession(origin, () => storage, lock, () => oldStorage);
   assert.deepEqual(migrated.load(), initial);
   assert.equal(legacy.has(key), false);
   migrated.forget(initial);
-  legacy.set(key, JSON.stringify({ active: 'Ab1/browser', sessions: [oldSession] }));
+  legacy.set(key, JSON.stringify({ active: '11111111-1111-4111-8111-111111111111/browser', sessions: [oldSession] }));
   assert.equal(new BrowserSession(origin, () => storage, lock, () => oldStorage).load(), null);
 });
 
@@ -204,7 +204,7 @@ test('switching accounts during rotation preserves both families and the selecte
   const api = new BrowserApi(origin, (() => new Promise(resolve => { finish = resolve; })) as typeof fetch, (value, previous) => saved.save(value, previous), (session, exchange) => saved.refresh(session, exchange));
   api.setSession(initial, false);
   const pending = api.call('/sessions');
-  const other = { ...renewed, refresh_token: 'sar_other', identity: { id: 'Cd2', name: 'Other', kind: 'carbon' as const } };
+  const other = { ...renewed, refresh_token: 'sar_other', identity: { id: '22222222-2222-4222-8222-222222222222', name: 'Other', kind: 'carbon' as const } };
   api.setSession(other);
   finish(reply(renewed));
   await assert.rejects(pending, /Sign-in changed/);
@@ -218,7 +218,7 @@ test('selecting the same saved account during rotation does not erase its one-us
   let finish!: (session: AuthSession) => void;
   const pending = saved.refresh(initial, () => new Promise(resolve => { finish = resolve; }));
   saved.save(initial);
-  assert.equal(JSON.parse(values.get(saved.storageKey)!).refreshing.Ab1, initial.refresh_token);
+  assert.equal(JSON.parse(values.get(saved.storageKey)!).refreshing['11111111-1111-4111-8111-111111111111/browser'], initial.refresh_token);
   finish(renewed);
   await pending;
   assert.deepEqual(saved.load(), renewed);
@@ -227,11 +227,47 @@ test('selecting the same saved account during rotation does not erase its one-us
 test('shared saved logins migrate to account UUIDs without losing a pending one-use renewal', async () => {
   const { saved, values } = fixture();
   const legacy = { ...initial, org: { id: 'browser', name: 'Browser' } };
-  values.set(saved.storageKey, JSON.stringify({ active: 'Ab1/browser', sessions: [legacy], refreshing: { 'Ab1/browser': initial.refresh_token } }));
+  values.set(saved.storageKey, JSON.stringify({ active: '11111111-1111-4111-8111-111111111111/browser', sessions: [legacy], refreshing: { '11111111-1111-4111-8111-111111111111/browser': initial.refresh_token } }));
   assert.deepEqual(saved.load(), initial);
-  assert.deepEqual(JSON.parse(values.get(saved.storageKey)!), { active: 'Ab1', sessions: [initial], refreshing: { Ab1: initial.refresh_token } });
+  saved.save(initial);
+  assert.deepEqual(JSON.parse(values.get(saved.storageKey)!), { active: '11111111-1111-4111-8111-111111111111/browser', sessions: [legacy], refreshing: { '11111111-1111-4111-8111-111111111111/browser': initial.refresh_token } });
   let requests = 0;
   await assert.rejects(saved.refresh(initial, async () => { requests++; return renewed; }), /interrupted/);
   assert.equal(requests, 0);
   assert.equal(saved.load(), null);
+});
+
+test('a fresh canonical UUID login survives storage reload without aliasing old authority', () => {
+  const { saved, storage, lock } = fixture();
+  const canonical = { ...renewed, identity: { ...renewed.identity, id: 'bc0f6684-df51-4d9f-b945-bbdf88e599ad' } };
+  saved.save(canonical);
+  const reloaded = new BrowserSession(origin, () => storage, lock);
+  assert.deepEqual(reloaded.load(), canonical);
+  assert.equal(reloaded.all().some(item => item.identity.id === '11111111-1111-4111-8111-111111111111'), false);
+});
+
+test('a malformed legacy login cannot discard another account or its pending refresh claim', async () => {
+  const { saved, values } = fixture();
+  const valid = { ...renewed, identity: { ...renewed.identity, id: 'bc0f6684-df51-4d9f-b945-bbdf88e599ad' } };
+  const key = `${valid.identity.id}/browser`;
+  const malformed = { ...initial, identity: { ...initial.identity, id: 'Ab1' } };
+  values.set(saved.storageKey, JSON.stringify({ active: key, sessions: [malformed, { ...valid, org: { id: 'browser', name: 'Browser' } }], refreshing: { [key]: valid.refresh_token } }));
+  assert.deepEqual(saved.load(), valid);
+  assert.deepEqual(saved.all(), [valid]);
+  saved.save(valid);
+  assert.deepEqual(JSON.parse(values.get(saved.storageKey)!).refreshing, { [key]: valid.refresh_token });
+  let requests = 0;
+  await assert.rejects(saved.refresh(valid, async () => { requests++; return renewed; }), /interrupted/);
+  assert.equal(requests, 0);
+});
+
+test('the private shared cache stays readable by already-open 1.1 tabs', () => {
+  const { saved, values } = fixture();
+  saved.save(renewed);
+  const legacy = JSON.parse(values.get(saved.storageKey)!);
+  assert.equal(legacy.active, '11111111-1111-4111-8111-111111111111/browser');
+  assert.deepEqual(legacy.sessions[0].org, { id: 'browser', name: 'Browser' });
+  assert.equal(`${legacy.sessions[0].identity.id}/${legacy.sessions[0].org.id}`, legacy.active);
+  assert.deepEqual(saved.load(), renewed);
+  assert.equal('org' in saved.load()!, false);
 });

@@ -36,7 +36,8 @@ impl Runtime {
                 .ok_or_else(|| io::Error::other("no local authentication binding"))?;
         let runtime = home.join("runtime");
         state::secure_home(&runtime, true)?;
-        let directory = runtime.join(hash(&[&state.backend_url, &credential]));
+        // Preserve the existing on-disk command spool when upgrading an Accounts login.
+        let directory = runtime.join(hash(&["browser", &credential]));
         state::secure_home(&directory, true)?;
         Ok(Self { directory })
     }
@@ -214,6 +215,24 @@ mod tests {
     use super::*;
 
     #[test]
+    fn upgrading_a_login_preserves_queued_command_reports() {
+        let root = tempfile::tempdir().unwrap();
+        let home = root.path().join("state");
+        let state = State::update(&home, |state| {
+            state.credential_generation = Some("existing-login".into());
+        })
+        .unwrap();
+        state::secure_home(&home.join("runtime"), true).unwrap();
+        let previous_directory = home.join("runtime").join(hash(&["browser", "existing-login"]));
+        state::secure_home(&previous_directory, true).unwrap();
+        let report = previous_directory.join("report-pending.json");
+        fs::write(&report, b"previous version report").unwrap();
+        let runtime = Runtime::new(&home, &state).unwrap();
+        assert_eq!(runtime.directory, previous_directory);
+        assert_eq!(fs::read(report).unwrap(), b"previous version report");
+    }
+
+    #[test]
     fn stale_connection_identity_is_refetched_without_touching_the_report_spool() {
         struct ConnectionTransport(SessionConnection);
         impl silicon_browser::Transport for ConnectionTransport {
@@ -235,7 +254,7 @@ mod tests {
         fs::write(&report, b"exact original command report bytes").unwrap();
         let canonical = SessionConnection {
             session_id: "session".into(),
-            principal_id: "Account123".into(),
+            principal_id: "11111111-1111-4111-8111-111111111115".into(),
             cdp_url: "wss://provider.example/cdp".into(),
             expires_at: Utc::now() + chrono::Duration::minutes(5),
         };

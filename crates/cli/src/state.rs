@@ -579,6 +579,32 @@ mod tests {
         }
     }
 
+    #[test]
+    fn legacy_workspace_metadata_does_not_discard_a_valid_login() {
+        let root = tempfile::tempdir().unwrap();
+        let home = root.path().join("state");
+        State::update(&home, |state| {
+            state.set_tokens(
+                "jwt.persisted.signature".into(),
+                Some("sar_persisted".into()),
+                Some("2099-01-01T00:00:00Z".into()),
+            );
+            state.identity_id = Some("11111111-1111-4111-8111-111111111111".into());
+            state.credential_generation = Some("existing-login".into());
+        })
+        .unwrap();
+        let path = home.join(STATE_FILE);
+        let mut legacy: serde_json::Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+        legacy["org_id"] = serde_json::json!("browser");
+        fs::write(&path, serde_json::to_vec(&legacy).unwrap()).unwrap();
+        let loaded = State::update(&home, |_| {}).unwrap();
+        assert_eq!(loaded.stored_token(), Some("jwt.persisted.signature"));
+        assert_eq!(loaded.refresh_token(), Some("sar_persisted"));
+        assert_eq!(loaded.credential_generation.as_deref(), Some("existing-login"));
+        let saved: serde_json::Value = serde_json::from_slice(&fs::read(path).unwrap()).unwrap();
+        assert!(saved.get("org_id").is_none());
+    }
+
     /// Test group: last-command state cannot become an accidental credential store.
     #[test]
     fn obvious_secret_arguments_are_redacted() {

@@ -9,7 +9,7 @@ async fn start(fixture: &Fixture, carbon: bool, profile: bool) -> Session {
             &fixture.app,
             "POST",
             "/api/v1/profiles",
-            Some((token, "org-1")),
+            Some((token, "browser")),
             Some(json!({"name":"Shared","location":"in","access":["@c:viewer-1"]})),
         )
         .await;
@@ -24,7 +24,7 @@ async fn start(fixture: &Fixture, carbon: bool, profile: bool) -> Session {
         json!({"incognito":true,"name":"Local controller","description":"Fixture","ttl":"15m"})
     };
     let (status, _, body) =
-        request(&fixture.app, "POST", "/api/v1/sessions", Some((token, "org-1")), Some(payload)).await;
+        request(&fixture.app, "POST", "/api/v1/sessions", Some((token, "browser")), Some(payload)).await;
     assert_eq!(status, StatusCode::OK, "{}", String::from_utf8_lossy(&body));
     serde_json::from_value(data(&body)).unwrap()
 }
@@ -40,7 +40,7 @@ async fn send(fixture: &Fixture, session: &Session, body: Value) -> (StatusCode,
         &fixture.app,
         "POST",
         &format!("/api/v1/sessions/{}/commands", session.id),
-        Some(("oat_owner", "org-1")),
+        Some(("oat_owner", "browser")),
         Some(body),
     )
     .await;
@@ -52,21 +52,22 @@ async fn direct_connection_is_secret_no_store_metadata_with_no_provider_executio
     let fixture = fixture().await;
     let session = start(&fixture, false, false).await;
     let path = format!("/api/v1/sessions/{}/connection", session.id);
-    let (status, headers, body) = request(&fixture.app, "GET", &path, Some(("oat_owner", "org-1")), None).await;
+    let (status, headers, body) = request(&fixture.app, "GET", &path, Some(("oat_owner", "browser")), None).await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(headers["cache-control"], "no-store");
     let connection: SessionConnection = serde_json::from_value(data(&body)).unwrap();
     assert_eq!(connection.session_id, session.id);
     assert_eq!(connection.expires_at, session.expires_at);
-    assert_eq!(
-        connection.principal_id,
-        fixture.identity.identify("oat_owner", "org-1").await.unwrap().principal_id.to_string()
-    );
+    assert_eq!(connection.principal_id, fixture.identity.identify("oat_owner").await.unwrap().principal_id.to_string());
     assert!(connection.cdp_url.starts_with("wss://provider.invalid/cdp/"));
     assert!(!format!("{connection:?}").contains("secret=yes"));
     assert_eq!(fixture.browser.state.lock().unwrap().get_calls, 0);
     assert!(fixture.browser.stopped().is_empty());
-    for auth in [None, Some(("oat_viewer", "org-1")), Some(("oat_owner", "wrong-org"))] {
+    assert_eq!(
+        request(&fixture.app, "GET", &path, Some(("oat_owner", "obsolete-header")), None).await.0,
+        StatusCode::OK
+    );
+    for auth in [None, Some(("oat_viewer", "browser"))] {
         let (status, _, body) = request(&fixture.app, "GET", &path, auth, None).await;
         assert!(!status.is_success());
         assert!(!String::from_utf8_lossy(&body).contains("provider.invalid"));
@@ -80,7 +81,7 @@ async fn connection_preserves_https_cdp_discovery_endpoint_accepted_at_creation(
     let session = fixture
         .store
         .reserve_session(
-            "org-1",
+            "browser",
             &owner(),
             &SessionCreate::incognito(
                 "HTTPS discovery",
@@ -95,12 +96,12 @@ async fn connection_preserves_https_cdp_discovery_endpoint_accepted_at_creation(
     let url = "https://cdp.provider.invalid/?token=fixture-secret";
     browser.cdp_url = Some(url.into());
     let runtime = provider_session(&browser).expect("creation accepts secure discovery endpoints");
-    fixture.store.activate_session("org-1", &session.id, &runtime, &fixture.state.secrets, now).await.unwrap();
+    fixture.store.activate_session("browser", &session.id, &runtime, &fixture.state.secrets, now).await.unwrap();
     let (status, headers, body) = request(
         &fixture.app,
         "GET",
         &format!("/api/v1/sessions/{}/connection", session.id),
-        Some(("oat_owner", "org-1")),
+        Some(("oat_owner", "browser")),
         None,
     )
     .await;
@@ -116,27 +117,28 @@ async fn connection_renewal_denies_removed_profile_participants_and_ending_or_ex
     let session = start(&fixture, false, true).await;
     let path = format!("/api/v1/sessions/{}/connection", session.id);
     let commands = format!("/api/v1/sessions/{}/commands", session.id);
-    let (status, _, _) = request(&fixture.app, "POST", &commands, Some(("oat_viewer", "org-1")), Some(report())).await;
+    let (status, _, _) =
+        request(&fixture.app, "POST", &commands, Some(("oat_viewer", "browser")), Some(report())).await;
     assert_eq!(status, StatusCode::OK);
-    let (status, _, _) = request(&fixture.app, "GET", &path, Some(("oat_viewer", "org-1")), None).await;
+    let (status, _, _) = request(&fixture.app, "GET", &path, Some(("oat_viewer", "browser")), None).await;
     assert_eq!(status, StatusCode::OK);
     fixture
         .store
         .update_profile(
-            "org-1",
+            "browser",
             &owner(),
             session.profile_id.as_ref().unwrap(),
             &ProfileUpdate { name: None, access: Some(silicon_browser_shared::AccessList::default()) },
         )
         .await
         .unwrap();
-    let (status, _, _) = request(&fixture.app, "GET", &path, Some(("oat_viewer", "org-1")), None).await;
+    let (status, _, _) = request(&fixture.app, "GET", &path, Some(("oat_viewer", "browser")), None).await;
     assert_eq!(status, StatusCode::NOT_FOUND, "historical participants cannot renew removed access");
     assert!(
         fixture
             .store
             .session(
-                "org-1",
+                "browser",
                 &Identity {
                     id: "c:viewer-1".into(),
                     name: "Viewer".into(),
@@ -151,17 +153,23 @@ async fn connection_renewal_denies_removed_profile_participants_and_ending_or_ex
     );
     fixture
         .store
-        .begin_end_session("org-1", &owner(), &session.id, &SessionEnd { note: "done".into() }, &fixture.state.secrets)
+        .begin_end_session(
+            "browser",
+            &owner(),
+            &session.id,
+            &SessionEnd { note: "done".into() },
+            &fixture.state.secrets,
+        )
         .await
         .unwrap();
-    let (status, _, _) = request(&fixture.app, "GET", &path, Some(("oat_owner", "org-1")), None).await;
+    let (status, _, _) = request(&fixture.app, "GET", &path, Some(("oat_owner", "browser")), None).await;
     assert_eq!(status, StatusCode::CONFLICT, "ending maps to active publicly but cannot issue capabilities");
     let expired = seed_expired_incognito(&fixture, "connection").await;
     let (status, _, _) = request(
         &fixture.app,
         "GET",
         &format!("/api/v1/sessions/{}/connection", expired.id),
-        Some(("oat_owner", "org-1")),
+        Some(("oat_owner", "browser")),
         None,
     )
     .await;
@@ -210,12 +218,13 @@ async fn reports_retry_idempotently_and_reject_changed_body_or_different_princip
         &fixture.app,
         "POST",
         &format!("/api/v1/sessions/{}/commands", session.id),
-        Some(("oat_viewer", "org-1")),
+        Some(("oat_viewer", "browser")),
         Some(payload),
     )
     .await;
     assert_eq!(status, StatusCode::CONFLICT);
-    let logs = fixture.store.session_logs("org-1", &owner(), &session.id, None, &fixture.state.secrets).await.unwrap();
+    let logs =
+        fixture.store.session_logs("browser", &owner(), &session.id, None, &fixture.state.secrets).await.unwrap();
     assert_eq!(logs.len(), 1);
     assert!(logs[0].command.contains("local-secret"));
     let encrypted: String = sqlx::query_scalar("SELECT command_enc FROM commands WHERE session_id = ?")
@@ -234,10 +243,16 @@ async fn first_archive_claim_freezes_new_reports_before_hashing_but_acknowledges
     assert_eq!(send(&fixture, &session, original.clone()).await.0, StatusCode::OK);
     fixture
         .store
-        .begin_end_session("org-1", &owner(), &session.id, &SessionEnd { note: "done".into() }, &fixture.state.secrets)
+        .begin_end_session(
+            "browser",
+            &owner(),
+            &session.id,
+            &SessionEnd { note: "done".into() },
+            &fixture.state.secrets,
+        )
         .await
         .unwrap();
-    fixture.store.finalize_end_session("org-1", &session.id, Utc::now()).await.unwrap();
+    fixture.store.finalize_end_session("browser", &session.id, Utc::now()).await.unwrap();
     // A report arriving after the stop is still admitted before archival starts.
     assert_eq!(send(&fixture, &session, report()).await.0, StatusCode::OK);
     let now = Utc::now();
@@ -298,7 +313,7 @@ async fn five_hundred_concurrent_clients_read_connections_and_report_without_bro
                 &app,
                 "GET",
                 &format!("/api/v1/sessions/{}/connection", session.id),
-                Some((&token, "org-1")),
+                Some((&token, "browser")),
                 None,
             )
             .await;
@@ -307,7 +322,7 @@ async fn five_hundred_concurrent_clients_read_connections_and_report_without_bro
                 &app,
                 "POST",
                 &format!("/api/v1/sessions/{}/commands", session.id),
-                Some((&token, "org-1")),
+                Some((&token, "browser")),
                 Some(report()),
             )
             .await;

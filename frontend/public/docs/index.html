@@ -41,13 +41,13 @@ browser session end SESSION_ID --note "done"</code></pre>
 browser fetch https://example.com --purpose "Extract relevant claims"</code></pre>
   <h2 id="accounts">Your account</h2>
   <p>Browser identifies you by your permanent Accounts UUID. Your <code>c:</code> or <code>si:</code> display handle can change without changing ownership. Profiles can grant access to other account UUIDs.</p>
-  <p>Website sign-ins are saved in this tab. Switching accounts keeps their data and credentials separate. If a refresh is interrupted, sign in again with a fresh token. Manage your identity and app access at <a href="https://accounts.teamofsilicons.com/">Silicon Accounts</a>.</p>
+  <p>Your website sign-in stays available across tabs and browser restarts until its Accounts credentials expire, are revoked, or you sign out. Switching accounts keeps their data and credentials separate. The CLI also saves your sign-in between commands. If a one-use refresh is interrupted, sign in again with a fresh token. Manage your identity and app access at <a href="https://accounts.teamofsilicons.com/">Silicon Accounts</a>.</p>
   <h2 id="develop">Build on Browser</h2>
-  <p>The Browser API uses <code>/api/v1</code>. Discover its Accounts application at <code>GET /api/v1/accounts</code>. Authenticated calls carry the JWT access token in <code>Authorization: Bearer TOKEN</code> and the fixed workspace header <code>X-Org-Id: browser</code>. Responses use <code>{"data": ...}</code>; failures return an <code>error</code> object.</p>
+  <p>The Browser API uses <code>/api/v1</code>. Discover its Accounts application at <code>GET /api/v1/accounts</code>. Authenticated calls carry the JWT access token in <code>Authorization: Bearer TOKEN</code>. Accounts UUIDs identify profile owners and participants. Responses use <code>{"data": ...}</code>; failures return an <code>error</code> object. Use the <a href="https://developers.teamofsilicons.com/">Silicon Developers portal</a> for application and integration guidance.</p>
   <pre><code>cargo test --workspace --all-targets
-npm ci --prefix frontend
-npm test --prefix frontend
-npm run build --prefix frontend</code></pre>
+npx --yes pnpm@10.33.0 --dir frontend install --frozen-lockfile
+npx --yes pnpm@10.33.0 --dir frontend test
+npx --yes pnpm@10.33.0 --dir frontend run build</code></pre>
   <ul><li><a href="/docs/CLI.md">CLI reference</a></li><li><a href="/docs/DEPLOYMENT.md">Deployment</a></li><li><a href="https://developers.teamofsilicons.com/docs/accounts">Silicon Accounts developer guide</a></li><li><a href="https://developers.teamofsilicons.com/docs/apps">Silicon Apps developer guide</a></li></ul>
   <footer>Silicon Browser · <a href="/">Open Browser</a> · <a href="https://github.com/unlikefraction/silicon-browser/issues">Report an issue</a></footer>
 </main>

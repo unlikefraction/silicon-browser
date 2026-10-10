@@ -19,6 +19,9 @@ struct Attempt {
 pub(super) struct ExchangeAttemptRequest {
     state: String,
     code: String,
+    // Cached 1.1 callbacks require an org object; v2 callers explicitly select the clean contract.
+    #[serde(default)]
+    contract_version: Option<u8>,
 }
 fn storage_error(_: impl std::fmt::Debug) -> ApiFailure {
     ApiFailure::new(StatusCode::INTERNAL_SERVER_ERROR, "login_unavailable", "login state is unavailable")
@@ -87,7 +90,8 @@ pub(super) async fn exchange(
     payload: Result<Json<ExchangeAttemptRequest>, JsonRejection>,
 ) -> Result<Response, ApiFailure> {
     let input = json_payload(payload)?;
-    if input.state.len() != 101
+    if input.contract_version.is_some_and(|version| version != 2)
+        || input.state.len() != 101
         || !input.state.starts_with(&format!("{id}."))
         || !input.code.starts_with("sac_")
         || input.code.len() > 16384
@@ -108,5 +112,6 @@ pub(super) async fn exchange(
     if exchanged.identity.kind != IdentityKind::Carbon {
         return Err(ApiFailure::forbidden("hosted sign-in returned a different account kind"));
     }
-    Ok(no_store(auth_session(&state, exchanged).await?))
+    let session = auth_session(&state, exchanged).await?;
+    Ok(no_store(legacy_auth_response(session, input.contract_version.is_none())?))
 }

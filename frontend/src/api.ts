@@ -16,7 +16,9 @@ export function acceptAuth(value: AuthSession, identity?: string, kind?: AuthSes
   return { access_token, refresh_token, expires_at, identity: account, ...(services === undefined ? {} : { services }) };
 }
 function validIdentity(value: AuthSession['identity']): boolean {
-  return typeof value?.name === 'string' && typeof value.id === 'string' && (/^[a-f\d]{8}(?:-[a-f\d]{4}){3}-[a-f\d]{12}$/.test(value.id) || /^[a-zA-Z0-9]{3,128}$/.test(value.id)) && ['carbon', 'silicon'].includes(value.kind);
+  return typeof value?.name === 'string' && typeof value.id === 'string' &&
+    /^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/.test(value.id) &&
+    ['carbon', 'silicon'].includes(value.kind);
 }
 export class BrowserApi {
   private session: AuthSession | null = null;
@@ -57,7 +59,7 @@ export class BrowserApi {
     if (!this.refreshing) {
       const exchange = async (latest: AuthSession) => {
         if (this.session !== session || generation !== this.generation) throw new ApiError('Sign-in changed during renewal.');
-        const result = await this.request<AuthSession>('/auth/refresh', 'POST', { refresh_token: latest.refresh_token }, null);
+        const result = await this.request<AuthSession>('/auth/refresh', 'POST', { refresh_token: latest.refresh_token, contract_version: 2 }, null);
         if (!this.renew && (this.session !== session || generation !== this.generation)) throw new ApiError('Sign-in changed during renewal.');
         return acceptAuth(result, session.identity.id, session.identity.kind);
       };

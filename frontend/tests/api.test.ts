@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { BrowserApi, acceptAuth, dateForApi, publicError, safeHttps, shellQuote } from '../src/api';
 import type { AuthSession } from '../src/types';
-const session = (access = 'eyJheader.eyJpayload.initial'): AuthSession => ({ access_token: access, refresh_token: 'sar_refresh', expires_at: new Date(Date.now() + 900000).toISOString(), identity: { id: 'Ab1', name: 'Tester', kind: 'carbon' } });
+const session = (access = 'eyJheader.eyJpayload.initial'): AuthSession => ({ access_token: access, refresh_token: 'sar_refresh', expires_at: new Date(Date.now() + 900000).toISOString(), identity: { id: '11111111-1111-4111-8111-111111111111', name: 'Tester', kind: 'carbon' } });
 const response = (data: unknown, status = 200, headers: Record<string, string> = {}) => new Response(JSON.stringify(status === 200 ? {data} : {error: {message: 'Unauthorized'}}), {status, headers});
 function client(handler: (url: string, options: RequestInit) => Promise<Response>) { const api = new BrowserApi('https://backend.browser.teamofsilicons.com', ((url, options) => handler(String(url), options || {})) as typeof fetch); api.setSession(session()); return api; }
 
@@ -12,7 +12,7 @@ test('API sends authorization directly to configured backend, without cookies or
 });
 test('pre-handler 401 refreshes and replays a mutation exactly once', async () => {
   const calls: string[] = [];
-  const api = client(async (url, options) => { calls.push(url); if (url.endsWith('/auth/refresh')) { assert.equal((options.headers as Record<string, string>).Authorization, undefined); assert.deepEqual(JSON.parse(String(options.body)), { refresh_token: 'sar_refresh' }); return response(session('eyJheader.eyJpayload.new')); } if ((options.headers as Record<string, string>).Authorization === 'Bearer eyJheader.eyJpayload.initial') return response({}, 401, {'x-sb-auth-rejected':'1'}); assert.equal(options.method, 'POST'); assert.equal(options.body, '{"name":"test"}'); return response({id:'p1'}); });
+  const api = client(async (url, options) => { calls.push(url); if (url.endsWith('/auth/refresh')) { assert.equal((options.headers as Record<string, string>).Authorization, undefined); assert.deepEqual(JSON.parse(String(options.body)), { refresh_token: 'sar_refresh', contract_version: 2 }); return response(session('eyJheader.eyJpayload.new')); } if ((options.headers as Record<string, string>).Authorization === 'Bearer eyJheader.eyJpayload.initial') return response({}, 401, {'x-sb-auth-rejected':'1'}); assert.equal(options.method, 'POST'); assert.equal(options.body, '{"name":"test"}'); return response({id:'p1'}); });
   assert.deepEqual(await api.call('/profiles', 'POST', {name:'test'}), {id:'p1'}); assert.equal(calls.length, 3);
 });
 test('handler 401 and ambiguous network failures never replay a mutation', async () => {
@@ -73,10 +73,10 @@ test('late responses cannot become results in a different account', async () => 
   let finish!: (value: Response) => void;
   const api = client(async () => new Promise(resolve => { finish = resolve; }));
   const pending = api.call('/sessions');
-  api.setSession({ ...session('eyJheader.eyJpayload.other'), identity: { id:'Xy2', name:'si:worker', kind:'silicon' } });
+  api.setSession({ ...session('eyJheader.eyJpayload.other'), identity: { id:'44444444-4444-4444-8444-444444444444', name:'si:worker', kind:'silicon' } });
   finish(response([]));
   await assert.rejects(pending, /Sign-in changed/);
-  assert.equal(api.currentSession()?.identity.id, 'Xy2');
+  assert.equal(api.currentSession()?.identity.id, '44444444-4444-4444-8444-444444444444');
 });
 
 test('switching accounts during a replay rejects the previous account response', async () => {
@@ -90,9 +90,20 @@ test('switching accounts during a replay rejects the previous account response',
   });
   const pending = api.call('/profiles');
   await begun;
-  const next = { ...session('eyJheader.eyJpayload.other'), identity: { id: 'Xy2', name: 'si:worker', kind: 'silicon' as const } };
+  const next = { ...session('eyJheader.eyJpayload.other'), identity: { id: '44444444-4444-4444-8444-444444444444', name: 'si:worker', kind: 'silicon' as const } };
   api.setSession(next);
   finish(response([{ id: 'previous_account_profile' }]));
   await assert.rejects(pending, /Sign-in changed/);
   assert.deepEqual(api.currentSession(), next);
+});
+
+test('canonical UUID account identities survive sign-in while malformed spellings fail closed', () => {
+  const id = 'bc0f6684-df51-4d9f-b945-bbdf88e599ad';
+  const auth = { ...session(), identity: { ...session().identity, id } };
+  assert.equal(acceptAuth(auth).identity.id, id);
+  assert.equal(acceptAuth(auth, id).identity.id, id);
+  for (const malformed of ['Ab1', id.toUpperCase(), '00000000-0000-0000-0000-000000000000', id.replace('-4d9f-', '-1d9f-'), id.replace('-b945-', '-7945-'), `${id}\n`]) {
+    assert.throws(() => acceptAuth({ ...auth, identity: { ...auth.identity, id: malformed } }));
+  }
+  assert.throws(() => acceptAuth(auth, '11111111-1111-4111-8111-111111111111'));
 });

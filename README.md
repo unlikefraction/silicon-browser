@@ -6,7 +6,7 @@ The `browser` CLI and Rust client execute browser actions locally over the
 remote browser's direct connection. A Rust API manages access and metadata;
 a SolidJS website provides Carbon sign-in and live viewing.
 
-Version 1.1.0 uses **Silicon Apps** for installation and updates, and **Silicon
+Version 2.0.0 uses **Silicon Apps** for installation and updates, and **Silicon
 Accounts** for sign-in. The hosted website is available at
 [browser.teamofsilicons.com](https://browser.teamofsilicons.com).
 
@@ -23,7 +23,7 @@ browser login status --json
 ```
 
 For macOS and Linux, the npm distribution is also available with
-`npm install -g silicon-browser@1.1.0`. Apps currently has Linux validation workers;
+`npm install -g silicon-browser@2.0.0`. Apps currently has Linux validation workers;
 see [distribution availability](docs/APPS.md#hosted-target-availability).
 
 A Silicon requests a short-lived token for Browser and exchanges it once:
@@ -37,7 +37,9 @@ browser profile ls
 
 A Carbon signs in on the Browser website using the hosted Silicon Accounts flow.
 Browser never receives an Accounts password or a Silicon's STK. Accounts
-returns JWT access tokens and rotating `sar_` refresh tokens. A refresh with an
+returns JWT access tokens and rotating `sar_` refresh tokens. Login is remembered
+across CLI invocations and website reloads; `browser logout` clears the local CLI
+login. A refresh with an
 uncertain outcome requires a fresh sign-in; Browser does not resubmit the old
 token. The CLI keeps private credentials under
 `${SILICON_HOME:-$HOME}/.silicon-browser`, partitioned by backend URL.
@@ -68,10 +70,11 @@ browser usage limits
 browser session logs SESSION_ID
 ```
 
-Ownership uses the permanent, case-sensitive Accounts UUID. Public `c:` and
+Ownership uses the permanent, canonical Accounts UUIDv4, such as
+`550e8400-e29b-41d4-a716-446655440000`. Public `c:` and
 `si:` handles can change and are resolved when sharing. Accounts has no
 organization or tag membership; Browser controls its own profile access inside
-one application workspace. A custodian receives no implicit access to a
+one application. There is no organization selection. A custodian receives no implicit access to a
 Silicon's Browser data.
 
 For read-heavy work, no profile or browser session is needed:
@@ -111,13 +114,16 @@ node frontend/dev.mjs
 Set `SB_PUBLIC_BACKEND_URL` while building the frontend to select a local API;
 set the backend's `SB_ORIGIN` to the exact frontend origin. See
 [deployment](docs/DEPLOYMENT.md), [frontend setup](frontend/README.md), and the
-[CLI reference](docs/CLI.md).
+[CLI reference](docs/CLI.md). The [HTTP API reference](docs/API.md) documents
+the org-free authentication and resource endpoints.
 
 The default database is `silicon-browser-accounts.db`. Keep the previous IAM
 database, encryption key and recording receipts as a separate backup. Startup
 refuses to reinterpret existing IAM resources as Accounts ownership. Account
 migration requires a verified old-principal-to-Accounts-UUID mapping; handles
-alone do not establish continuity. The former IAM testing worlds and Briefcase
+alone do not establish continuity. The existing Accounts database has already
+undergone its coordinated UUIDv4 migration; see the retained-data evidence in
+[the cutover record](docs/ACCOUNT_UUID_CUTOVER.md). The former IAM testing worlds and Briefcase
 OBO authorization flow are retired. See [recording integration status](docs/BRIEFCASE_INTEGRATION.md).
 
 ## Validate
@@ -133,7 +139,8 @@ python3 scripts/test_apps_package.py
 python3 scripts/test_installer.py
 ```
 
-Tests use local fakes and do not consume provider capacity. Live deployment and release evidence is recorded in
-[the 1.1.0 report](docs/operations/browser-1.1.0-2026-10-10.md). Historical resource
-ownership remains in the preserved database until a verified migration is available. Historical integration
+Tests use local fakes and do not consume provider capacity. Current verification
+and dated live evidence are indexed in [production readiness](docs/PRODUCTION_READINESS.md).
+The [1.1.0 report](docs/operations/browser-1.1.0-2026-10-10.md) remains a record
+of that release. Historical integration
 notes are retained under [docs/legacy](docs/legacy).
