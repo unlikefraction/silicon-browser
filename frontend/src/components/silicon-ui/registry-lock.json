@@ -1,0 +1,14 @@
+[
+  {
+    "url": "https://ui.teamofsilicons.com/r/button.json",
+    "sha256": "8c2f211832101efdb093e86f1c5ed961c709e5cb9f8f4d1cca318106a89c4757"
+  },
+  {
+    "url": "https://ui.teamofsilicons.com/r/silicon-foundation.json",
+    "sha256": "ed37f564f009c1d755103105236eaa1f51fc72899a6789bb4e8c3f6136e58b52"
+  },
+  {
+    "url": "https://ui.teamofsilicons.com/r/silicon-motion-tokens.json",
+    "sha256": "f37a4de2db5545c5c03ea2641ecd4a5ed6b8583aeefc674c9dded2a931b8af1c"
+  }
+]
