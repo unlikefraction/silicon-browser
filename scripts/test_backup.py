@@ -52,44 +52,41 @@ class BackupTests(unittest.TestCase):
                 with self.assertRaises(ValueError):
                     backup.database_source()
 
-    def test_production_and_registered_testing_databases_are_recoverable(self):
+    def test_only_configured_accounts_database_is_backed_up_with_wal_state(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
-            source = root / 'browser.db'
-            testing = root / 'browser.db.testing'
-            testing.mkdir()
+            source = root / 'accounts.db'
             output = root / 'output'
             output.mkdir()
-            namespace = '00000000-0000-4000-8000-000000000001-' + 'a' * 64
+            # An old registry must never cause the active helper to open another store.
             with closing(sqlite3.connect(source)) as database:
-                database.execute('CREATE TABLE testing_environments (namespace TEXT)')
-                database.execute('INSERT INTO testing_environments VALUES (?)', (namespace,))
-                database.commit()
-            test_database = testing / (namespace + '.db')
-            with closing(sqlite3.connect(test_database)) as database:
                 database.execute('PRAGMA journal_mode=WAL')
+                database.execute('CREATE TABLE testing_environments (namespace TEXT)')
+                database.execute("INSERT INTO testing_environments VALUES ('retained-historical-namespace')")
                 database.execute('CREATE TABLE sessions (id TEXT)')
-                database.execute("INSERT INTO sessions VALUES ('test-session')")
+                database.execute("INSERT INTO sessions VALUES ('accounts-session-in-wal')")
                 database.commit()
                 files = backup.snapshots(source, output)
-            self.assertEqual([suffix for _, suffix in files], ['.db', '.testing/' + namespace + '.db'])
-            with closing(sqlite3.connect(files[1][0])) as restored:
-                self.assertEqual(restored.execute('SELECT id FROM sessions').fetchall(), [('test-session',)])
+            self.assertEqual(files, [(output / 'browser.db', '.db')])
+            with closing(sqlite3.connect(files[0][0])) as restored:
+                self.assertEqual(restored.execute('SELECT id FROM sessions').fetchall(), [('accounts-session-in-wal',)])
                 self.assertEqual(restored.execute('PRAGMA integrity_check').fetchone(), ('ok',))
-            test_database.unlink()
-            with self.assertRaises(ValueError):
-                backup.snapshots(source, output)
-            test_database.symlink_to(source)
-            with self.assertRaises(ValueError):
-                backup.snapshots(source, output)
+                self.assertEqual(restored.execute('SELECT namespace FROM testing_environments').fetchone(), ('retained-historical-namespace',))
 
-    def test_pre_testing_schema_remains_supported(self):
+    def test_offline_snapshot_preserves_existing_archives_and_refuses_symlink_sources(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
-            source = root / 'production.db'
+            source = root / 'retained.db'
             with closing(sqlite3.connect(source)) as database:
                 database.execute('CREATE TABLE sessions (id TEXT)')
-            self.assertEqual(backup.snapshots(source, root), [(root / 'browser.db', '.db')])
+            preserved = source.read_bytes()
+            backup.snapshot(source, root / 'restored-copy.db')
+            self.assertEqual(source.read_bytes(), preserved)
+            alias = root / 'alias.db'
+            alias.symlink_to(source)
+            with self.assertRaises(ValueError):
+                backup.snapshot(alias, root / 'rejected.db')
+            self.assertFalse((root / 'rejected.db').exists())
 
 
 if __name__ == '__main__':

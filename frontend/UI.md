@@ -4,4 +4,4 @@ Browser uses the actual Button, motion tokens and foundation from https://ui.tea
 
 The upstream MIT license and Team of Silicons / Elia Kuratli attribution are preserved in `src/components/silicon-ui/LICENSE` and included in the published site at `/licenses/silicon-ui.txt`.
 
-Validation: production Vite build and all 45 frontend tests pass. Desktop and mobile browser checks exercise Carbon/Silicon controls, reactive expansion/collapse, registry styling and overflow. No authentication fields were changed.
+Validation: production Vite build and all 48 frontend tests pass. A local desktop Chrome check confirms the Carbon/Silicon controls, reactive Silicon form expansion, registry styling and overflow. Mobile layout was not rechecked in this pass. Authentication uses the organization-free Accounts contract.

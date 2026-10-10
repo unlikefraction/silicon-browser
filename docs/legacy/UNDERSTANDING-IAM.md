@@ -13,7 +13,7 @@ user flow:
 login -> (after this, everything they see will be scoped to what they can see) choose org to enter
 			-> create a browser profile + fix the proxy location
 			-> give access to that profile (list of carbons, silicons or tags, union is the access).
-			-> start a new session (with name + description) (useful for searching the recordings later) 
+			-> start a new session (with name + description) (useful for searching the recordings later)
 			-> on the UI, there will be a button to start a live session with that profile. (this can be used to authenticate into and save)
 			-> store the session once it expired / ends.
 			-> a recording tab where all the recordings in decending chronological order is kept. and filters of profile, name, description, or incognito, or even by silicons & carbons who ran that session.
