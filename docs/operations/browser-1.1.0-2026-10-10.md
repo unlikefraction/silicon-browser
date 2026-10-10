@@ -72,3 +72,19 @@ Apps currently validates Browser's Linux x86-64 and ARM64 packages. macOS and
 Windows validation workers are unavailable on the Apps service. macOS and Linux
 also have npm binaries and standalone archives; the complete Apps archive retains
 all six native target payloads. Linux binaries reference glibc 2.34 or earlier.
+
+## Published distribution
+
+Silicon Apps publicly lists [Silicon Browser](https://apps.teamofsilicons.com/apps/browser)
+with Silicon `si:tos` as its author. Production version `1.1.0` resolves anonymously
+to signed packages under release `06eacae9-cbdc-4e97-b6dd-83c3a6264b2a`:
+
+- Linux x86-64: `d18370db-b980-421d-b2ca-19b8e158d133`.
+- Linux ARM64: `145899a7-0c07-4835-8e32-21ac4b1d85ff`.
+
+Both packages passed the hosted discovery checks. The development release was
+verified with the official Apps CLI before promotion; the production signature
+was verified anonymously afterward.
+
+The Rust crates `silicon-browser-shared`, `silicon-browser` and
+`silicon-browser-cli` were published to crates.io at `1.1.0` in dependency order.
