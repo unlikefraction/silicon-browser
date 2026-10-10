@@ -4,5 +4,5 @@
 
 /* Silicon UI foundation roles keep Browser's compact information layout. */
 :root{--rail:var(--surface-muted);--line:var(--border);--muted:var(--text-secondary);--blue:oklch(48% .15 255);--soft:var(--surface-muted);--accent:var(--blue);--accent-strong:oklch(40% .15 255);--accent-foreground:white;--font-body:'IBM Plex Sans',sans-serif;--font-mono:'IBM Plex Mono',monospace;color:var(--foreground);background:var(--background)}
-.silicon-control{display:contents}.panel,.card,.login-panel{border-radius:var(--radius-surface);padding:var(--space-section);background:var(--surface)}
+.silicon-control{display:contents}.panel,.card,.login-panel{border-radius:var(--radius-container);padding:var(--space-section);background:var(--surface)}
 .actions,.toolbar{gap:var(--space-group)}.page-heading{margin-bottom:var(--space-block)}.cards{gap:var(--space-comfort)}
