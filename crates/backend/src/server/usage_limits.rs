@@ -47,7 +47,7 @@ impl UsageLimitsCache {
 }
 
 pub(super) async fn get_usage_limits(State(state): State<AppState>, _scope: Scope) -> Response {
-    // Scope authenticates current organization membership before accessing the
+    // Scope authenticates current Browser access before accessing the
     // shared capacity. It does not authorize any account activity or finances.
     let mut response = match state.usage_limits.get(state.browser.as_ref()).await {
         Ok(limits) => success(limits).into_response(),

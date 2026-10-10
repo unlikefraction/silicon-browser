@@ -158,7 +158,10 @@ impl LocalController {
         // configuration cannot replace this authenticated managed connection.
         for (key, _) in std::env::vars_os() {
             let name = key.to_string_lossy();
-            if ["AGENT_BROWSER_", "SB_", "IAM_", "BRIEFCASE_"].iter().any(|prefix| name.starts_with(prefix)) {
+            if ["AGENT_BROWSER_", "SB_", "IAM_", "ACCOUNTS_", "SILICON_ACCOUNTS_", "BRIEFCASE_"]
+                .iter()
+                .any(|prefix| name.starts_with(prefix))
+            {
                 process.env_remove(key);
             }
         }

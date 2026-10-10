@@ -1,5 +1,9 @@
 # IAM membership ID compatibility
 
+> Historical IAM procedure; not applicable to the Accounts backend. See
+> [Deployment](../DEPLOYMENT.md) and [Apps](../APPS.md) for current instructions.
+> The public-ID operator is archived under `deploy/legacy/iam/`.
+
 Historical SDK 2/3 procedure. For IAM 4 and current Browser releases, use [the public identifier procedure](../PUBLIC-IDENTIFIER-MIGRATION.md) and `deploy/public-id-cutover.py`.
 
 Browser's backend uses `silicon-iam-client` 2.0.0. IAM membership IDs are opaque

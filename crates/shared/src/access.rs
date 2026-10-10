@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 use crate::validation::{MAX_IDENTIFIER_CHARS, collection_len, identifier};
 use crate::{Identity, Validate, ValidationError, actor_id};
 
-/// Normalized union of explicit principals (`@id`) and IAM tags (`tag`).
+/// Normalized union of explicit principals (`@id`) and Browser tags (`tag`).
 ///
 /// Serialization is deliberately a plain string array so it maps directly to
 /// `--access [@c:alice,@si:worker,growth]`.
@@ -36,7 +36,7 @@ impl AccessList {
     }
 
     /// Adds the immutable owner grant, retaining the first occurrence of every
-    /// other grant. IAM IDs remain case-sensitive.
+    /// other grant. Account UUIDs remain case-sensitive.
     pub fn with_owner<I, S>(owner_id: &str, entries: I) -> Result<Self, ValidationError>
     where
         I: IntoIterator<Item = S>,
@@ -93,7 +93,9 @@ impl Validate for AccessList {
         collection_len(self.0.len(), "access", Self::MAX_ENTRIES)?;
         for entry in &self.0 {
             let entry = normalize_entry(entry)?;
-            if let Some(principal) = entry.strip_prefix('@') {
+            if let Some(principal) = entry.strip_prefix('@')
+                && crate::account_id(principal, "access").is_err()
+            {
                 actor_id(principal, "access")?;
             }
         }
@@ -181,7 +183,7 @@ mod access_list_tests {
         assert_eq!(access.as_slice(), ["@si:silicon-1", "growth"]);
     }
 
-    /// Test group: either an explicit identity or any IAM tag grants access.
+    /// Test group: either an explicit identity or any Browser tag grants access.
     #[test]
     fn matches_principals_and_tags() {
         let access = AccessList::new(["@c:carbon-1", "growth"]).unwrap();
@@ -199,10 +201,10 @@ mod access_list_tests {
         assert!(AccessList::new(["@@principal"]).is_err());
         assert!(AccessList::new(["sales\0team"]).is_err());
         assert!(AccessList::new(["@c:alice0", "@si:worker", "growth"]).unwrap().validate().is_ok());
-        for old in ["@alice", "@worker:tos", "@00000000-0000-0000-0000-000000000000"] {
+        for old in ["@worker:tos", "@00000000-0000-0000-0000-000000000000"] {
             assert!(AccessList::new([old]).unwrap().validate().is_err(), "{old}");
         }
-        let unnormalized: AccessList = serde_json::from_str(r#"[" @alice "]"#).unwrap();
+        let unnormalized: AccessList = serde_json::from_str(r#"[" @worker:tos "]"#).unwrap();
         assert!(unnormalized.validate().is_err());
     }
 

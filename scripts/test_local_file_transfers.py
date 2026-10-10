@@ -66,7 +66,7 @@ def main():
                             self.respond(payload, "application/octet-stream")
                     elif self.path.endswith("/connection"):
                         self.respond_json({
-                            "session_id": "local-transfer", "principal_id": "fixture-principal",
+                            "session_id": "local-transfer", "principal_id": "Fixture123",
                             "cdp_url": cdp, "expires_at": "2099-01-01T00:00:00Z",
                         })
                     else:
@@ -92,9 +92,9 @@ def main():
             threading.Thread(target=server.serve_forever, daemon=True).start()
             backend = f"http://127.0.0.1:{server.server_port}"
             env = {key: value for key, value in os.environ.items()
-                   if not key.startswith(("SB_", "IAM_", "BRIEFCASE_", "AGENT_BROWSER_"))}
+                   if not key.startswith(("SB_", "IAM_", "ACCOUNTS_", "SILICON_ACCOUNTS_", "BRIEFCASE_", "AGENT_BROWSER_"))}
             env.update({"SB_HOME": str(root / "state"), "SB_BACKEND_URL": backend,
-                        "SB_ORG_ID": "fixture", "SB_AUTHTOKEN": "oat_fixture",
+                        "SB_ORG_ID": "browser", "SB_AUTHTOKEN": "jwt.fixture.signature",
                         "SB_CONTROLLER_BIN": controller})
 
             def run(command, extra=(), expected=0, home=None):
@@ -193,7 +193,7 @@ def main():
                     continue
                 namespaces.add(namespace)
                 cleanup_env = {key: value for key, value in os.environ.items()
-                               if not key.startswith(("SB_", "IAM_", "BRIEFCASE_", "AGENT_BROWSER_"))}
+                               if not key.startswith(("SB_", "IAM_", "ACCOUNTS_", "SILICON_ACCOUNTS_", "BRIEFCASE_", "AGENT_BROWSER_"))}
                 cleanup_env.update({"AGENT_BROWSER_CDP": cdp, "AGENT_BROWSER_SESSION": namespace,
                                     "AGENT_BROWSER_CONFIG": str(lock.parent / "controller.json")})
                 try:

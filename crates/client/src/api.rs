@@ -48,35 +48,22 @@ impl Client {
 
     // Authentication and identity ---------------------------------------------------------
 
-    /// Discover the backend's IAM application without an existing login.
-    pub fn iam(base: impl Into<String>) -> Result<IamInfo, Error> {
-        Self::iam_with_transport(base, Arc::new(HttpTransport::default()))
+    /// Discover the backend's Silicon Accounts application without an existing login.
+    pub fn accounts(base: impl Into<String>) -> Result<AccountsInfo, Error> {
+        Self::accounts_with_transport(base, Arc::new(HttpTransport::default()))
     }
 
-    pub fn iam_with_transport(base: impl Into<String>, transport: Arc<dyn Transport>) -> Result<IamInfo, Error> {
+    pub fn accounts_with_transport(
+        base: impl Into<String>,
+        transport: Arc<dyn Transport>,
+    ) -> Result<AccountsInfo, Error> {
         let client = Self::with_transport(base, Auth::new("pre-auth")?, transport)?;
-        let info: IamInfo = client.send_without_auth(Method::Get, "/api/v1/iam", None)?;
+        let info: AccountsInfo = client.send_without_auth(Method::Get, "/api/v1/accounts", None)?;
         app_id(&info.app_id, "app_id").map_err(protocol)?;
         Ok(info)
     }
 
-    /// Verify explicit test credentials against IAM and discover their environment.
-    pub fn testing_context(
-        base: impl Into<String>,
-        credentials: &TestingCredentials,
-    ) -> Result<TestingEnvironment, Error> {
-        credentials.validate().map_err(validation)?;
-        let client = Self::new(base, Auth::new("pre-auth")?)?;
-        let environment: TestingEnvironment =
-            client.send_without_auth(Method::Post, "/api/v1/testing/context", Some(json(credentials)?))?;
-        app_id(&environment.app_id, "app_id").map_err(protocol)?;
-        if environment.environment_id.is_nil() {
-            return Err(Error::Protocol("testing context returned an empty environment ID".into()));
-        }
-        Ok(environment)
-    }
-
-    /// Exchange a single-use IAM short-lived token. This is deliberately an associated
+    /// Exchange a single-use Silicon Accounts short-lived token. This is deliberately an associated
     /// function: there is no bearer with which to construct a normal Client yet.
     pub fn exchange(base: impl Into<String>, request: &AuthExchangeRequest) -> Result<AuthSession, Error> {
         Self::exchange_with_transport(base, request, Arc::new(HttpTransport::default()))
@@ -96,26 +83,6 @@ impl Client {
         Ok(session)
     }
 
-    /// Exchange an IAM test SLT or select a test actor using enrolled developer credentials.
-    /// The test transport prevents requests from reaching any production API path.
-    pub fn exchange_testing(
-        base: impl Into<String>,
-        request: &AuthExchangeRequest,
-        credentials: TestingCredentials,
-    ) -> Result<AuthSession, Error> {
-        request.validate_testing().map_err(validation)?;
-        let base = normalize_backend_url(&base.into())?;
-        let transport = HttpTransport::default().with_testing(&base, credentials)?;
-        let client = Self::with_transport(base, Auth::new("pre-auth")?, Arc::new(transport))?;
-        let session: AuthSession =
-            client.send_without_auth(Method::Post, "/api/v1/auth/exchange", Some(json(request)?))?;
-        validate_auth_session(&session, request.org_id.as_deref())?;
-        if !request.short_lived_token.starts_with("oac_") && session.identity.id != request.short_lived_token {
-            return Err(Error::Protocol("test authentication returned a different actor; sign in again".into()));
-        }
-        Ok(session)
-    }
-
     pub fn refresh(base: impl Into<String>, request: &AuthRefreshRequest) -> Result<AuthSession, Error> {
         Self::refresh_with_transport(base, request, Arc::new(HttpTransport::default()))
     }
@@ -132,33 +99,6 @@ impl Client {
             client.send_without_auth(Method::Post, "/api/v1/auth/refresh", Some(json(request)?))?;
         validate_auth_session(&session, Some(&request.org_id))?;
         Ok(session)
-    }
-
-    /// Inspect the backend-owned recording delivery grant for this actor and organization.
-    pub fn delivery_authorization(&self) -> Result<DeliveryAuthorization, Error> {
-        self.get_scoped("/api/v1/auth/delivery")
-    }
-
-    /// Enroll a fresh, separate IAM short-lived token for background recording delivery.
-    pub fn authorize_delivery(&self, request: &DeliveryAuthorizationRequest) -> Result<DeliveryAuthorization, Error> {
-        request.validate().map_err(validation)?;
-        self.post_scoped("/api/v1/auth/delivery", request)
-    }
-
-    /// Enroll a separate background IAM family using a test SLT or test actor ID.
-    pub fn authorize_delivery_testing(
-        &self,
-        request: &DeliveryAuthorizationRequest,
-        credentials: TestingCredentials,
-    ) -> Result<DeliveryAuthorization, Error> {
-        request.validate_testing().map_err(validation)?;
-        let transport = HttpTransport::default().with_testing(&self.base, credentials)?;
-        let client = Self { transport: Arc::new(transport), ..self.clone() };
-        client.post_scoped("/api/v1/auth/delivery", request)
-    }
-
-    pub fn end_delivery_authorization(&self) -> Result<DeliveryAuthorization, Error> {
-        self.post_scoped("/api/v1/auth/delivery/end", &Value::Null)
     }
 
     pub fn me(&self) -> Result<Identity, Error> {
@@ -257,7 +197,7 @@ impl Client {
         if connection.session_id != session_id || connection.principal_id.trim().is_empty() {
             return Err(Error::Protocol("session connection identity did not match the request".into()));
         }
-        actor_id(&connection.principal_id, "principal_id").map_err(protocol)?;
+        account_id(&connection.principal_id, "principal_id").map_err(protocol)?;
         crate::controller::validate_connection(&connection)?;
         Ok(connection)
     }
@@ -287,12 +227,6 @@ impl Client {
         self.get_scoped(&format!("/api/v1/recordings/{}", segment(session_id)?))
     }
 
-    /// Request another attempt for failed recording artifacts. The backend verifies the
-    /// initiating identity's grant and retry eligibility; completed artifacts stay intact.
-    pub fn retry_recording_delivery(&self, session_id: &str) -> Result<Recording, Error> {
-        self.post_scoped(&format!("/api/v1/recordings/{}/retry", segment(session_id)?), &Value::Null)
-    }
-
     pub fn trash_recording(&self, session_id: &str) -> Result<Recording, Error> {
         self.post_scoped(&format!("/api/v1/recordings/{}/trash", segment(session_id)?), &Value::Null)
     }
@@ -305,14 +239,10 @@ impl Client {
         self.get_scoped(&with_filter("/api/v1/usage", filter))
     }
 
-    /// Current configured account capacity, shared across organizations.
+    /// Current capacity of the shared browser-provider account.
     /// The backend refreshes the authoritative account snapshot at most once per minute.
     pub fn usage_limits(&self) -> Result<UsageLimits, Error> {
         self.get_scoped("/api/v1/usage/limits")
-    }
-
-    pub fn org_usage(&self, filter: Option<&str>) -> Result<UsageTotal, Error> {
-        self.get_scoped(&with_filter("/api/v1/usage/org", filter))
     }
 
     // Read-heavy discovery ---------------------------------------------------------------
@@ -382,6 +312,7 @@ impl Client {
             bearer: None,
             org: None,
             body,
+            idempotency_key: None,
         })?;
         decode_response(response)
     }
@@ -396,6 +327,7 @@ impl Client {
             bearer: Some(self.auth.expose().to_owned()),
             org: scoped.then(|| self.org.clone()).flatten(),
             body,
+            idempotency_key: None,
         })
     }
 
@@ -522,16 +454,19 @@ mod tests {
     #[test]
     fn list_profiles_carries_explicit_auth_org_and_encoded_filter() {
         let transport = Arc::new(FakeTransport::default());
-        let client =
-            Client::with_transport("https://backend.example/", Auth::new("oat_secret").unwrap(), transport.clone())
-                .unwrap()
-                .org("tos")
-                .unwrap();
+        let client = Client::with_transport(
+            "https://backend.example/",
+            Auth::new("jwt.secret.signature").unwrap(),
+            transport.clone(),
+        )
+        .unwrap()
+        .org("tos")
+        .unwrap();
         let profiles = client.profiles(Some("name:market research -> is:mine")).unwrap();
         assert!(profiles.is_empty());
         let requests = transport.0.lock().unwrap();
         assert_eq!(requests.len(), 1);
-        assert_eq!(requests[0].bearer.as_deref(), Some("oat_secret"));
+        assert_eq!(requests[0].bearer.as_deref(), Some("jwt.secret.signature"));
         assert_eq!(requests[0].org.as_deref(), Some("tos"));
         assert!(requests[0].url.ends_with("filter=name%3Amarket+research+-%3E+is%3Amine"));
     }
@@ -540,48 +475,25 @@ mod tests {
     #[test]
     fn profile_calls_require_an_explicit_org() {
         let transport = Arc::new(FakeTransport::default());
-        let client =
-            Client::with_transport("https://backend.example", Auth::new("oat_secret").unwrap(), transport.clone())
-                .unwrap();
+        let client = Client::with_transport(
+            "https://backend.example",
+            Auth::new("jwt.secret.signature").unwrap(),
+            transport.clone(),
+        )
+        .unwrap();
         assert_eq!(client.profiles(None).unwrap_err().to_string(), "no organization selected; call Client::org first");
         assert!(transport.0.lock().unwrap().is_empty());
     }
 
     #[test]
-    fn delivery_authorization_requires_org_and_rejects_an_invalid_token_locally() {
-        let transport = Arc::new(FakeTransport::default());
-        let client =
-            Client::with_transport("https://backend.example", Auth::new("oat_secret").unwrap(), transport.clone())
-                .unwrap();
-        assert!(matches!(client.delivery_authorization(), Err(Error::Local(_))));
-        assert!(matches!(client.end_delivery_authorization(), Err(Error::Local(_))));
-        let client = client.org("org-1").unwrap();
-        assert!(client.authorize_delivery(&DeliveryAuthorizationRequest { short_lived_token: String::new() }).is_err());
-        let actor = DeliveryAuthorizationRequest { short_lived_token: "si:worker".into() };
-        assert!(client.authorize_delivery(&actor).is_err());
-        assert!(
-            client
-                .authorize_delivery_testing(
-                    &actor,
-                    TestingCredentials {
-                        app_secret: format!("ask_{}", "S".repeat(43)),
-                        iam_test_key: None,
-                        briefcase_test_environment_key: None,
-                    }
-                )
-                .is_err(),
-            "test authorization must reject a production API base"
-        );
-        assert!(transport.0.lock().unwrap().is_empty());
-    }
-
-    /// Test group: command execution cannot send a bearer before the caller selects an org.
-    #[test]
     fn run_requires_an_explicit_org_before_transport() {
         let transport = Arc::new(FakeTransport::default());
-        let client =
-            Client::with_transport("https://backend.example", Auth::new("oat_secret").unwrap(), transport.clone())
-                .unwrap();
+        let client = Client::with_transport(
+            "https://backend.example",
+            Auth::new("jwt.secret.signature").unwrap(),
+            transport.clone(),
+        )
+        .unwrap();
         let error = client.session_connection("session-1").unwrap_err();
         assert!(error.to_string().contains("no organization selected"));
         assert!(transport.0.lock().unwrap().is_empty());
@@ -591,16 +503,18 @@ mod tests {
     #[test]
     fn dot_segment_resource_ids_are_rejected_before_transport() {
         let transport = Arc::new(FakeTransport::default());
-        let client =
-            Client::with_transport("https://backend.example", Auth::new("oat_secret").unwrap(), transport.clone())
-                .unwrap()
-                .org("tos")
-                .unwrap();
+        let client = Client::with_transport(
+            "https://backend.example",
+            Auth::new("jwt.secret.signature").unwrap(),
+            transport.clone(),
+        )
+        .unwrap()
+        .org("tos")
+        .unwrap();
         for id in [".", ".."] {
             assert!(matches!(client.profile(id), Err(Error::Local(_))));
             assert!(matches!(client.session(id), Err(Error::Local(_))));
             assert!(matches!(client.trash_recording(id), Err(Error::Local(_))));
-            assert!(matches!(client.retry_recording_delivery(id), Err(Error::Local(_))));
         }
         assert!(transport.0.lock().unwrap().is_empty());
     }
@@ -610,16 +524,19 @@ mod tests {
     #[test]
     fn services_uses_the_live_scoped_endpoint() {
         let transport = Arc::new(FakeTransport::default());
-        let client =
-            Client::with_transport("https://backend.example", Auth::new("oat_secret").unwrap(), transport.clone())
-                .unwrap()
-                .org("tos")
-                .unwrap();
+        let client = Client::with_transport(
+            "https://backend.example",
+            Auth::new("jwt.secret.signature").unwrap(),
+            transport.clone(),
+        )
+        .unwrap()
+        .org("tos")
+        .unwrap();
         assert!(client.services().unwrap().is_empty());
         let requests = transport.0.lock().unwrap();
         assert!(requests[0].url.ends_with("/api/v1/services"));
         assert_eq!(requests[0].org.as_deref(), Some("tos"));
-        assert_eq!(requests[0].bearer.as_deref(), Some("oat_secret"));
+        assert_eq!(requests[0].bearer.as_deref(), Some("jwt.secret.signature"));
     }
 
     /// Test group: live-link redemption remains an authenticated, org-scoped
@@ -639,18 +556,21 @@ mod tests {
         }
 
         let transport = Arc::new(LiveTransport(Mutex::new(Vec::new())));
-        let client =
-            Client::with_transport("https://backend.example", Auth::new("oat_secret").unwrap(), transport.clone())
-                .unwrap()
-                .org("tos")
-                .unwrap();
+        let client = Client::with_transport(
+            "https://backend.example",
+            Auth::new("jwt.secret.signature").unwrap(),
+            transport.clone(),
+        )
+        .unwrap()
+        .org("tos")
+        .unwrap();
         let live = client.redeem_live("session-1", &LiveRedeemRequest { grant: "opaque-grant".into() }).unwrap();
         assert_eq!(live.session_id, "session-1");
 
         let requests = transport.0.lock().unwrap();
         assert_eq!(requests.len(), 1);
         assert!(requests[0].url.ends_with("/api/v1/sessions/session-1/live/redeem"));
-        assert_eq!(requests[0].bearer.as_deref(), Some("oat_secret"));
+        assert_eq!(requests[0].bearer.as_deref(), Some("jwt.secret.signature"));
         assert_eq!(requests[0].org.as_deref(), Some("tos"));
         assert_eq!(requests[0].body, Some(serde_json::json!({"grant":"opaque-grant"})));
     }
@@ -663,7 +583,7 @@ mod tests {
             "https://backend.example?token=secret",
             "https://backend.example/#secret",
         ] {
-            let error = Client::new(base, Auth::new("oat_secret").unwrap()).err().unwrap();
+            let error = Client::new(base, Auth::new("jwt.secret.signature").unwrap()).err().unwrap();
             assert!(matches!(error, Error::Local(_)));
             assert!(!error.to_string().contains("secret"));
         }
@@ -672,10 +592,10 @@ mod tests {
     #[test]
     fn backend_url_requires_tls_except_for_explicit_loopback_development() {
         for base in ["https://backend.example", "http://localhost:8080", "http://127.0.0.1:8080", "http://[::1]:8080"] {
-            assert!(Client::new(base, Auth::new("oat_secret").unwrap()).is_ok(), "{base}");
+            assert!(Client::new(base, Auth::new("jwt.secret.signature").unwrap()).is_ok(), "{base}");
         }
         for base in ["http://backend.example", "http://10.0.0.1:8080", "http://[fd00::1]:8080"] {
-            assert!(Client::new(base, Auth::new("oat_secret").unwrap()).is_err(), "{base}");
+            assert!(Client::new(base, Auth::new("jwt.secret.signature").unwrap()).is_err(), "{base}");
         }
     }
 
@@ -684,8 +604,8 @@ mod tests {
     #[test]
     fn refresh_rejects_a_cross_org_authentication_response() {
         let mut session: AuthSession = serde_json::from_value(serde_json::json!({
-            "access_token": "oat_access",
-            "refresh_token": "ort_refresh",
+            "access_token": "jwt.access.signature",
+            "refresh_token": "sar_refresh",
             "expires_at": "2030-03-17T17:46:40Z",
             "identity": {"id":"si:silicon-1","name":"Silicon","kind":"silicon"},
             "org": {"id":"other-org","name":"Other"},
@@ -695,7 +615,7 @@ mod tests {
         let error = validate_auth_session(&session, Some("expected-org")).unwrap_err();
         assert!(matches!(error, Error::Protocol(_)));
         session.org.id = "expected-org".into();
-        session.access_token = "oat_bad\nheader".into();
+        session.access_token = "jwt.bad.signature\nheader".into();
         assert!(validate_auth_session(&session, Some("expected-org")).is_err());
     }
 
@@ -705,11 +625,14 @@ mod tests {
     fn session_logs_default_to_today_in_utc() {
         let before = chrono::Utc::now().date_naive();
         let transport = Arc::new(FakeTransport::default());
-        let client =
-            Client::with_transport("https://backend.example", Auth::new("oat_secret").unwrap(), transport.clone())
-                .unwrap()
-                .org("tos")
-                .unwrap();
+        let client = Client::with_transport(
+            "https://backend.example",
+            Auth::new("jwt.secret.signature").unwrap(),
+            transport.clone(),
+        )
+        .unwrap()
+        .org("tos")
+        .unwrap();
         let logs = client.session_logs("s1", None).unwrap();
         let after = chrono::Utc::now().date_naive();
         assert!(logs.is_empty());
@@ -723,11 +646,14 @@ mod tests {
     #[test]
     fn fetch_uses_the_long_timeout_transport_contract() {
         let transport = Arc::new(TimedFetchTransport::default());
-        let client =
-            Client::with_transport("https://backend.example", Auth::new("oat_secret").unwrap(), transport.clone())
-                .unwrap()
-                .org("tos")
-                .unwrap();
+        let client = Client::with_transport(
+            "https://backend.example",
+            Auth::new("jwt.secret.signature").unwrap(),
+            transport.clone(),
+        )
+        .unwrap()
+        .org("tos")
+        .unwrap();
         let response = client
             .fetch(&FetchRequest {
                 urls: vec!["https://example.com".into()],

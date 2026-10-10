@@ -29,6 +29,8 @@ mod public_identifiers;
 mod public_identifiers_tests;
 pub use public_identifiers::PublicIdentifierMapping;
 #[cfg(test)]
+mod accounts_tests;
+#[cfg(test)]
 mod delivery_tests;
 pub use delivery::{RecordingArtifactKind, RecordingDeliveryClaim};
 
@@ -197,7 +199,58 @@ struct UsageWriteTestHook {
     resume: std::sync::Arc<tokio::sync::Notify>,
 }
 
+async fn check_accounts_ownership(pool: &SqlitePool) -> StoreResult<()> {
+    let tables: Vec<String> =
+        sqlx::query_scalar("SELECT name FROM sqlite_master WHERE type='table'").fetch_all(pool).await?;
+    let mut legacy = false;
+    for (table, query) in [
+        ("identity_projection", "SELECT EXISTS(SELECT 1 FROM identity_projection)"),
+        ("delivery_credentials", "SELECT EXISTS(SELECT 1 FROM delivery_credentials)"),
+        ("iam_webhook_receipts", "SELECT EXISTS(SELECT 1 FROM iam_webhook_receipts)"),
+        ("iam_login_attempts", "SELECT EXISTS(SELECT 1 FROM iam_login_attempts)"),
+    ] {
+        if tables.iter().any(|name| name == table) {
+            let exists: bool = sqlx::query_scalar(query).fetch_one(pool).await?;
+            legacy |= exists;
+        }
+    }
+    for (table, query) in
+        [("profiles", "SELECT org_id,owner_id FROM profiles"), ("sessions", "SELECT org_id,started_by FROM sessions")]
+    {
+        if tables.iter().any(|name| name == table) {
+            let actors: Vec<(String, String)> = sqlx::query_as(query).fetch_all(pool).await?;
+            legacy |= actors.iter().any(|(workspace, id)| {
+                workspace != "browser" || silicon_browser_shared::account_id(id, "stored account").is_err()
+            });
+        }
+    }
+    if legacy {
+        return Err(StoreError::Invalid("this database contains IAM-owned state. Keep it and its encryption key unchanged; configure a fresh SB_DATABASE_URL (default silicon-browser-accounts.db). Ownership needs an explicit verified IAM-to-Accounts UUID migration before these records can be adopted.".into()));
+    }
+    Ok(())
+}
+
 impl Store {
+    /// Classify an existing database read-only before schema migrations or workers can touch it.
+    pub async fn preflight_accounts_database(database_url: &str) -> StoreResult<()> {
+        let options = SqliteConnectOptions::from_str(database_url)?;
+        if database_url.contains(":memory:") || !options.get_filename().exists() {
+            return Ok(());
+        }
+        let pool = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect_with(options.read_only(true).create_if_missing(false))
+            .await?;
+        let result = check_accounts_ownership(&pool).await;
+        pool.close().await;
+        result
+    }
+
+    /// Accounts UUIDs cannot be inferred from old IAM handles.
+    pub async fn ensure_accounts_database(&self) -> StoreResult<()> {
+        check_accounts_ownership(&self.pool).await
+    }
+
     pub(crate) fn pool(&self) -> &SqlitePool {
         &self.pool
     }
@@ -3546,7 +3599,7 @@ impl Store {
         secrets: Option<&SecretBox>,
     ) -> StoreResult<Recording> {
         let row = sqlx::query(
-            "SELECT r.*, s.profile_id, s.name, s.description, s.started_at FROM recordings r \
+            "SELECT r.*, s.profile_id, s.name, s.description, s.started_at, s.provider_recording_url_enc FROM recordings r \
              JOIN sessions s ON s.id = r.session_id WHERE s.org_id = ? AND r.session_id = ?",
         )
         .bind(org_id)
@@ -3574,6 +3627,28 @@ impl Store {
                 })
                 .transpose()?
         };
+        let native_link = if org_id == "browser" && status != "trashed" && secrets.is_some() {
+            row.try_get::<Option<String>, _>("provider_recording_url_enc")?
+                .map(|encrypted| {
+                    secrets
+                        .ok_or_else(|| corrupt("recording", "encrypted recording link requires SecretBox"))?
+                        .open_for(&session_secret_context(org_id, session_id, "provider-recording-url"), &encrypted)
+                        .map_err(StoreError::Crypto)
+                })
+                .transpose()?
+                .filter(|value| {
+                    url::Url::parse(value).is_ok_and(|url| {
+                        url.scheme() == "https"
+                            && url.username().is_empty()
+                            && url.password().is_none()
+                            && !crate::url_policy::has_forbidden_host(&url)
+                    })
+                })
+        } else {
+            None
+        };
+        let native_available = native_link.is_some();
+        let link = link.or(native_link);
         let duration_ms: Option<i64> = row.try_get("duration_ms")?;
         let size_bytes: Option<i64> = row.try_get("size_bytes")?;
         let log = sqlx::query("SELECT artifact_path, receipt_url_enc FROM recording_artifacts WHERE session_id = ? AND kind = 'commands' AND state = 'complete'")
@@ -3623,6 +3698,7 @@ impl Store {
             duration_seconds: nonnegative(duration_ms.unwrap_or(0), "recording.duration_ms")? / 1_000,
             size_bytes: nonnegative(size_bytes.unwrap_or(0), "recording.size_bytes")?,
             status: match status.as_str() {
+                "pending" if native_available => RecordingStatus::Available,
                 "recording" | "pending" => RecordingStatus::Pending,
                 "available" => RecordingStatus::Available,
                 "trashed" => RecordingStatus::Trashed,
@@ -3806,19 +3882,16 @@ impl Store {
         viewer: &Identity,
         filter: Option<&UsageFilter>,
     ) -> StoreResult<UsageTotal> {
-        // This is deliberately a visible-session total, not an assertion that
-        // the caller has organization-wide billing visibility. IAM does not
-        // currently project such a permission into the service.
+        // Accounts grants access to Browser, not billing visibility over other
+        // accounts. Only sessions visible through this account's ACLs count.
         usage_total(&self.usage_list(org_id, viewer, filter).await?)
     }
 
     /// Aggregate every session in an organization, including sessions hidden
     /// from the requesting identity by profile/session ACLs.
     ///
-    /// This deliberately has no `viewer` parameter: callers must establish an
-    /// organization-wide authorization policy before invoking it. The HTTP
-    /// boundary currently permits only an aggregate response to an active IAM
-    /// member of this exact organization; per-session reads remain ACL-bound.
+    /// This has no `viewer` parameter and is for internal accounting only.
+    /// Accounts supplies no authorization for exposing it through HTTP.
     pub async fn org_usage_total(&self, org_id: &str, filter: Option<&UsageFilter>) -> StoreResult<UsageTotal> {
         safe_id(org_id, "org_id")?;
         let session_ids: Vec<String> = sqlx::query_scalar(

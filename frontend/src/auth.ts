@@ -1,81 +1,73 @@
 import type { PendingLive } from './types';
-export const IAM_AUTH_ORIGIN = 'https://auth.iam.teamofsilicons.com';
-export const IAM_APP_ID = 'browser';
+export const ACCOUNTS_ORIGIN = 'https://accounts.teamofsilicons.com';
+export const ACCOUNTS_APP_ID = 'browser';
 const CALLBACK_TYPE = 'silicon-browser:sign-in';
+const CODE = /^sac_[A-Za-z0-9_-]{1,16380}$/;
+const STATE = /^[a-f\d]{8}(?:-[a-f\d]{4}){3}-[a-f\d]{12}\.[a-f\d]{64}$/i;
 export function readEntry(url: URL) {
   const match = url.pathname.match(/^\/sessions\/([^/]+)\/live\/?$/);
   let pending: PendingLive | null = null;
   let error = '';
   try {
-    const fragment = new URLSearchParams(url.hash.slice(1)), grant = fragment.get('grant'), environment = fragment.get('test'), org = fragment.get('org');
+    const fragment = new URLSearchParams(url.hash.slice(1)), grant = fragment.get('grant'), workspace = fragment.get('org');
     if (match && grant && grant.length <= 16384) {
-      if (fragment.has('test') && (fragment.getAll('test').length !== 1 || !/^[a-f\d]{8}(?:-[a-f\d]{4}){3}-[a-f\d]{12}$/i.test(environment || ''))) throw new Error('The live invitation has an invalid test environment. Request a new invitation.');
-      if (fragment.has('org') && (fragment.getAll('org').length !== 1 || !/^[a-z0-9_-]{3,50}$/.test(org || ''))) throw new Error('The live invitation has an invalid organization. Request a new invitation.');
-      pending = { id: decodeURIComponent(match[1]), grant, ...(org ? { orgId: org } : {}), ...(environment ? { testEnvironmentId: environment.toLowerCase() } : {}) };
+      if (fragment.has('test') || (fragment.has('org') && (fragment.getAll('org').length !== 1 || workspace !== 'browser'))) throw new Error('This invitation belongs to an older workspace. Request a new Browser invitation.');
+      pending = { id: decodeURIComponent(match[1]), grant };
     }
   } catch (cause) { error = cause instanceof URIError ? 'The live invitation has an invalid session ID. Request a new invitation.' : (cause as Error).message; }
-  const callback = url.pathname === '/auth/callback' ? { nonce: url.searchParams.get('nonce'), token: url.searchParams.get('slt') } : null;
+  const state = url.searchParams.get('state');
+  const callback = url.pathname === '/auth/callback' ? { nonce: state, attempt: STATE.test(state || '') ? state!.split('.')[0] : null, code: url.searchParams.get('code') } : null;
+  if (callback && url.searchParams.has('error')) error = 'Sign-in was not completed. Start sign-in again from Browser.';
   return { pending, callback, cleanPath: url.pathname, error };
 }
-export function requireLiveEnvironment(link: PendingLive, environmentId?: string) {
-  if (link.testEnvironmentId !== environmentId) throw new Error(link.testEnvironmentId
-    ? `This live invitation requires testing environment ${link.testEnvironmentId}. Open Testing environment and enroll it before continuing.`
-    : 'This live invitation belongs to production. Exit test mode before opening it.');
-}
-// A live grant opens only in the organization that issued it, while one IAM sign-in
-// reaches every organization the user selected. Returns the organization to enter first.
-export function liveOrganization<T extends { id: string }>(link: PendingLive, currentOrgId: string, organizations: T[]): T | null {
-  if (!link.orgId || link.orgId === currentOrgId) return null;
-  const target = organizations.find(item => item.id === link.orgId);
-  if (!target) throw new Error(`This live invitation belongs to organization ${link.orgId}. Select Attach organization, allow Browser to use ${link.orgId}, and the invitation will open.`);
-  return target;
-}
-export function loginUrl(origin: string, nonce: string) {
-  const callback = new URL('/auth/callback', origin); callback.searchParams.set('nonce', nonce);
-  const login = new URL('/login', IAM_AUTH_ORIGIN);
-  login.searchParams.set('app_id', IAM_APP_ID); login.searchParams.set('redirect_uri', callback.href);
+export interface LoginAttempt { attempt_id: string; state: string; authorize_url: string }
+export interface LoginCredential { attempt_id: string; state: string; code: string }
+export interface LoginCallback { nonce: string | null; attempt: string | null; code: string | null }
+const REDIRECT_ATTEMPT = 'silicon-browser:accounts-attempt';
+export function loginUrl(origin: string, attempt: LoginAttempt) {
+  const login = new URL(attempt.authorize_url), callback = new URL(login.searchParams.get('redirect_uri') || '', origin);
+  if (attempt.state.split('.')[0] !== attempt.attempt_id || !STATE.test(attempt.state) || login.origin !== ACCOUNTS_ORIGIN || login.username || login.password || login.hash || login.pathname !== '/authorize' ||
+      login.searchParams.get('app_id') !== ACCOUNTS_APP_ID || login.searchParams.get('state') !== attempt.state || login.searchParams.get('response_type') !== 'code' ||
+      login.searchParams.get('code_challenge_method') !== 'S256' || !/^[A-Za-z0-9_-]{43}$/.test(login.searchParams.get('code_challenge') || '') ||
+      callback.origin !== origin || callback.pathname !== '/auth/callback' || callback.search || callback.hash || callback.username || callback.password) throw new Error('The sign-in address did not match this Browser attempt. Start sign-in again.');
   return login.href;
 }
-export function matchingCallback(event: Pick<MessageEvent, 'origin' | 'source' | 'data'>, origin: string, popup: Window, nonce: string): string | null {
+export function matchingCallback(event: Pick<MessageEvent, 'origin' | 'source' | 'data'>, origin: string, popup: Window, attempt: Pick<LoginAttempt, 'attempt_id' | 'state'>): string | null {
   const data = event.data;
-  if (event.origin !== origin || event.source !== popup || data?.type !== CALLBACK_TYPE || data?.nonce !== nonce ||
-      typeof data.token !== 'string' || !/^oac_[^\s\x00-\x1f\x7f]{1,16380}$/.test(data.token)) return null;
-  return data.token;
+  if (event.origin !== origin || event.source !== popup || data?.type !== CALLBACK_TYPE || data?.nonce !== attempt.state || data?.attempt !== attempt.attempt_id || typeof data.code !== 'string' || !CODE.test(data.code)) return null;
+  return data.code;
 }
-export function matchingBroadcast(data: unknown, nonce: string): string | null {
-  const value = data as { type?: string; nonce?: string; token?: string } | null;
-  if (value?.type !== CALLBACK_TYPE || value.nonce !== nonce || typeof value.token !== 'string' ||
-      !/^oac_[^\s\x00-\x1f\x7f]{1,16380}$/.test(value.token)) return null;
-  return value.token;
+export function matchingRedirect(callback: LoginCallback): boolean {
+  try {
+    const pending = JSON.parse(sessionStorage.getItem(REDIRECT_ATTEMPT) || 'null');
+    return pending?.state === callback.nonce && pending?.attempt_id === callback.attempt && Number.isFinite(pending.created) && Date.now() - pending.created >= 0 && Date.now() - pending.created <= 600000 && CODE.test(callback.code || '');
+  } catch { return false; }
 }
-export function completeCallback(callback: {nonce: string | null; token: string | null}): boolean {
-  if (!callback.nonce || !/^[a-f0-9-]{36}$/.test(callback.nonce) || !callback.token) return false;
-  const payload = { type: CALLBACK_TYPE, nonce: callback.nonce, token: callback.token };
-  if (!matchingBroadcast(payload, callback.nonce)) return false;
-  // Some sign-in pages sever window.opener. A same-origin channel whose name contains
-  // the initiating random nonce preserves the handoff without persisting credentials.
-  const channel = new BroadcastChannel(`silicon-browser:auth:${callback.nonce}`);
-  channel.postMessage(payload);
-  if (window.opener) window.opener.postMessage(payload, location.origin);
-  setTimeout(() => { channel.close(); window.close(); }, 100);
+export function clearRedirectAttempt() { sessionStorage.removeItem(REDIRECT_ATTEMPT); }
+export function completeCallback(callback: LoginCallback): boolean {
+  if (!STATE.test(callback.nonce || '') || !callback.attempt || !CODE.test(callback.code || '') || !window.opener) return false;
+  window.opener.postMessage({ type: CALLBACK_TYPE, nonce: callback.nonce, attempt: callback.attempt, code: callback.code }, location.origin);
   return true;
 }
-export function signInPopup(signal?: AbortSignal): Promise<string> {
-  const nonce = crypto.randomUUID();
-  const channel = new BroadcastChannel(`silicon-browser:auth:${nonce}`);
-  const popup = window.open('about:blank', `browser-sign-in-${nonce}`, 'popup,width=520,height=720');
-  if (!popup) { channel.close(); return Promise.reject(new Error('Allow pop-ups for this website, then select Continue with IAM again.')); }
+export async function signInPopup(createAttempt: () => Promise<LoginAttempt>, signal?: AbortSignal): Promise<LoginCredential> {
+  const popup = window.open('about:blank', `browser-sign-in-${crypto.randomUUID()}`, 'popup,width=520,height=720');
+  let attempt: LoginAttempt, url: string;
+  try { attempt = await createAttempt(); url = loginUrl(location.origin, attempt); } catch (error) { popup?.close(); throw error; }
+  if (signal?.aborted || popup?.closed) { popup?.close(); throw new Error('Sign-in cancelled. Your workspace is unchanged.'); }
+  if (!popup) {
+    sessionStorage.setItem(REDIRECT_ATTEMPT, JSON.stringify({ attempt_id: attempt.attempt_id, state: attempt.state, created: Date.now() }));
+    location.assign(url);
+    return new Promise(() => {});
+  }
   return new Promise((resolve, reject) => {
-    const cleanup = () => { window.removeEventListener('message', receive); signal?.removeEventListener('abort', cancel); channel.close(); clearTimeout(timeout); popup.close(); };
-    const accept = (token: string | null) => { if (token) { cleanup(); resolve(token); } };
-    const receive = (event: MessageEvent) => accept(matchingCallback(event, location.origin, popup, nonce));
-    const cancel = () => { cleanup(); reject(new Error('Sign-in cancelled.')); };
+    const cleanup = () => { window.removeEventListener('message', receive); signal?.removeEventListener('abort', cancel); clearTimeout(timeout); clearInterval(closed); popup.close(); };
+    const receive = (event: MessageEvent) => { const code = matchingCallback(event, location.origin, popup, attempt); if (code) { cleanup(); resolve({ attempt_id: attempt.attempt_id, state: attempt.state, code }); } };
+    const cancel = () => { cleanup(); reject(new Error('Sign-in cancelled. Your workspace is unchanged.')); };
     const timeout = setTimeout(() => { cleanup(); reject(new Error('Sign-in timed out. Please try again.')); }, 10 * 60 * 1000);
-    channel.onmessage = event => accept(matchingBroadcast(event.data, nonce));
+    const closed = setInterval(() => { if (popup.closed) cancel(); }, 500);
     window.addEventListener('message', receive);
     signal?.addEventListener('abort', cancel, { once: true });
     if (signal?.aborted) { cancel(); return; }
-    popup.location.href = loginUrl(location.origin, nonce);
-    popup.focus();
+    popup.location.href = url; popup.focus();
   });
 }

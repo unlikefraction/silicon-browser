@@ -16,8 +16,6 @@ pub struct State {
     #[serde(default = "default_backend")]
     pub backend_url: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub testing: Option<silicon_browser::shared::TestingCredentials>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
     access_token: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     refresh_token: Option<String>,
@@ -59,7 +57,21 @@ impl State {
         if bytes.len() as u64 > MAX_STATE_BYTES {
             return Err(io::Error::new(io::ErrorKind::InvalidData, "CLI state exceeds 1 MiB"));
         }
-        serde_json::from_slice(&bytes).map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))
+        let mut state: Self =
+            serde_json::from_slice(&bytes).map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
+        // Credentials from the previous identity service cannot be used with Accounts.
+        if state.access_token.as_deref().is_some_and(|token| !silicon_browser::shared::accounts_access_token(token))
+            || state.refresh_token.as_deref().is_some_and(|token| !token.starts_with("sar_"))
+        {
+            state.access_token = None;
+            state.refresh_token = None;
+            state.token_expires_at = None;
+            state.identity_id = None;
+            state.org_id = None;
+            state.credential_generation = None;
+            state.services.clear();
+        }
+        Ok(state)
     }
 
     fn new_default() -> Self {
@@ -106,7 +118,7 @@ impl State {
     pub fn token(&self) -> Option<String> {
         std::env::var("SB_AUTHTOKEN")
             .ok()
-            .filter(|value| !value.trim().is_empty() && value.starts_with("oat_"))
+            .filter(|value| !value.trim().is_empty() && silicon_browser::shared::accounts_access_token(value))
             .or_else(|| self.access_token.clone())
     }
 
@@ -124,8 +136,13 @@ impl State {
         self.token_expires_at = expires_at;
     }
 
+    pub fn consume_refresh_token(&mut self) {
+        self.refresh_token = None;
+    }
+
     pub fn has_environment_access_token() -> bool {
-        std::env::var("SB_AUTHTOKEN").is_ok_and(|value| !value.trim().is_empty() && value.starts_with("oat_"))
+        std::env::var("SB_AUTHTOKEN")
+            .is_ok_and(|value| !value.trim().is_empty() && silicon_browser::shared::accounts_access_token(&value))
     }
 
     /// Merge activity into the newest state without touching credentials or selected defaults.
@@ -186,7 +203,6 @@ impl std::fmt::Debug for State {
         formatter
             .debug_struct("State")
             .field("backend_url", &self.backend_url)
-            .field("testing", &self.testing)
             .field("access_token", &self.access_token.as_ref().map(|_| "[REDACTED]"))
             .field("refresh_token", &self.refresh_token.as_ref().map(|_| "[REDACTED]"))
             .field("token_expires_at", &self.token_expires_at)
@@ -463,7 +479,7 @@ mod tests {
         let root = directory.path().join("sb");
         State::update(&root, |state| {
             state.backend_url = "https://ONE.example:443/".into();
-            state.set_tokens("oat_legacy".into(), Some("ort_legacy".into()), None);
+            state.set_tokens("jwt.legacy.signature".into(), Some("sar_legacy".into()), None);
         })
         .unwrap();
         let other = home_for_backend(&root, "https://two.example").unwrap();
@@ -471,7 +487,7 @@ mod tests {
         let matching = home_for_backend(&root, "https://one.example").unwrap();
         assert_ne!(other, matching);
         assert_eq!(matching, home_for_backend(&root, "https://ONE.example:443/").unwrap());
-        assert_eq!(State::load(&matching).unwrap().stored_token(), Some("oat_legacy"));
+        assert_eq!(State::load(&matching).unwrap().stored_token(), Some("jwt.legacy.signature"));
         State::update(&matching, |state| {
             state.access_token = None;
             state.refresh_token = None;
@@ -545,12 +561,12 @@ mod tests {
         let directory = tempfile::tempdir().unwrap();
         let home = directory.path().join("sb");
         let mut state = State { backend_url: "http://127.0.0.1:8080".into(), ..State::default() };
-        state.set_tokens("oat_secret".into(), Some("ort_secret".into()), None);
+        state.set_tokens("jwt.secret.signature".into(), Some("sar_secret".into()), None);
         state.org_id = Some("tos".into());
         State::update(&home, |saved| *saved = state.clone()).unwrap();
         let loaded = State::load(&home).unwrap();
-        assert_eq!(loaded.stored_token(), Some("oat_secret"));
-        assert_eq!(loaded.refresh_token(), Some("ort_secret"));
+        assert_eq!(loaded.stored_token(), Some("jwt.secret.signature"));
+        assert_eq!(loaded.refresh_token(), Some("sar_secret"));
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
@@ -574,7 +590,7 @@ mod tests {
         let directory = tempfile::tempdir().unwrap();
         let home = directory.path().join("sb");
         State::update(&home, |state| {
-            state.set_tokens("oat_old".into(), Some("ort_old".into()), Some("2026-09-04T00:00:00Z".into()));
+            state.set_tokens("jwt.old.signature".into(), Some("sar_old".into()), Some("2026-09-04T00:00:00Z".into()));
             state.last_session_id = Some("session-old".into());
         })
         .unwrap();
@@ -582,14 +598,14 @@ mod tests {
         let mut stale = State::load(&home).unwrap();
         stale.remember(&["profile".into(), "ls".into()]);
         State::update(&home, |state| {
-            state.set_tokens("oat_new".into(), Some("ort_new".into()), Some("2026-09-04T01:00:00Z".into()));
+            state.set_tokens("jwt.new.signature".into(), Some("sar_new".into()), Some("2026-09-04T01:00:00Z".into()));
         })
         .unwrap();
         State::record_activity(&home, stale.last_command.unwrap(), None).unwrap();
 
         let merged = State::load(&home).unwrap();
-        assert_eq!(merged.stored_token(), Some("oat_new"));
-        assert_eq!(merged.refresh_token(), Some("ort_new"));
+        assert_eq!(merged.stored_token(), Some("jwt.new.signature"));
+        assert_eq!(merged.refresh_token(), Some("sar_new"));
         assert_eq!(merged.last_session_id.as_deref(), Some("session-old"));
         assert_eq!(merged.last_command.as_deref(), Some("profile ls"));
     }

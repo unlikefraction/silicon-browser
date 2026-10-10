@@ -1,5 +1,9 @@
 # IAM canonical identity compatibility
 
+> Historical IAM procedure; not applicable to the Accounts backend. See
+> [Deployment](../DEPLOYMENT.md) and [Apps](../APPS.md) for current instructions.
+> The public-ID operator is archived under `deploy/legacy/iam/`.
+
 Historical SDK 2/3 procedure. For IAM 4 and current Browser releases, use [the public identifier procedure](../PUBLIC-IDENTIFIER-MIGRATION.md) and `deploy/public-id-cutover.py`.
 
 The backend uses IAM SDK 3.0.1 and derives ownership from the verified canonical identity handle. Its introspection reader also accepts the deployed UUID response when the private identity matches its authorization snapshot; the UUID never becomes an ownership key. Public Browser clients and routes are unchanged.

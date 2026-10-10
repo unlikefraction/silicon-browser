@@ -22,7 +22,7 @@ struct Entry {
     generation: u64,
 }
 
-/// A verified IAM webhook invalidates all snapshots. Missing webhook delivery is bounded by
+/// A verified Accounts webhook invalidates all snapshots. Missing webhook delivery is bounded by
 /// the fifteen-second TTL; token expiry is always honored. Token bytes are never retained.
 pub struct AuthorizationCache {
     entries: RwLock<HashMap<[u8; 32], Entry>>,
@@ -80,7 +80,7 @@ impl AuthorizationCache {
         if let Some(identity) = self.cached(&key) {
             return Ok(identity);
         }
-        // A change arriving while IAM is answering fences that response. Retry once against
+        // A change arriving while Accounts is answering fences that response. Retry once against
         // the new generation; sustained change asks the caller to retry rather than using stale data.
         for _ in 0..2 {
             let generation = self.generation.load(Ordering::SeqCst);
@@ -125,10 +125,7 @@ mod tests {
             public_id: Some("c:test".into()),
             tags: None,
             org_role: Some("member".into()),
-            scopes: "self.identity.read self.membership.read obo:briefcase:briefcase.files.create"
-                .split_whitespace()
-                .map(str::to_owned)
-                .collect(),
+            scopes: "self.identity.read self.membership.read".split_whitespace().map(str::to_owned).collect(),
             kind: IdentityKind::Carbon,
             org_id: "tos".into(),
             membership_id: "c:test[tos]".into(),

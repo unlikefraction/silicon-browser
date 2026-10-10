@@ -13,8 +13,15 @@ pub struct CapturedRequest {
 pub async fn spawn_json_server(
     responses: Vec<(u16, String)>,
 ) -> (String, mpsc::UnboundedReceiver<CapturedRequest>, tokio::task::JoinHandle<()>) {
+    spawn_json_server_with(|_| responses).await
+}
+
+pub async fn spawn_json_server_with(
+    responses: impl FnOnce(&str) -> Vec<(u16, String)>,
+) -> (String, mpsc::UnboundedReceiver<CapturedRequest>, tokio::task::JoinHandle<()>) {
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let address = listener.local_addr().unwrap();
+    let responses = responses(&format!("http://{address}"));
     let (captured, requests) = mpsc::unbounded_channel();
     let server = tokio::spawn(async move {
         for (status, body) in responses {

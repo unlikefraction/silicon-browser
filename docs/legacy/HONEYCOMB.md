@@ -1,8 +1,28 @@
+> Archived distribution and protocol notes from the retired Honeycomb/IAM deployment.
+> Current packaging and publication instructions are in [Silicon Apps](../APPS.md).
+
 # Honeycomb distribution
 
 Honeycomb distributes the `browser` CLI as `browser`. It does not host the API or
 website: the existing AWS backend, Vercel frontend, SQLite storage, IAM login,
 and Briefcase recording delivery retain their current architecture.
+
+## IAM 5 / Honeycomb 0.6 migration
+
+This checkout prepares the new authentication and recording protocol. The
+configuration in `deploy/honeycomb-application.json` replaces the retired
+`briefcase.files.create` request with reserve, commit, status and entry-list
+roots. Login permissions remain `self.identity.read`, `self.membership.read` and
+`self.tags.read`; recording OBO consent is requested separately by the feature.
+Browser exposes no incoming OBO or ATA endpoints and declares no downstream
+provider graph. Briefcase owns the definitions of its four receiving endpoints.
+
+The package still uses manifest `format_version: 1` and the same six targets;
+IAM/Honeycomb protocol versions are not Browser package versions. No release
+version or published artifact was changed by this migration. Coordinate a new
+immutable package version with `Cargo.toml` and `Cargo.lock` before publication.
+See [release gates](IAM_5_MIGRATION.md); no live migration verification, catalog
+mutation or publication has been performed here.
 
 ## Changes from the previous release
 
@@ -86,30 +106,36 @@ rotate its credentials as part of an ordinary package update.
 ```sh
 honeycomb apps get 'browser' --json
 honeycomb --idempotency-key silicon-browser-honeycomb-0.3.1-upload-20260924 \
-  releases upload 'browser' target/honeycomb-browser-0.3.1.tar.gz --revision REVISION
+  releases upload 'browser' target/honeycomb-browser-0.3.1.tar.gz --channel dev --revision REVISION
 honeycomb releases list 'browser'
-honeycomb install 'browser' --version 0.3.1
+honeycomb install 'browser>test@0.3.1'
 browser --version
 browser --help
 browser setup
 ```
 
 Use the current application revision, not the release version. Reuse the exact
-key, revision and archive after an uncertain upload response. If `browser` already
+key, revision, channel and archive after an uncertain upload response. Every
+upload requires `--channel dev` or `--channel prod`; these have separate version
+histories. Use a development release until the integration and approvals are ready. If `browser` already
 exists on PATH, use `--alias browser=browser-honeycomb` when installing and run that alias.
 When upgrading an installation that had an `sb` alias, pass
 `--alias browser=browser` to replace the old command mapping.
 
 For an application that is still private, verify installation, request publication
 with the latest revision, and inspect its status. Uploading a release does not
-itself make a private app public. New releases of an already public application
-receive public archive access during upload.
+itself make a private app public. Permission-expanding changes remain private
+until their required approvals complete; an existing public release does not
+prove that a new catalog revision or package is accepted.
 Honeycomb reviewers control public approval. Webhook activation separately needs
 IAM's fresh verification for `application.webhook.approve` and the exact pending
 endpoint; a stored login is insufficient.
 
-Browser requests identity, membership and tags for authorization, plus
-`obo:briefcase:briefcase.files.create` for user-authorized recording delivery.
+Browser requests identity, membership and tags for authorization, plus the exact
+`briefcase.uploads.reserve`, `briefcase.uploads.commit`,
+`briefcase.uploads.status` and `briefcase.entries.list` roots for user-authorized
+recording delivery. Refresh existing test imports explicitly so their catalog
+snapshots contain these roots; production metadata does not update them implicitly.
 Honeycomb itself needs its own Briefcase upload/download/publication grants; a
 missing Honeycomb grant must be repaired in that platform, not added to Browser.
 

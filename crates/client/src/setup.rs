@@ -46,7 +46,7 @@ pub fn runner_file_name() -> &'static str {
     if cfg!(windows) { "sb-browser-engine.exe" } else { "sb-browser-engine" }
 }
 
-/// Honeycomb keeps each target's controller beside the CLI, inside its immutable package.
+/// Silicon Apps keeps each target's controller beside the CLI, inside its immutable package.
 pub fn bundled_runner() -> Option<PathBuf> {
     let binary = std::env::current_exe().ok()?.canonicalize().ok()?.with_file_name(runner_file_name());
     binary.is_file().then_some(binary)

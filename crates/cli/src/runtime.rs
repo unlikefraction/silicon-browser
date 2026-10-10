@@ -88,7 +88,7 @@ impl Runtime {
         if let Some(cached) = read_json::<CachedConnection>(&file)? {
             let age = Utc::now().signed_duration_since(cached.fetched_at);
             if cached.connection.session_id == session
-                && actor_id(&cached.connection.principal_id, "principal_id").is_ok()
+                && account_id(&cached.connection.principal_id, "principal_id").is_ok()
                 && age >= chrono::Duration::zero()
                 && age < chrono::Duration::seconds(60)
                 && cached.connection.expires_at > Utc::now()
@@ -237,7 +237,7 @@ mod tests {
         fs::write(&report, b"exact original command report bytes").unwrap();
         let canonical = SessionConnection {
             session_id: "session".into(),
-            principal_id: "c:alice0".into(),
+            principal_id: "Account123".into(),
             cdp_url: "wss://provider.example/cdp".into(),
             expires_at: Utc::now() + chrono::Duration::minutes(5),
         };
@@ -251,7 +251,7 @@ mod tests {
         .unwrap();
         let runtime = Runtime { directory };
         let file = runtime.directory.join(format!("connection-{}.json", hash(&["session"])));
-        for old in ["alice0", "00000000-0000-0000-0000-000000000000"] {
+        for old in ["c:alice0", "00000000-0000-0000-0000-000000000000"] {
             let mut legacy = canonical.clone();
             legacy.principal_id = old.into();
             write_json(&file, &CachedConnection { fetched_at: Utc::now(), connection: legacy }).unwrap();

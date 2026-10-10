@@ -1,0 +1,20 @@
+{
+  "app_id": "browser",
+  "name": "Silicon Browser",
+  "description": "Silicon Browser gives people and software agents managed browser profiles, shared access, expiring sessions and live handoff. Its browser command connects directly to remote browsers while the hosted API manages profile access and session metadata. Search and fetch web content, automate browser actions and share profiles using Silicon Accounts sign-in.",
+  "tags": ["browser", "automation", "productivity"],
+  "visibility": "public",
+  "links": {
+    "website": "https://browser.teamofsilicons.com",
+    "developer_docs": "https://browser.teamofsilicons.com/docs/",
+    "android": "",
+    "ios": "",
+    "custom": [
+      {
+        "label": "Source",
+        "url": "https://github.com/unlikefraction/silicon-browser",
+        "logo": ""
+      }
+    ]
+  }
+}

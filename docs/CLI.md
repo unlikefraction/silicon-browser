@@ -1,185 +1,125 @@
-# CLI guide
+# Browser CLI
 
-`browser` is the reference IAM application CLI. It is designed for Carbon and
-Silicon callers, and its help output is the primary documentation:
+`browser` uses Silicon Accounts and is distributed through Silicon Apps. Install
+with `silicon-apps install browser` once Browser 1.1.0 is published. Apps owns
+updates; Browser does not run a second updater.
+
+## Discovery and sign-in
 
 ```sh
 browser --help
 browser --help remote-browser
 browser --help search-and-fetch
-browser session --help
-browser run --help
-```
-
-Each command explains what it is for, a normal next step, accepted flags, and
-the exact error code returned on failure. JSON output is intended for agents;
-the standard form places `--json` after the command (`browser iam --json`).
-The web dashboard is a convenience subset of these API capabilities; automation
-should use the CLI or the stateless Rust client.
-
-## Install
-
-The supported macOS/Linux install also installs the native runner and starts
-the setup flow. It never asks for a password or stores the one-shot IAM token.
-
-Use the one-line setup command at the end of this guide.
-
-For a non-interactive install, append `-s -- --no-setup`, then run
-`~/.local/bin/browser setup` when an IAM token is available. The installer verifies
-the release checksum and supports x86-64 and ARM64 (Linux requires glibc 2.34+).
-
-## Authentication and state
-
-```sh
-browser iam --json
-browser login "<short-lived IAM token>"
+browser accounts --json
 browser login status --json
+silicon-accounts login --app browser
+browser login --slt TOKEN
+browser setup
 ```
 
-The official IAM CLI can mint Browser's token directly. Pass the selected
-organization when a Carbon has access to more than one workspace:
+The first three commands describe the app and its actions. `accounts --json`
+always returns `app_id: browser`, even offline. Signed-out login status returns
+`authenticated: false` without contacting a backend. Signed-in status includes
+the account identity and verifies it with the API.
+
+A Silicon passes an Accounts `slt_` token once. A Carbon uses the hosted Accounts
+sign-in on the Browser website. The CLI accepts a positional SLT for compatibility
+with scripts. `--json` may be placed before or after ordinary commands; flags
+inside `browser run` belong to the browser action.
+
+Credentials are private and partitioned by normalized backend URL under
+`${SILICON_HOME:-$HOME}/.silicon-browser`. `SB_HOME` selects an isolated state
+root; `SB_BACKEND_URL` selects the API. `SB_AUTHTOKEN` can override the access
+JWT for one invocation, or supply an SLT to `browser setup`. Environment access
+tokens never replace a saved login. Tokens from the retired identity service
+are ignored and require a fresh Accounts sign-in.
+
+Refresh is serialized locally. Browser consumes a saved refresh token before
+sending it, then saves the rotated pair atomically. An interrupted or rejected
+refresh needs a new sign-in; resubmitting an old `sar_` token could revoke the
+entire Accounts session. Browser actions themselves are never automatically
+repeated.
+
+## Profiles and sessions
 
 ```sh
-slt=$(iam login --app-id 'browser' --grant-org tos -o json | jq -r .slt)
-browser --org-id tos login "$slt"
+browser proxy ls
+browser profile new --name Research --location US --access '[@Account123]'
+browser profile ls
+browser profile show PROFILE_ID
+browser profile set PROFILE_ID --access '[@Account123,@si:assistant]'
+browser profile end PROFILE_ID --note done
+browser session new PROFILE_ID --name Research --description "Read vendor docs" --ttl 30m
+browser session new --incognito --name Quick --description "One task" --ttl 15m
+browser session ls
+browser session show SESSION_ID
+browser session live SESSION_ID
+browser session end SESSION_ID --note done
 ```
 
-The SLT is single-use and expires quickly; Browser never receives an IAM
-password, verification code, Silicon token, or refresh credential.
+Ownership and grants store Accounts UUIDs, preserving case. A public `c:` or
+`si:` selector is resolved to the account UUID when access changes. The owner
+is always retained. Accounts provides no tag or organization authority;
+Browser enforces sharing in its application workspace. Existing `--org-id`
+wire compatibility selects that Browser workspace, not an Accounts organization.
 
-`iam --json` always returns an object containing `app_id`; `login status --json`
-always returns `authenticated` and may include identity, organization, and
-expiry details. Treat unknown JSON fields as forward-compatible additions.
+Each profile has at most one active session. Profile sessions accept 15m, 30m,
+45m, 60m, 120m or 240m; incognito defaults to 15m.
 
-Tokens are minted by the official IAM CLI or its web consent flow. Browser
-never prompts for a username or password. `SILICON_HOME` is the shared home for
-Silicon applications; Browser keeps its private state in
-`$SILICON_HOME/.silicon-browser` (or `~/.silicon-browser` when unset).
-`SB_HOME` is an explicit test/isolated-run override. Set `SB_BACKEND_URL` or
-`--backend` before login to select a non-production backend.
-
-## IAM test environments
-
-Use the app secret from an IAM testing environment to enroll Browser:
+## Local actions and logs
 
 ```sh
-# Reads SB_TEST_APP_SECRET; optional SB_IAM_TEST_KEY and SB_BRIEFCASE_TEST_KEY.
-browser testing login
-# Or read private JSON containing {"app_secret":"ask_..."} from stdin:
-browser testing login --credentials-stdin < test-credentials.json
-
-browser --test <environment-uuid> testing status --json
-browser --test <environment-uuid> login si:worker --org-id tos
-browser --test <environment-uuid> login status --json
-browser --test <environment-uuid> setup
-browser --test <environment-uuid> profile ls
+browser run SESSION_ID "open https://example.com"
+browser run SESSION_ID "snapshot -i"
+browser run SESSION_ID "click @e1"
+browser run SESSION_ID "fill @e2 'hello world'"
+browser run SESSION_ID "screenshot ./page.png"
+browser run SESSION_ID "upload input[type=file] ./document.pdf"
+browser session logs SESSION_ID
+browser session sync SESSION_ID
 ```
 
-Enrollment verifies the secret with IAM and reports its environment UUID.
-JSON may also include `iam_test_key` and `briefcase_test_environment_key`;
-`iam_test_key` is exactly 32 ASCII letters or digits. The Briefcase field holds
-the imported Briefcase app secret from the same IAM world: `ask_` followed by
-43 base64url characters. Its existing field and `SB_BRIEFCASE_TEST_KEY` names
-remain compatible. The Browser app secret is
-developer test configuration, never a production login credential. Test login
-accepts an actor ID in that environment or an IAM test `oac_` token.
-Production login continues to require a short-lived token.
+`browser run --help` prints the pinned controller's supported commands. Setup
+uses the bundled native controller when available and checks its version and
+integrity. No Node runtime or local Chromium is required by the installed CLI.
 
-With test recording storage configured, `browser --test <environment-uuid> setup`
-authorizes background recording delivery as the authenticated test actor using
-its own IAM token family. `SB_RECORDING_SLT` can explicitly supply that actor ID
-or a fresh test SLT for the same actor. Production setup still requires a separate fresh SLT.
+Screenshots, PDFs and local recordings write to your machine. Uploads send
+actual local bytes directly to the remote browser. Downloads support
+same-origin HTTP links and blob/data links; script/button/POST downloads,
+cross-origin frames and `wait --download` fail explicitly. End sessions with
+`browser session end`.
 
-Pass `--test` on every command. Test calls use the same API routes under
-`/testing/<environment-uuid>` and the same exchange/refresh flow. Credentials,
-organization selection, runtime connections, and queued command reports are
-isolated by backend URL and environment. Missing enrollment fails locally;
-test mode never falls back to production. Re-enrollment clears that test
-environment's saved login. Test configuration lives in Browser's existing
-owner-only state directory. Browser sessions still need configured provider
-credentials; the IAM test environment does not supply browser capacity.
+Command output streams locally. Command reports contain command text/flags,
+timestamps, exit code and a stable UUID; browser output is excluded. A failed
+metadata report is queued and can be retried without repeating the action.
 
-## Command tree
-
-```text
-browser
-├── iam --json
-├── login <SLT>
-│   └── status --json
-├── testing {login [--credentials-stdin],status --json}
-├── setup [--org <id>]
-├── profile {ls,show,new,set,end}
-├── proxy ls
-├── session {new,ls,show,live,logs,sync,end}
-├── run <session-id> <browser-command> [args...]
-├── recording {ls,show,send,rm}
-├── usage {limits,ls,show}
-├── search <query> --purpose <text>
-├── fetch <url[,url...]> --purpose <text>
-└── report-bug --title <text> --details <text> [--pr <ref>]
-```
-
-Use `session new --incognito` for one-off work, or create a profile when the
-same identity and proxy location must be reused. `run --help` is versioned with
-the pinned native runner. Browser actions execute locally; command reports
-contain metadata only and are retried by `session sync` without repeating an
-action.
-
-Proactive IAM apps add two standard branches:
-
-```text
-app webhook <url> [--secret <value>]
-app unhook
-```
-
-The daemon owns one server WebSocket per machine and multiplexes all registered
-Silicons. Webhook deliveries use `{type, data, metadata}`.
-
-All IAM app CLIs should expose a bug-report command with a reproducible
-description, diagnostics, and an optional `--pr <ref>`. In `browser`, use
-`report-bug` (aliases: `bug`, `bug-report`). The command submits a report only;
-agents can inspect the linked repository, patch it, and attach a pull request
-themselves.
-
-## Build and develop
-
-The stateless Rust library is published as
-[`silicon-browser`](https://crates.io/crates/silicon-browser). The `browser` binary
-owns local state and talks to the backend; a long-running daemon may reuse the
-same library without sharing mutable process state.
+## Recordings, usage and discovery
 
 ```sh
-cargo run -p silicon-browser-cli -- --help
-cargo test -p silicon-browser-cli
-cargo test --workspace --all-targets
-cargo fmt --all -- --check
-cargo clippy --workspace --all-targets -- -D warnings
+browser recording ls --filter 'profile:PROFILE_ID -> name:^research'
+browser recording show SESSION_ID
+browser recording rm SESSION_ID
+browser usage limits
+browser usage ls
+browser usage show SESSION_ID
+browser search "query" --purpose "Find sources"
+browser fetch https://example.com,https://example.org --purpose "Extract claims"
 ```
 
-Use the production pathways in tests with a test IAM application and test
-backend credentials. Keep test and production transport/auth code identical;
-only endpoints and keys should vary. Organization-wide BYO storage or keys are
-configuration values, supplied through the app's documented environment
-variables, and must never be embedded in the CLI.
+Recording and usage filters support AND-separated pipelines; inspect each
+command's help for the accepted fields. `recording rm` hides a Browser record.
+Automatic Briefcase delivery is retired with the old OBO protocol; see
+[recording status](BRIEFCASE_INTEGRATION.md). Native local recording commands
+continue writing files on the caller's machine.
 
-## Telemetry, updates, and compatibility
+Search and fetch require sign-in but no profile/session. The API schedules the
+configured provider key pool. Browser capacity limits reflect the shared
+provider account rather than a per-user quota.
 
-Browser command reports are durable and idempotent. The four Space Station
-stores have been created in `tos`: `browserbackend`, `browsercli`,
-`browserfrontendanalytics`, and `browserfrontendevents`. This release does not
-yet send events to those stores or expose a telemetry opt-out setting. There is
-no frontend telemetry proxy or supported `SPACE_STATION_*` configuration yet.
+## Development and releases
 
-The CLI installs a checksum-verified native controller. It does not yet run an
-hourly update service; rerun the installer to update `browser`. The backend negotiates
-its IAM v1 dependency contract. Browser's public API uses `/api/v1`; automatic
-Browser client/server protocol negotiation is not implemented. The testing
-routes in 0.2.1 are additive and preserve existing production API behavior.
-
-## One-line setup
-
-Install the CLI without authentication; then use `browser login` and `browser setup` when ready.
-
-```sh
-curl -fsSL https://raw.githubusercontent.com/unlikefraction/silicon-browser/managed-v0.3.1/scripts/install.sh | sh -s -- --no-setup && export PATH="$HOME/.local/bin:$PATH"
-```
+The workspace uses Rust 1.98 or later. Run the workspace tests and frontend
+checks documented in [README](../README.md). [Apps distribution](APPS.md)
+describes the package manifest, native build receipts, supported targets and
+publication process. Accounts has no IAM testing worlds; integration tests use
+local fake HTTP services or a separately registered Accounts application.

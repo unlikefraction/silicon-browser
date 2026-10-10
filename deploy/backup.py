@@ -8,6 +8,22 @@ import re
 import sqlite3
 import subprocess
 import tempfile
+from urllib.parse import parse_qsl, unquote
+
+
+def database_source():
+    value = os.environ.get('SB_DATABASE_URL', 'sqlite://silicon-browser-accounts.db?mode=rwc')
+    if not value.startswith('sqlite:'):
+        raise ValueError('SB_DATABASE_URL must be a file SQLite URL')
+    filename, _, query = value.removeprefix('sqlite://').removeprefix('sqlite:').partition('?')
+    filename = unquote(filename, errors='strict')
+    allowed = {'mode': {'ro', 'rw', 'rwc'}, 'cache': {'private', 'shared'},
+               'immutable': {'true', 'false', '1', '0'}}
+    if (not filename or filename == ':memory:' or filename.startswith('file:') or '\x00' in filename
+            or any(value not in allowed.get(key, ()) for key, value in parse_qsl(query, keep_blank_values=True))):
+        raise ValueError('SB_DATABASE_URL must name a file SQLite database without a custom VFS')
+    return Path(filename)
+
 
 def snapshot(source, destination):
     if source.is_symlink() or not source.is_file():
@@ -45,7 +61,7 @@ def snapshots(source, directory):
 
 def main():
     os.umask(0o077)
-    source = Path('/var/lib/silicon-browser/browser.db')
+    source = database_source()
     bucket = Path('/etc/silicon-browser/artifact-bucket').read_text().strip()
     region_file = Path('/etc/silicon-browser/artifact-region')
     region = region_file.read_text().strip() if region_file.is_file() else 'us-east-1'

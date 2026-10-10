@@ -1,6 +1,6 @@
 //! Axum HTTP boundary for the public, stateless `silicon-browser` client.
 //!
-//! Every scoped operation re-introspects the opaque IAM bearer in the explicit
+//! Every scoped operation validates an Accounts bearer in the explicit
 //! `X-Org-ID` context. Provider credentials stay private; an authorized client
 //! receives its sensitive CDP capability and controls the remote browser directly.
 
@@ -22,14 +22,16 @@ use chrono::{DateTime, NaiveDate, TimeDelta, Utc};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
 use silicon_browser_shared::{
-    ApiError, ApiErrorEnvelope, AuthExchangeRequest, AuthRefreshRequest, AuthSession, CommandReport, Envelope,
-    FetchRequest, FetchResponse, FieldError, IamInfo, Identity, LiveRedeemRequest, Org, ProfileCreate, ProfileEnd,
+    AccountsInfo, ApiError, ApiErrorEnvelope, AuthExchangeRequest, AuthRefreshRequest, AuthSession, CommandReport,
+    Envelope, FetchRequest, FetchResponse, FieldError, Identity, LiveRedeemRequest, Org, ProfileCreate, ProfileEnd,
     ProfileUpdate, ProxyLocation, RecordingFilter, SearchRequest, SearchResponse, Session, SessionConnection,
     SessionCreate, SessionEnd, SessionFilter, SessionStatus, UsageFilter, UsagePredicate, Validate,
 };
 use tokio::sync::Mutex;
 use url::Url;
 use uuid::Uuid;
+
+use silicon_browser_shared::{RecordingPredicate, SessionPredicate};
 
 use crate::auth::{
     ExchangeRequest, ExchangedAuth, IdentityError, IdentityProvider, OrganizationAccess, PrincipalIdentity,
@@ -47,10 +49,8 @@ use crate::store::{
 };
 use crate::url_policy::{has_forbidden_host, is_https_or_loopback_http};
 
-mod delivery;
-mod testing;
+mod login;
 mod usage_limits;
-pub use testing::TestingRegistry;
 
 const MAX_REQUEST_BODY: usize = 2 * 1024 * 1024;
 const PROFILE_RECONCILIATION_ITEM_TIMEOUT: Duration = Duration::from_secs(10);
@@ -84,8 +84,6 @@ pub struct AppState {
     proxy_locations: Arc<Vec<ProxyLocation>>,
     session_locks: SessionLocks,
     usage_limits: usage_limits::UsageLimitsCache,
-    recording_delivery: Option<Arc<delivery::RecordingDeliveryServices>>,
-    recording_delivery_required: bool,
     testing_environment: Option<Uuid>,
 }
 
@@ -120,8 +118,6 @@ impl AppState {
             proxy_locations: Arc::new(default_proxy_locations()),
             session_locks: SessionLocks::default(),
             usage_limits: usage_limits::UsageLimitsCache::default(),
-            recording_delivery: None,
-            recording_delivery_required: false,
             testing_environment: None,
         })
     }
@@ -562,15 +558,7 @@ impl AppState {
 /// Native API middleware. `SB_ORIGIN` is the separately hosted frontend origin.
 pub fn production_router(state: AppState) -> Router {
     let origin = HeaderValue::from_str(&state.public_origin).expect("AppState validates an HTTP origin");
-    api_middleware(router(state).layer(axum::middleware::from_fn(testing::reject_misdirected_credentials)), origin)
-}
-
-pub fn production_router_with_testing(state: AppState, testing: TestingRegistry) -> Router {
-    let origin = HeaderValue::from_str(&state.public_origin).expect("AppState validates an HTTP origin");
-    api_middleware(
-        router(state).layer(axum::middleware::from_fn(testing::reject_misdirected_credentials)).merge(testing.router()),
-        origin,
-    )
+    api_middleware(router(state), origin)
 }
 
 fn api_middleware(router: Router, origin: HeaderValue) -> Router {
@@ -583,6 +571,7 @@ fn api_middleware(router: Router, origin: HeaderValue) -> Router {
                     AUTHORIZATION,
                     CONTENT_TYPE,
                     HeaderName::from_static("x-org-id"),
+                    HeaderName::from_static("idempotency-key"),
                     HeaderName::from_static("x-sb-test-app-secret"),
                     HeaderName::from_static("x-testing-environment-key"),
                     HeaderName::from_static("x-sb-test-briefcase-key"),
@@ -604,12 +593,11 @@ fn api_middleware(router: Router, origin: HeaderValue) -> Router {
 pub fn router(state: AppState) -> Router {
     Router::new()
         .route("/healthz", get(health))
-        .route("/api/v1/iam", get(iam))
+        .route("/api/v1/accounts", get(accounts))
+        .route("/api/v1/auth/attempts", post(login::begin))
+        .route("/api/v1/auth/attempts/{attempt_id}/exchange", post(login::exchange))
         .route("/api/v1/auth/exchange", post(exchange_auth))
         .route("/api/v1/auth/refresh", post(refresh_auth))
-        .route("/api/v1/auth/delivery", get(delivery::authorization_status).post(delivery::authorize))
-        .route("/api/v1/auth/delivery/end", post(delivery::disable_authorization))
-        .route("/api/v1/recordings/{session_id}/retry", post(delivery::retry_recording))
         .route("/api/v1/me", get(me))
         .route("/api/v1/orgs", get(orgs))
         .route("/api/v1/services", get(services))
@@ -682,7 +670,7 @@ impl FromRequestParts<AppState> for Scope {
 async fn authenticate_scope(state: &AppState, bearer: &str, org_id: &str) -> Result<Scope, ApiFailure> {
     let principal = state.identity.identify(bearer, org_id).await.map_err(ApiFailure::from)?;
     if principal.org_id != org_id {
-        return Err(ApiFailure::forbidden("IAM returned a different organization scope"));
+        return Err(ApiFailure::forbidden("Accounts returned a different organization scope"));
     }
     let identity = resolve_identity(state, &principal).await?;
     Ok(Scope { org_id: org_id.to_owned(), identity, principal })
@@ -699,59 +687,23 @@ impl FromRequestParts<AppState> for Bearer {
     }
 }
 
-async fn resolve_identity(state: &AppState, principal: &PrincipalIdentity) -> Result<Identity, ApiFailure> {
-    if silicon_browser_shared::actor_id(&principal.principal_id, "public_id").ok() != Some(principal.kind)
-        || principal.public_id.as_deref().is_some_and(|id| id != principal.principal_id)
-        || principal.membership_id != format!("{}[{}]", principal.principal_id, principal.org_id)
-    {
-        return Err(ApiFailure::bad_gateway("iam_contract", "IAM returned an inconsistent actor or membership")
-            .with_diagnostic(FailureDiagnostic {
-                operation: Some("identity resolution"),
-                reason: Some("IAM returned an inconsistent actor or membership"),
-                ..Default::default()
-            }));
-    }
-    let principal_id = principal.principal_id.to_string();
-    let projected = state
-        .store
-        .projected_identity(&principal.org_id, &principal_id, principal.kind)
-        .await
-        .map_err(ApiFailure::from)?;
-    let mut identity = match (principal.public_id.as_deref(), projected) {
-        (Some(public_id), Some(projected)) if projected.id == public_id => projected,
-        (Some(public_id), _) => state
-            .store
-            .remember_identity_projection(
-                &principal.org_id,
-                &principal_id,
-                public_id,
-                principal.kind,
-                &state.secrets,
-                Utc::now(),
-            )
-            .await
-            .map_err(ApiFailure::from)?,
-        (None, Some(projected)) => projected,
-        (None, None) => Identity {
-            id: principal_id.clone(),
-            name: principal_id,
-            kind: principal.kind,
-            tags: Vec::new(),
-            verified_aliases: Vec::new(),
-        },
-    };
-    // Membership disclosure belongs to this exact live token. Never recover
-    // tags from a persisted identity or a broader token's previous snapshot.
-    identity.tags = principal.tags.clone().unwrap_or_default();
-    Ok(identity)
+async fn resolve_identity(_state: &AppState, principal: &PrincipalIdentity) -> Result<Identity, ApiFailure> {
+    // Display handles never become owners or ACL aliases.
+    Ok(Identity {
+        id: principal.principal_id.clone(),
+        name: principal.public_id.clone().unwrap_or_else(|| principal.principal_id.clone()),
+        kind: principal.kind,
+        tags: Vec::new(),
+        verified_aliases: Vec::new(),
+    })
 }
 
 async fn health() -> impl IntoResponse {
     success(Health { status: "ok" })
 }
 
-async fn iam(State(state): State<AppState>) -> impl IntoResponse {
-    success(IamInfo { app_id: state.identity.app_id().to_owned() })
+async fn accounts(State(state): State<AppState>) -> impl IntoResponse {
+    success(AccountsInfo { app_id: state.identity.app_id().to_owned() })
 }
 
 async fn exchange_auth(
@@ -759,19 +711,10 @@ async fn exchange_auth(
     payload: Result<Json<AuthExchangeRequest>, JsonRejection>,
 ) -> Result<impl IntoResponse, ApiFailure> {
     let request = json_payload(payload)?;
-    if state.identity.is_testing() {
-        request.validate_testing().map_err(ApiFailure::validation)?;
-    } else {
-        request.validate().map_err(ApiFailure::validation)?;
-    }
+    request.validate().map_err(ApiFailure::validation)?;
+    login::claim_token(&state, "exchange", &request.short_lived_token).await?;
     let requested_org = request.org_id;
-    // A test actor is reusable: another login needs a new token family after
-    // logout/rotation, whereas a single-use SLT must retain replay recovery.
-    let idempotency_key = if state.identity.is_testing() && !request.short_lived_token.starts_with("oac_") {
-        Uuid::new_v4().to_string()
-    } else {
-        stable_idempotency("exchange", &request.short_lived_token, requested_org.as_deref().unwrap_or("unscoped"))
-    };
+    let idempotency_key = Uuid::new_v4().to_string();
     let exchanged = state
         .identity
         .exchange_short_lived_token(ExchangeRequest {
@@ -793,12 +736,11 @@ async fn refresh_auth(
 ) -> Result<impl IntoResponse, ApiFailure> {
     let request = json_payload(payload)?;
     request.validate().map_err(ApiFailure::validation)?;
+    login::claim_token(&state, "refresh", &request.refresh_token).await?;
     let exchanged = state
         .identity
         .refresh(RefreshRequest {
-            // IAM rotates the family regardless of organization; one retry key per token
-            // lets the same rotation replay under any selected organization instead of
-            // tripping refresh-token reuse detection.
+            // Accounts rotates once; the local claim above prevents upstream replay.
             idempotency_key: stable_idempotency("refresh", &request.refresh_token, "any-organization"),
             refresh_token: request.refresh_token,
             required_org_id: request.org_id,
@@ -814,10 +756,6 @@ async fn refresh_auth(
 async fn auth_session(state: &AppState, exchanged: ExchangedAuth) -> Result<AuthSession, ApiFailure> {
     let identity = resolve_identity(state, &exchanged.identity).await?;
     let org = Org { id: exchanged.identity.org_id.clone(), name: exchanged.identity.org_id.clone() };
-    // IAM's exchange `scope` is the webhook event catalogue, not a list of
-    // operations the resulting OAT may perform. Organization-bound OAT
-    // introspection and membership are therefore the authorization authority.
-    let _iam_webhook_scope = exchanged.scope;
     Ok(AuthSession {
         access_token: exchanged.access_token,
         refresh_token: exchanged.refresh_token,
@@ -863,16 +801,35 @@ async fn get_profile(
     Ok(success(state.store.profile(&scope.org_id, &scope.identity, &profile_id).await.map_err(ApiFailure::from)?))
 }
 
+async fn resolve_access(
+    state: &AppState,
+    access: &silicon_browser_shared::AccessList,
+) -> Result<silicon_browser_shared::AccessList, ApiFailure> {
+    let mut resolved = Vec::with_capacity(access.len());
+    // Resolve current handles at write time; every persisted grant contains immutable authority.
+    for entry in access.iter() {
+        let selector = entry.strip_prefix('@').ok_or_else(|| {
+            ApiFailure::field(
+                "access",
+                "Accounts has no membership tags; share with @c:handle, @si:handle or @account-uuid",
+            )
+        })?;
+        resolved.push(format!("@{}", state.identity.resolve_account_id(selector).await?));
+    }
+    silicon_browser_shared::AccessList::new(resolved).map_err(ApiFailure::validation)
+}
+
 async fn create_profile(
     State(state): State<AppState>,
     scope: Scope,
     payload: Result<Json<ProfileCreate>, JsonRejection>,
 ) -> Result<impl IntoResponse, ApiFailure> {
-    let request = json_payload(payload)?;
+    let mut request = json_payload(payload)?;
     request.validate().map_err(ApiFailure::validation)?;
     if !state.proxy_locations.iter().any(|location| location.code.eq_ignore_ascii_case(request.location.trim())) {
         return Err(ApiFailure::field("location", "location is not supported by the configured browser provider"));
     }
+    request.access = resolve_access(&state, &request.access).await?;
     let reserved = state
         .store
         .reserve_profile(&scope.org_id, &scope.identity, &request, Utc::now())
@@ -967,11 +924,14 @@ async fn update_profile(
     Path(profile_id): Path<String>,
     payload: Result<Json<ProfileUpdate>, JsonRejection>,
 ) -> Result<impl IntoResponse, ApiFailure> {
-    let request = json_payload(payload)?;
+    let mut request = json_payload(payload)?;
     request.validate().map_err(ApiFailure::validation)?;
     let profile = state.store.profile(&scope.org_id, &scope.identity, &profile_id).await.map_err(ApiFailure::from)?;
     if !scope.identity.matches_principal(&profile.owner_id) {
         return Err(ApiFailure::forbidden("only the profile owner may update it"));
+    }
+    if let Some(access) = &request.access {
+        request.access = Some(resolve_access(&state, access).await?);
     }
     if request.name.is_some() {
         let provider_id = state
@@ -1023,7 +983,15 @@ async fn list_sessions(
     query: Result<Query<FilterQuery>, QueryRejection>,
 ) -> Result<impl IntoResponse, ApiFailure> {
     let query = query_payload(query)?;
-    let filter = parse_session_filter(query.filter.as_deref())?;
+    let mut filter = parse_session_filter(query.filter.as_deref())?;
+    if let Some(filter) = &mut filter {
+        for predicate in &mut filter.predicates {
+            if let SessionPredicate::For(selector) = predicate {
+                *selector = state.identity.resolve_account_id(selector).await?;
+            }
+        }
+    }
+
     let mut sessions = state.store.sessions(&scope.org_id, &scope.identity).await.map_err(ApiFailure::from)?;
     if let Some(filter) = filter {
         sessions.retain(|session| filter.matches(session, &scope.identity.id));
@@ -1051,7 +1019,6 @@ async fn create_session(
 ) -> Result<impl IntoResponse, ApiFailure> {
     let request = json_payload(payload)?;
     request.validate().map_err(ApiFailure::validation)?;
-    let delivery_binding = state.require_recording_authorization(&scope).await?;
     // Resolve the visible, active profile before reserving its exclusive
     // session slot. A failed lookup therefore cannot strand a `starting` row.
     // reserve_session repeats the state/access check atomically to close the
@@ -1073,16 +1040,6 @@ async fn create_session(
         .reserve_session(&scope.org_id, &scope.identity, &request, Utc::now())
         .await
         .map_err(ApiFailure::from)?;
-    if let Some((principal, membership)) = delivery_binding
-        && let Err(error) =
-            state.store.bind_session_delivery_owner(&scope.org_id, &reserved.id, &principal, &membership).await
-    {
-        let _ = state
-            .store
-            .fail_session(&scope.org_id, &reserved.id, "recording authorization could not be saved", Utc::now())
-            .await;
-        return Err(ApiFailure::from(error));
-    }
     let provider = match state
         .browser
         .start_browser(StartBrowser {
@@ -1247,8 +1204,8 @@ async fn live_session(
         session_id: session.id,
         // Fragments are never sent in HTTP requests. The authenticated web UI
         // can explicitly redeem this TTL-bounded grant later without putting a
-        // provider URL or IAM bearer in browser history and access logs.
-        // The grant opens only in its issuing organization. One IAM sign-in can reach
+        // provider URL or Accounts bearer in browser history and access logs.
+        // The grant opens only in its issuing organization. Each Accounts sign-in reaches
         // several, so the link names it for the web UI to select before redeeming.
         url: format!(
             "{}/sessions/{session_id}/live#grant={grant}&org={}{}",
@@ -1372,7 +1329,15 @@ async fn list_recordings(
     query: Result<Query<FilterQuery>, QueryRejection>,
 ) -> Result<impl IntoResponse, ApiFailure> {
     let query = query_payload(query)?;
-    let filter = parse_recording_filter(query.filter.as_deref())?;
+    let mut filter = parse_recording_filter(query.filter.as_deref())?;
+    if let Some(filter) = &mut filter {
+        for predicate in &mut filter.predicates {
+            if let RecordingPredicate::For(selector) = predicate {
+                *selector = state.identity.resolve_account_id(selector).await?;
+            }
+        }
+    }
+
     Ok(success(
         state
             .store
@@ -1401,7 +1366,7 @@ async fn trash_recording(
     scope: Scope,
     Path(session_id): Path<String>,
 ) -> Result<impl IntoResponse, ApiFailure> {
-    // Hide this recording in Browser. Briefcase owns retention and has no OBO deletion.
+    // Hide this recording in Browser; its provider controls remote retention.
     Ok(success(
         state
             .store
@@ -1427,39 +1392,24 @@ async fn list_usage(
     query: Result<Query<FilterQuery>, QueryRejection>,
 ) -> Result<impl IntoResponse, ApiFailure> {
     let query = query_payload(query)?;
-    let filter = parse_usage_filter(query.filter.as_deref())?;
+    let mut filter = parse_usage_filter(query.filter.as_deref())?;
+    if let Some(filter) = &mut filter {
+        for predicate in &mut filter.predicates {
+            if let UsagePredicate::For(selector) = predicate {
+                *selector = state.identity.resolve_account_id(selector).await?;
+            }
+        }
+    }
+
     Ok(success(
         state.store.usage_list(&scope.org_id, &scope.identity, filter.as_ref()).await.map_err(ApiFailure::from)?,
     ))
 }
 
-async fn org_usage(
-    State(state): State<AppState>,
-    scope: Scope,
-    query: Result<Query<FilterQuery>, QueryRejection>,
-) -> Result<impl IntoResponse, ApiFailure> {
-    let query = query_payload(query)?;
-    let filter = parse_usage_filter(query.filter.as_deref())?;
-    // IAM's application-token introspection proves current membership in
-    // this exact organization, but exposes no billing/admin capability. Until
-    // IAM supplies one, membership authorizes only this non-dimensionalized
-    // aggregate: it contains no session or principal identifiers. In
-    // particular, allow only date windows so this endpoint cannot become an
-    // oracle for usage hidden behind profile/session ACLs. Keep this allowlist
-    // fail-closed if UsageFilter gains more dimensions later.
-    if filter.as_ref().is_some_and(|filter| {
-        filter.predicates.iter().any(|predicate| !matches!(predicate, UsagePredicate::Between { .. }))
-    }) {
-        return Err(ApiFailure::bad_request(
-            "invalid_filter",
-            "organization usage supports only the between date window",
-        ));
-    }
-    let mut response =
-        success(state.store.org_usage_total(&scope.org_id, filter.as_ref()).await.map_err(ApiFailure::from)?)
-            .into_response();
-    response.headers_mut().insert("x-sb-usage-scope", HeaderValue::from_static("organization"));
-    Ok(response)
+async fn org_usage(_scope: Scope) -> Result<Response, ApiFailure> {
+    Err(ApiFailure::forbidden(
+        "Accounts has no organization billing authority. Use usage for sessions visible to your account.",
+    ))
 }
 
 async fn search(
@@ -1612,9 +1562,6 @@ fn available_services(state: &AppState) -> Vec<String> {
         ["profile", "proxy", "session", "recording", "usage"].into_iter().map(str::to_owned).collect::<Vec<_>>();
     if state.search.is_some() {
         services.extend(["search".into(), "fetch".into()]);
-    }
-    if state.recording_delivery.is_some() {
-        services.push("recording_delivery".into());
     }
     services
 }
@@ -2155,12 +2102,12 @@ impl From<IdentityError> for ApiFailure {
             IdentityError::NoOrganization => Self::new(
                 StatusCode::FORBIDDEN,
                 "organization_required",
-                "your IAM sign-in did not give Browser access to any organization; sign in again and choose at least one",
+                "choose the Browser workspace for this sign-in",
             ),
             IdentityError::CapabilityUnavailable(_) => Self::new(
                 StatusCode::NOT_IMPLEMENTED,
                 "identity_capability_unavailable",
-                "IAM cannot provide that identity operation for this token",
+                "Accounts cannot provide that identity operation for this token",
             ),
             IdentityError::InvalidInput { field, reason } => Self::field(field, reason),
             IdentityError::Rejected { status, code, request_id } => {
@@ -2171,7 +2118,7 @@ impl From<IdentityError> for ApiFailure {
                     StatusCode::TOO_MANY_REQUESTS => StatusCode::TOO_MANY_REQUESTS,
                     _ => StatusCode::BAD_GATEWAY,
                 };
-                Self::new(public_status, "iam_rejected", format!("IAM rejected authentication ({code})"))
+                Self::new(public_status, "accounts_rejected", format!("Accounts rejected authentication ({code})"))
                     .with_diagnostic(FailureDiagnostic { upstream_request_id: request_id, ..Default::default() })
             }
             IdentityError::Upstream { kind, retry_after, request_id } => {
@@ -2180,14 +2127,15 @@ impl From<IdentityError> for ApiFailure {
                 } else {
                     StatusCode::SERVICE_UNAVAILABLE
                 };
-                let mut failure = Self::new(status, "iam_unavailable", "identity service is temporarily unavailable")
-                    .with_diagnostic(FailureDiagnostic { upstream_request_id: request_id, ..Default::default() });
+                let mut failure =
+                    Self::new(status, "accounts_unavailable", "identity service is temporarily unavailable")
+                        .with_diagnostic(FailureDiagnostic { upstream_request_id: request_id, ..Default::default() });
                 failure.retry_after_ms =
                     retry_after.map(|duration| duration.as_millis().min(u128::from(u64::MAX)) as u64);
                 failure
             }
             IdentityError::Contract { operation, reason } => {
-                Self::new(StatusCode::BAD_GATEWAY, "iam_contract", "identity service returned an invalid response")
+                Self::new(StatusCode::BAD_GATEWAY, "accounts_contract", "identity service returned an invalid response")
                     .with_diagnostic(FailureDiagnostic {
                         operation: Some(operation),
                         reason: Some(reason),
@@ -2288,7 +2236,6 @@ pub fn spawn_ttl_reaper(state: AppState, interval: Duration) -> tokio::task::Joi
     tokio::spawn(async move {
         let ttl_state = state.clone();
         let profile_state = state.clone();
-        let delivery_state = state.clone();
         let ttl_loop = async move {
             let mut timer = tokio::time::interval(interval);
             timer.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
@@ -2319,30 +2266,14 @@ pub fn spawn_ttl_reaper(state: AppState, interval: Duration) -> tokio::task::Joi
                 }
             }
         };
-        let delivery_loop = async move {
-            let mut timer = tokio::time::interval(interval);
-            timer.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
-            loop {
-                timer.tick().await;
-                if let Err(error) = delivery_state.deliver_recordings_once().await {
-                    tracing::error!(error = %error, "recording delivery iteration failed");
-                }
-            }
-        };
-        tokio::join!(ttl_loop, profile_loop, recording_loop, delivery_loop);
+        tokio::join!(ttl_loop, profile_loop, recording_loop);
     })
 }
 
 #[cfg(test)]
 mod tests {
-    mod testing_routing {
-        include!("server/testing_tests.rs");
-    }
     mod local_control {
         include!("server/local_control_tests.rs");
-    }
-    mod delivery_integration {
-        include!("server/delivery_tests.rs");
     }
     mod usage_limits_contract {
         include!("server/usage_limits_tests.rs");
@@ -2994,29 +2925,116 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn auth_exchange_without_org_is_forwarded_to_iam() {
+    async fn hosted_login_binds_pkce_fixed_redirect_state_and_one_shot_redemption() {
+        use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
+        let fixture = fixture().await;
+        let (status, _, body) =
+            request(&fixture.app, "POST", "/api/v1/auth/attempts", None, Some(json!({"identity_kind":"carbon"}))).await;
+        assert_eq!(status, StatusCode::OK);
+        let attempt = data(&body);
+        let id = attempt["attempt_id"].as_str().unwrap();
+        let nonce = attempt["state"].as_str().unwrap();
+        assert!(nonce.starts_with(&format!("{id}.")));
+        let authorize = Url::parse(attempt["authorize_url"].as_str().unwrap()).unwrap();
+        let params: std::collections::HashMap<_, _> = authorize.query_pairs().into_owned().collect();
+        assert_eq!(params["redirect_uri"], "https://browser.example/auth/callback");
+        assert_eq!(params["state"], nonce);
+        assert_eq!(params["code_challenge_method"], "S256");
+        let sealed: String = sqlx::query_scalar("SELECT code_verifier_enc FROM accounts_login_attempts WHERE id=?")
+            .bind(id)
+            .fetch_one(fixture.store.pool())
+            .await
+            .unwrap();
+        let verifier = fixture.state.secrets.open_for(&format!("accounts-login:{id}"), &sealed).unwrap();
+        assert!(!sealed.contains(&verifier));
+        assert_eq!(params["code_challenge"], URL_SAFE_NO_PAD.encode(Sha256::digest(verifier.as_bytes())));
+        let mut account = principal("8HV", IdentityKind::Carbon, false);
+        account.public_id = Some("c:ada".into());
+        account.org_id = "browser".into();
+        account.membership_id = "browser:8HV".into();
+        fixture.identity.allow_exchange(
+            "sac_once",
+            "",
+            ExchangedAuth {
+                access_token: "header.payload.signature".into(),
+                refresh_token: "sar_new".into(),
+                identity: account,
+                scope: "profile".into(),
+            },
+        );
+        let path = format!("/api/v1/auth/attempts/{id}/exchange");
+        let payload = json!({"state":nonce,"code":"sac_once"});
+        assert_eq!(
+            request(&fixture.app, "POST", &path, None, Some(json!({"state":"wrong","code":"sac_once"}))).await.0,
+            StatusCode::UNAUTHORIZED
+        );
+        let (status, headers, body) = request(&fixture.app, "POST", &path, None, Some(payload.clone())).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(headers["cache-control"], "no-store");
+        assert_eq!(data(&body)["identity"]["id"], "8HV");
+        assert_eq!(request(&fixture.app, "POST", &path, None, Some(payload)).await.0, StatusCode::UNAUTHORIZED);
+        assert_eq!(
+            request(&fixture.app, "POST", "/api/v1/auth/attempts", None, Some(json!({"identity_kind":"silicon"})))
+                .await
+                .0,
+            StatusCode::BAD_REQUEST
+        );
+    }
+
+    #[tokio::test]
+    async fn token_operations_are_consumed_even_after_an_uncertain_upstream_result() {
+        let fixture = fixture().await;
+        fixture.identity.fail_exchange(
+            "slt_uncertain",
+            "",
+            IdentityError::Upstream { kind: UpstreamFailure::Transport, request_id: None, retry_after: None },
+        );
+        let payload = json!({"short_lived_token":"slt_uncertain"});
+        assert_eq!(
+            request(&fixture.app, "POST", "/api/v1/auth/exchange", None, Some(payload.clone())).await.0,
+            StatusCode::SERVICE_UNAVAILABLE
+        );
+        let (status, _, body) = request(&fixture.app, "POST", "/api/v1/auth/exchange", None, Some(payload)).await;
+        assert_eq!(status, StatusCode::CONFLICT);
+        assert_eq!(
+            serde_json::from_slice::<Value>(&body).unwrap()["error"]["code"],
+            "accounts_token_already_submitted"
+        );
+        let refresh = json!({"refresh_token":"sar_uncertain","org_id":"browser"});
+        assert_eq!(
+            request(&fixture.app, "POST", "/api/v1/auth/refresh", None, Some(refresh.clone())).await.0,
+            StatusCode::UNAUTHORIZED
+        );
+        assert_eq!(
+            request(&fixture.app, "POST", "/api/v1/auth/refresh", None, Some(refresh)).await.0,
+            StatusCode::CONFLICT
+        );
+    }
+
+    #[tokio::test]
+    async fn auth_exchange_without_org_is_forwarded_to_accounts() {
         let fixture = fixture().await;
         let (status, _, _body) = request(
             &fixture.app,
             "POST",
             "/api/v1/auth/exchange",
             None,
-            Some(json!({"short_lived_token":"oac_single_use"})),
+            Some(json!({"short_lived_token":"slt_single_use"})),
         )
         .await;
         assert_eq!(status, StatusCode::UNAUTHORIZED);
     }
 
     #[tokio::test]
-    async fn auth_exchange_without_any_selected_organization_is_actionable_not_an_iam_contract_failure() {
+    async fn auth_exchange_without_workspace_is_actionable() {
         let fixture = fixture().await;
-        fixture.identity.fail_exchange("oac_single_use", "", IdentityError::NoOrganization);
+        fixture.identity.fail_exchange("slt_single_use", "", IdentityError::NoOrganization);
         let (status, _, body) = request(
             &fixture.app,
             "POST",
             "/api/v1/auth/exchange",
             None,
-            Some(json!({"short_lived_token":"oac_single_use"})),
+            Some(json!({"short_lived_token":"slt_single_use"})),
         )
         .await;
         assert_eq!(status, StatusCode::FORBIDDEN);
@@ -3026,7 +3044,7 @@ mod tests {
     #[test]
     fn identity_failures_keep_public_errors_and_carry_only_fixed_diagnostics() {
         let contract = ApiFailure::from(IdentityError::Contract { operation: "token introspection", reason: "why" });
-        assert_eq!((contract.status, contract.code.as_str()), (StatusCode::BAD_GATEWAY, "iam_contract"));
+        assert_eq!((contract.status, contract.code.as_str()), (StatusCode::BAD_GATEWAY, "accounts_contract"));
         assert_eq!(&*contract.message, "identity service returned an invalid response");
         let diagnostic = contract.diagnostic.as_ref().unwrap();
         assert_eq!((diagnostic.operation, diagnostic.reason), (Some("token introspection"), Some("why")));
@@ -3044,15 +3062,16 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn auth_exchange_persists_public_identity_projection_without_exposing_secrets() {
+    async fn auth_exchange_preserves_stable_identity_without_mutable_projection() {
         let fixture = fixture().await;
-        let exchanged_principal = principal("si:public-owner", IdentityKind::Silicon, true);
+        let mut exchanged_principal = principal("K1E", IdentityKind::Silicon, false);
+        exchanged_principal.public_id = Some("si:public-owner".into());
         fixture.identity.allow_exchange(
-            "oac_single_use",
+            "slt_single_use",
             "org-1",
             ExchangedAuth {
                 access_token: "oat_projected".into(),
-                refresh_token: "ort_projected".into(),
+                refresh_token: "sar_projected".into(),
                 identity: exchanged_principal.clone(),
                 scope: "app".into(),
             },
@@ -3062,57 +3081,54 @@ mod tests {
             "POST",
             "/api/v1/auth/exchange",
             None,
-            Some(json!({"short_lived_token":"oac_single_use","org_id":"org-1"})),
+            Some(json!({"short_lived_token":"slt_single_use","org_id":"org-1"})),
         )
         .await;
         assert_eq!(status, StatusCode::OK);
         assert_eq!(headers["cache-control"], "no-store");
-        assert_eq!(data(&body)["identity"]["id"], "si:public-owner");
+        assert_eq!(data(&body)["identity"]["id"], "K1E");
         assert_eq!(
             data(&body)["services"],
             json!(["profile", "proxy", "session", "recording", "usage", "search", "fetch"])
         );
 
         let mut later = exchanged_principal;
-        later.public_id = None;
+        later.public_id = Some("si:renamed-owner".into());
         fixture.identity.allow_identity("oat_projected", later);
         let (status, _, body) =
             request(&fixture.app, "GET", "/api/v1/me", Some(("oat_projected", "org-1")), None).await;
         assert_eq!(status, StatusCode::OK);
-        assert_eq!(data(&body)["id"], "si:public-owner");
+        assert_eq!(data(&body)["id"], "K1E");
+        assert_eq!(data(&body)["name"], "si:renamed-owner");
+        let projections: i64 = sqlx::query_scalar("SELECT count(*) FROM identity_projection")
+            .fetch_one(fixture.store.pool())
+            .await
+            .unwrap();
+        assert_eq!(projections, 0);
         let encoded = String::from_utf8(body).unwrap();
         assert!(!encoded.contains("oat_projected"));
-        assert!(!encoded.contains("ort_projected"));
+        assert!(!encoded.contains("sar_projected"));
     }
 
     #[tokio::test]
-    async fn live_membership_tags_grant_and_revoke_profile_access_without_stale_projection() {
+    async fn accounts_tags_never_grant_profile_access() {
         let fixture = fixture().await;
         let (status, _, _) = request(
             &fixture.app,
             "POST",
             "/api/v1/profiles",
             Some(("oat_owner", "org-1")),
-            Some(json!({"name":"Tag protected", "location":"in", "access":["growth"]})),
+            Some(json!({"name":"Tag protected","location":"in","access":["growth"]})),
         )
         .await;
-        assert_eq!(status, StatusCode::OK);
+        assert_eq!(status, StatusCode::BAD_REQUEST);
         let mut viewer = principal("si:tagged-viewer", IdentityKind::Silicon, true);
-        for (tags, expected_count) in [
-            (None, 0),
-            (Some(vec!["growth".into()]), 1),
-            (Some(Vec::new()), 0),
-            (Some(vec!["growth".into()]), 1),
-            (None, 0),
-            (Some(vec!["@si:owner-1".into()]), 0),
-        ] {
-            viewer.tags = tags;
-            fixture.identity.allow_identity("oat_tagged", viewer.clone());
-            let (status, _, body) =
-                request(&fixture.app, "GET", "/api/v1/profiles", Some(("oat_tagged", "org-1")), None).await;
-            assert_eq!(status, StatusCode::OK);
-            assert_eq!(data(&body).as_array().unwrap().len(), expected_count);
-        }
+        viewer.tags = Some(vec!["growth".into()]);
+        fixture.identity.allow_identity("oat_tagged", viewer);
+        let (status, _, body) =
+            request(&fixture.app, "GET", "/api/v1/profiles", Some(("oat_tagged", "org-1")), None).await;
+        assert_eq!(status, StatusCode::OK);
+        assert!(data(&body).as_array().unwrap().is_empty());
     }
 
     #[tokio::test]
@@ -4013,15 +4029,13 @@ mod tests {
         assert_eq!(usage.cost.proxy_unclassified.micros, 100_000);
         assert_eq!(usage.cost.total.micros, 433_334);
 
-        let (status, headers, _) = request(&fixture.app, "GET", "/api/v1/usage/org", auth, None).await;
-        assert_eq!(status, StatusCode::OK);
-        assert_eq!(headers["x-sb-usage-scope"], "organization");
+        let (status, _, _) = request(&fixture.app, "GET", "/api/v1/usage/org", auth, None).await;
+        assert_eq!(status, StatusCode::FORBIDDEN);
     }
 
-    /// Test group: an active IAM organization member can see the true
-    /// aggregate bill without gaining a session list or an identity oracle.
+    /// Browser accounts have no organization-wide billing authority.
     #[tokio::test]
-    async fn organization_usage_includes_hidden_sessions_but_not_other_orgs() {
+    async fn organization_usage_refuses_global_cost_disclosure() {
         async fn seed(
             fixture: &Fixture,
             org_id: &str,
@@ -4088,25 +4102,10 @@ mod tests {
         assert_eq!(status, StatusCode::OK);
         assert_eq!(data(&body), json!([]), "session usage must remain ACL-scoped");
 
-        let (status, headers, body) = request(&fixture.app, "GET", "/api/v1/usage/org", auth, None).await;
-        assert_eq!(status, StatusCode::OK);
-        assert_eq!(headers["x-sb-usage-scope"], "organization");
-        assert_eq!(data(&body)["sessions"], 2);
-        assert_eq!(data(&body)["browser_seconds"], 180);
-        assert_eq!(data(&body)["cost"]["total"]["micros"], 300_000);
-
-        let date = started_at.format("%d-%m-%Y");
-        let uri = format!("/api/v1/usage/org?filter=between:{date}%3D{date}");
-        let (status, _, body) = request(&fixture.app, "GET", &uri, auth, None).await;
-        assert_eq!(status, StatusCode::OK);
-        assert_eq!(data(&body)["sessions"], 2);
-
-        let (status, _, body) =
-            request(&fixture.app, "GET", "/api/v1/usage/org?filter=for:%40si:hidden-owner", auth, None).await;
-        assert_eq!(status, StatusCode::BAD_REQUEST);
+        let (status, _, body) = request(&fixture.app, "GET", "/api/v1/usage/org", auth, None).await;
+        assert_eq!(status, StatusCode::FORBIDDEN);
         let error: Value = serde_json::from_slice(&body).unwrap();
-        assert_eq!(error["error"]["code"], "invalid_filter");
-        assert_eq!(error["error"]["message"], "organization usage supports only the between date window");
+        assert!(!error.to_string().contains("300000"));
     }
 
     #[tokio::test]

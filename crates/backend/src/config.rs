@@ -15,18 +15,12 @@ pub struct Config {
     pub origin: String,
     pub database_url: String,
     pub encryption_key: [u8; 32],
-    pub iam_url: String,
-    pub iam_app_id: String,
-    pub iam_app_secret: String,
-    pub iam_test_environment_key: Option<String>,
-    pub iam_webhook_secret: Option<String>,
-    pub iam_webhook_key_version: i64,
+    pub accounts_url: String,
+    pub accounts_app_id: String,
+    pub accounts_app_secret: String,
+    pub accounts_webhook_secret: Option<String>,
     pub browser_use_api_key: String,
     pub tinyfish_api_keys: Vec<String>,
-    pub briefcase_url: Option<String>,
-    pub briefcase_app_id: Option<String>,
-    pub briefcase_test_environment_key: Option<String>,
-    pub recording_max_bytes: usize,
 }
 
 impl Config {
@@ -39,10 +33,12 @@ impl Config {
         let port =
             var("PORT").unwrap_or_else(|| "8080".into()).parse::<u16>().map_err(|_| "PORT must be a port number")?;
         let origin = http_url(&need("SB_ORIGIN")?, "SB_ORIGIN")?;
-        let iam_url = http_url(
-            &var("SILICON_IAM_URL").unwrap_or_else(|| "https://backend.iam.teamofsilicons.com".into()),
-            "SILICON_IAM_URL",
+        let accounts_url = http_url(
+            &var("ACCOUNTS_URL").unwrap_or_else(|| "https://accounts.teamofsilicons.com".into()),
+            "ACCOUNTS_URL",
         )?;
+        let accounts_app_id = var("ACCOUNTS_APP_ID").unwrap_or_else(|| "browser".into());
+        app_id(&accounts_app_id, "ACCOUNTS_APP_ID").map_err(|_| "ACCOUNTS_APP_ID must be a bare application ID")?;
         let key = need("SB_ENCRYPTION_KEY")?;
         if key.len() != 64 || !key.bytes().all(|byte| byte.is_ascii_hexdigit()) {
             return Err("SB_ENCRYPTION_KEY must be 64 hexadecimal characters".into());
@@ -57,55 +53,18 @@ impl Config {
             .filter(|key| !key.is_empty())
             .map(str::to_owned)
             .collect();
-        let briefcase_url = var("BRIEFCASE_URL")
-            .filter(|value| !value.trim().is_empty())
-            .map(|value| http_url(&value, "BRIEFCASE_URL"))
-            .transpose()?;
-        let briefcase_app_id = var("BRIEFCASE_APP_ID").filter(|value| !value.trim().is_empty());
-        let iam_app_id = need("IAM_APP_ID")?;
-        for (name, value) in [("IAM_APP_ID", Some(&iam_app_id)), ("BRIEFCASE_APP_ID", briefcase_app_id.as_ref())] {
-            if value.is_some_and(|value| app_id(value, name).is_err()) {
-                return Err(format!("{name} must be a bare application ID; migrate configuration before startup"));
-            }
-        }
-        if briefcase_url.is_some() != briefcase_app_id.is_some() {
-            return Err("BRIEFCASE_URL and BRIEFCASE_APP_ID must be configured together".into());
-        }
-        if briefcase_url.is_some()
-            && var("IAM_TEST_ENVIRONMENT_KEY").is_some() != var("BRIEFCASE_TEST_ENVIRONMENT_KEY").is_some()
-        {
-            return Err(
-                "recording delivery requires both the IAM test root key and Briefcase test app secret, or neither"
-                    .into(),
-            );
-        }
-        let recording_max_bytes = var("SB_RECORDING_MAX_BYTES")
-            .unwrap_or_else(|| (512 * 1024 * 1024).to_string())
-            .parse::<usize>()
-            .map_err(|_| "SB_RECORDING_MAX_BYTES must be a positive byte count")?;
-        if recording_max_bytes == 0 || recording_max_bytes as u64 > 5 * 1024_u64.pow(4) {
-            return Err("SB_RECORDING_MAX_BYTES must be between 1 byte and 5 TiB".into());
-        }
         Ok(Self {
             bind: SocketAddr::from(([0, 0, 0, 0], port)),
             origin,
-            database_url: var("SB_DATABASE_URL").unwrap_or_else(|| "sqlite://silicon-browser.db?mode=rwc".into()),
+            database_url: var("SB_DATABASE_URL")
+                .unwrap_or_else(|| "sqlite://silicon-browser-accounts.db?mode=rwc".into()),
             encryption_key,
-            iam_url,
-            iam_app_id,
-            iam_app_secret: need("IAM_APP_SECRET")?,
-            iam_test_environment_key: var("IAM_TEST_ENVIRONMENT_KEY"),
-            iam_webhook_secret: var("IAM_WEBHOOK_SECRET").filter(|value| !value.is_empty()),
-            iam_webhook_key_version: var("IAM_WEBHOOK_KEY_VERSION")
-                .unwrap_or_else(|| "1".into())
-                .parse()
-                .map_err(|_| "IAM_WEBHOOK_KEY_VERSION must be an integer")?,
+            accounts_url,
+            accounts_app_id,
+            accounts_app_secret: need("ACCOUNTS_APP_SECRET")?,
+            accounts_webhook_secret: var("ACCOUNTS_WEBHOOK_SECRET").filter(|value| !value.is_empty()),
             browser_use_api_key: need("BROWSER_USE_API_KEY")?,
             tinyfish_api_keys,
-            briefcase_url,
-            briefcase_app_id,
-            briefcase_test_environment_key: var("BRIEFCASE_TEST_ENVIRONMENT_KEY"),
-            recording_max_bytes,
         })
     }
 }
@@ -147,98 +106,36 @@ pub fn dotenv<E: Fn(&str) -> Option<String>>(path: &Path, env: E) -> impl Fn(&st
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    fn values() -> HashMap<&'static str, &'static str> {
-        HashMap::from([
-            ("PORT", "8081"),
-            ("SB_ORIGIN", "https://browser.example/"),
+    #[test]
+    fn accounts_configuration_needs_only_current_auth_and_provider_secrets() {
+        let values = HashMap::from([
+            ("SB_ORIGIN", "https://browser.example"),
             ("SB_ENCRYPTION_KEY", "00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff"),
-            ("IAM_APP_ID", "browser"),
-            ("IAM_APP_SECRET", "ask_secret"),
-            ("BROWSER_USE_API_KEY", "bu_secret"),
-            ("TINYFISH_API_KEYS", "first, second"),
-        ])
-    }
-
-    #[test]
-    fn configuration_is_validated_and_normalized() {
-        let values = values();
+            ("ACCOUNTS_APP_SECRET", "sa_app_private"),
+            ("BROWSER_USE_API_KEY", "bu_private"),
+        ]);
         let config = Config::from_vars(|name| values.get(name).map(ToString::to_string)).unwrap();
-        assert_eq!(config.bind.port(), 8081);
-        assert_eq!(config.origin, "https://browser.example");
-        assert_eq!(config.tinyfish_api_keys, ["first", "second"]);
-        assert_eq!(config.encryption_key[..3], [0x00, 0x11, 0x22]);
-        assert!(config.iam_test_environment_key.is_none());
+        assert_eq!(config.accounts_url, "https://accounts.teamofsilicons.com");
+        assert_eq!(config.accounts_app_id, "browser");
+        assert_eq!(config.database_url, "sqlite://silicon-browser-accounts.db?mode=rwc");
+        assert!(!config.database_url.contains("silicon-browser.db"));
     }
-
     #[test]
-    fn test_environment_key_is_forwarded_without_silently_falling_back_to_production() {
-        for key in ["test-environment-key", ""] {
-            let mut values = values();
-            values.insert("IAM_TEST_ENVIRONMENT_KEY", key);
-            let config = Config::from_vars(|name| values.get(name).map(ToString::to_string)).unwrap();
-            assert_eq!(config.iam_test_environment_key.as_deref(), Some(key));
-        }
-    }
-
-    #[test]
-    fn configuration_names_the_first_bad_secret_without_echoing_it() {
-        let mut values = values();
-        values.insert("SB_ENCRYPTION_KEY", "not-a-key");
-        let error = Config::from_vars(|name| values.get(name).map(ToString::to_string)).err().unwrap();
-        assert_eq!(error, "SB_ENCRYPTION_KEY must be 64 hexadecimal characters");
-        assert!(!error.contains("not-a-key"));
-    }
-
-    #[test]
-    fn dotenv_never_overrides_the_process_environment() {
-        let directory = tempfile::tempdir().unwrap();
-        let file = directory.path().join(".env");
-        std::fs::write(&file, "PORT=9000\nSB_ORIGIN='https://file.example/'\n").unwrap();
-        let read = dotenv(&file, |name| (name == "PORT").then(|| "8000".into()));
+    fn dotenv_never_overrides_process_environment() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join(".env");
+        std::fs::write(&path, "PORT=9000\nSB_ORIGIN='https://file.example/'\n").unwrap();
+        let read = dotenv(&path, |name| (name == "PORT").then(|| "8000".into()));
         assert_eq!(read("PORT").as_deref(), Some("8000"));
         assert_eq!(read("SB_ORIGIN").as_deref(), Some("https://file.example/"));
     }
-
     #[test]
-    fn service_urls_cannot_embed_credentials_or_query_secrets() {
-        for origin in ["https://user:secret@browser.example", "https://browser.example?token=secret"] {
-            let mut values = values();
-            values.insert("SB_ORIGIN", origin);
-            let error = Config::from_vars(|name| values.get(name).map(ToString::to_string)).err().unwrap();
-            assert_eq!(error, "SB_ORIGIN must be an HTTP(S) URL");
-            assert!(!error.contains("secret"));
+    fn service_urls_refuse_plaintext_and_embedded_secrets() {
+        for value in
+            ["http://accounts.example", "https://user:secret@accounts.example", "https://accounts.example?secret=x"]
+        {
+            assert!(http_url(value, "ACCOUNTS_URL").is_err());
         }
-    }
-
-    #[test]
-    fn service_urls_require_tls_except_for_loopback_development() {
-        for (name, value) in [
-            ("SB_ORIGIN", "http://browser.example"),
-            ("SILICON_IAM_URL", "http://iam.example"),
-            ("BRIEFCASE_URL", "http://briefcase.example"),
-        ] {
-            let mut values = values();
-            values.insert(name, value);
-            let error = Config::from_vars(|key| values.get(key).map(ToString::to_string)).err().unwrap();
-            assert_eq!(error, format!("{name} must use HTTPS unless its host is loopback"));
-        }
-
-        let mut values = values();
-        values.insert("SB_ORIGIN", "http://localhost:3000");
-        values.insert("SILICON_IAM_URL", "http://127.0.0.1:8081");
-        values.insert("BRIEFCASE_URL", "http://[::1]:8082");
-        values.insert("BRIEFCASE_APP_ID", "briefcase");
-        assert!(Config::from_vars(|key| values.get(key).map(ToString::to_string)).is_ok());
-    }
-
-    #[test]
-    fn legacy_application_configuration_requires_migration() {
-        for name in ["IAM_APP_ID", "BRIEFCASE_APP_ID"] {
-            let mut values = values();
-            values.insert(name, "tos>browser");
-            let error = Config::from_vars(|key| values.get(key).map(ToString::to_string)).err().unwrap();
-            assert_eq!(error, format!("{name} must be a bare application ID; migrate configuration before startup"));
-        }
+        assert!(http_url("http://127.0.0.1:8081", "ACCOUNTS_URL").is_ok());
     }
 }

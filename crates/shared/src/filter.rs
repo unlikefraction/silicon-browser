@@ -325,7 +325,9 @@ fn stages(value: &str) -> Result<Vec<(usize, String, String)>, FilterError> {
 
 fn principal(key: &str, value: &str) -> Result<String, FilterError> {
     let value = value.trim().strip_prefix('@').unwrap_or(value.trim());
-    actor_id(value, "for").map_err(|error| invalid(key, &error.to_string()))?;
+    if crate::account_id(value, "for").is_err() {
+        actor_id(value, "for").map_err(|error| invalid(key, &error.to_string()))?;
+    }
     Ok(value.to_owned())
 }
 
@@ -523,7 +525,7 @@ mod filter_tests {
         assert!(RecordingFilter::parse("profile:profile/escape").is_err());
         assert!(UsageFilter::parse("between:30-08-2026=01-08-2026").is_err());
         assert!(UsageFilter::parse("between:31-02-2026=01-03-2026").is_err());
-        for old in ["for:@alice", "for:@worker:tos", "for:@@c:alice"] {
+        for old in ["for:@ab", "for:@worker:tos", "for:@@c:alice"] {
             assert!(SessionFilter::parse(old).is_err(), "{old}");
             assert!(RecordingFilter::parse(old).is_err(), "{old}");
             assert!(UsageFilter::parse(old).is_err(), "{old}");

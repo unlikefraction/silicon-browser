@@ -23,22 +23,42 @@ pub trait Validate {
     fn validate(&self) -> Result<(), ValidationError>;
 }
 
-/// Complete IAM actor ID. Organization authority is always a separate field.
+/// Mutable Silicon Accounts display handle; never a durable ownership key.
 pub fn actor_id(value: &str, field: &'static str) -> Result<crate::IdentityKind, ValidationError> {
     let parsed = value
         .strip_prefix("c:")
         .map(|handle| (handle, 30, crate::IdentityKind::Carbon))
-        .or_else(|| value.strip_prefix("si:").map(|handle| (handle, 50, crate::IdentityKind::Silicon)));
+        .or_else(|| value.strip_prefix("si:").map(|handle| (handle, 30, crate::IdentityKind::Silicon)));
     if let Some((handle, max, kind)) = parsed
         && (3..=max).contains(&handle.len())
         && handle.bytes().all(handle_byte)
     {
         return Ok(kind);
     }
-    Err(ValidationError::Invalid { field, reason: "expected c:<carbon-handle> (3–30 characters) or si:<silicon-handle> (3–50 characters), using lowercase letters, digits, _ or -; migrate old selectors or sign in again".into() })
+    Err(ValidationError::Invalid { field, reason: "expected c:<carbon-handle> (3–30 characters) or si:<silicon-handle> (3–30 characters), using lowercase letters, digits, _ or -; migrate old selectors or sign in again".into() })
 }
 
-/// Bare IAM application handle; bundle and release selectors are separate grammars.
+/// Permanent Silicon Accounts UUID. UUIDs are case-sensitive base62 strings.
+pub fn account_id(value: &str, field: &'static str) -> Result<(), ValidationError> {
+    if (3..=128).contains(&value.len()) && value.bytes().all(|byte| byte.is_ascii_alphanumeric()) {
+        return Ok(());
+    }
+    Err(ValidationError::Invalid {
+        field,
+        reason: "expected a permanent Silicon Accounts UUID (3–128 case-sensitive letters or digits)".into(),
+    })
+}
+
+/// Access-token shape only. The backend verifies live authority with Accounts.
+pub fn accounts_access_token(value: &str) -> bool {
+    value.len() <= 16 * 1024
+        && value.split('.').count() == 3
+        && value.split('.').all(|part| {
+            !part.is_empty() && part.bytes().all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-'))
+        })
+}
+
+/// Bare Silicon Apps application handle; bundle and release selectors are separate grammars.
 pub fn app_id(value: &str, field: &'static str) -> Result<(), ValidationError> {
     if (1..=80).contains(&value.len()) && value.as_bytes()[0].is_ascii_lowercase() && value.bytes().all(handle_byte) {
         return Ok(());
@@ -60,7 +80,7 @@ fn public_identifiers_preserve_kinds_and_handle_limits() {
     use crate::IdentityKind::{Carbon, Silicon};
     assert_eq!(actor_id("c:alice0", "id"), Ok(Carbon));
     assert_eq!(actor_id("si:chef", "id"), Ok(Silicon));
-    for (prefix, max) in [("c:", 30), ("si:", 50)] {
+    for (prefix, max) in [("c:", 30), ("si:", 30)] {
         assert!(actor_id(&format!("{prefix}{}", "a".repeat(max)), "id").is_ok());
         assert!(actor_id(&format!("{prefix}{}", "a".repeat(max + 1)), "id").is_err());
     }
@@ -107,4 +127,19 @@ pub(crate) fn identifier(value: &str, field: &'static str) -> Result<(), Validat
 
 pub(crate) fn purpose(value: &str) -> Result<(), ValidationError> {
     bounded(value, "purpose", 2_000)
+}
+
+#[cfg(test)]
+#[test]
+fn accounts_identifiers_are_case_sensitive_and_tokens_are_separate_families() {
+    for id in ["AbC", "aBc123", "000"] {
+        assert!(account_id(id, "id").is_ok());
+    }
+    for id in ["ab", "c:alice", "Ab-c", "abc\n"] {
+        assert!(account_id(id, "id").is_err());
+    }
+    assert!(accounts_access_token("header.payload.signature"));
+    for token in ["oat_legacy", "slt_secret", "sar_secret", "a.b", "a..b", "a.b.c\n"] {
+        assert!(!accounts_access_token(token));
+    }
 }

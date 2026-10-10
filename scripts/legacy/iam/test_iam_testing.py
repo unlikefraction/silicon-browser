@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Opt-in IAM testing smoke: authentication and local data reads, no provider sessions.
+"""Historical IAM testing smoke; unsupported by the current Accounts backend.
 
 Required: SB_TEST_BACKEND (Browser root URL), SB_TEST_APP_SECRET,
 SB_TEST_ACTOR (an existing test actor ID), SB_TEST_ORG.

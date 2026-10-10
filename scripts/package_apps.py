@@ -6,15 +6,18 @@ Pack downloaded target artifacts: --targets DIRECTORY --output ARCHIVE.tar.gz
 Also build the curl installer archives: --standalone-output DIRECTORY
 """
 import argparse
+import gzip
 import hashlib
 import io
 import json
+import os
 from pathlib import Path
 import re
 import shutil
 import struct
 import subprocess
 import tarfile
+import tempfile
 import tomllib
 import urllib.request
 
@@ -40,10 +43,16 @@ LICENSES = {
     "LICENSE-axe-core.txt": "cli/src/native/a11y/LICENSE-axe-core.txt",
     "LICENSE-axe-core-THIRD-PARTY.txt": "cli/src/native/a11y/LICENSE-axe-core-THIRD-PARTY.txt",
 }
+MAX_EXPANDED_SIZE = 1024**3
+MAX_COMPRESSED_SIZE = 512 * 1024**2
+MAX_ENTRIES = 20_000
 
 
 def version():
-    return tomllib.loads((ROOT / "Cargo.toml").read_text())["workspace"]["package"]["version"]
+    value = tomllib.loads((ROOT / "Cargo.toml").read_text())["workspace"]["package"]["version"]
+    if not re.fullmatch(r"(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)", value):
+        raise ValueError("Silicon Apps version must be strict x.y.z without prerelease or build metadata")
+    return value
 
 
 def binaries(target):
@@ -98,15 +107,26 @@ def stage(target, binary, controller, directory):
         if digest is None or hashlib.sha256(data).hexdigest() != digest[1]:
             raise ValueError(f"controller integrity check failed: {asset}")
         (directory / names[1]).write_bytes(data)
-    for name, expected in zip(names, (version(), CONTROLLER_VERSION)):
-        path = directory / name
-        if native_target(regular_bytes(path)) != target:
-            raise ValueError(f"wrong native architecture: {path}")
-        path.chmod(0o755)
-        output = subprocess.check_output([str(path.resolve()), "--version"], text=True).strip()
-        if output.split()[-1:] != [expected] or (name == names[0] and output != f"browser {expected}"):
-            raise ValueError(f"wrong version for {path}: {output}")
-        subprocess.run([str(path.resolve()), "--help"], check=True, stdout=subprocess.DEVNULL)
+    with tempfile.TemporaryDirectory(prefix="browser-package-check-") as home:
+        env = {key: value for key, value in os.environ.items() if not key.startswith("SB_")}
+        env.update(SB_HOME=home, SB_BACKEND_URL="http://127.0.0.1:1")
+        for name, expected in zip(names, (version(), CONTROLLER_VERSION)):
+            path = directory / name
+            if native_target(regular_bytes(path)) != target:
+                raise ValueError(f"wrong native architecture: {path}")
+            path.chmod(0o755)
+            output = subprocess.check_output([str(path.resolve()), "--version"], text=True, env=env).strip()
+            if output.split()[-1:] != [expected] or (name == names[0] and output != f"browser {expected}"):
+                raise ValueError(f"wrong version for {path}: {output}")
+            subprocess.run([str(path.resolve()), "--help"], check=True, stdout=subprocess.DEVNULL, env=env)
+            if name == names[0]:
+                for arguments, field, expected_value in [
+                    (["accounts", "--json"], "app_id", "browser"),
+                    (["login", "status", "--json"], "authenticated", False),
+                ]:
+                    result = json.loads(subprocess.check_output([str(path.resolve()), *arguments], text=True, env=env))
+                    if result.get(field) != expected_value or type(result.get(field)) is not type(expected_value):
+                        raise ValueError(f"invalid discovery command for {path}: {' '.join(arguments)}")
     shutil.copyfile(ROOT / "LICENSE", directory / "LICENSE-silicon-browser")
     for name, source in LICENSES.items():
         (directory / name).write_bytes(download(
@@ -119,7 +139,9 @@ def stage(target, binary, controller, directory):
 
 def write_archive(output, files):
     output.parent.mkdir(parents=True, exist_ok=True)
-    with tarfile.open(output, "w:gz", format=tarfile.USTAR_FORMAT) as archive:
+    with output.open("wb") as destination, gzip.GzipFile(
+        fileobj=destination, filename="", mode="wb", mtime=0
+    ) as compressed, tarfile.open(fileobj=compressed, mode="w", format=tarfile.USTAR_FORMAT) as archive:
         for name, data, mode in files:
             entry = tarfile.TarInfo(name)
             entry.size, entry.mode = len(data), mode
@@ -127,12 +149,17 @@ def write_archive(output, files):
 
 
 def pack(targets, output, standalone_output=None):
-    manifest = regular_bytes(ROOT / "honeycomb.yaml")
+    manifest = regular_bytes(ROOT / "apps.yaml")
     if re.findall(rb"^version: (.+)$", manifest, re.MULTILINE) != [version().encode()]:
-        raise ValueError("honeycomb.yaml version does not match Cargo.toml")
+        raise ValueError("apps.yaml version does not match Cargo.toml")
     if re.findall(rb"^app_id: (.+)$", manifest, re.MULTILINE) != [b"browser"]:
-        raise ValueError("honeycomb.yaml app_id must be browser")
-    files = [("honeycomb.yaml", manifest, 0o644)]
+        raise ValueError("apps.yaml app_id must be browser")
+    expected_manifest = ["schema_version: 1", "app_id: browser", f"version: {version()}", "command: browser", "targets:"]
+    for target in TARGETS:
+        expected_manifest.extend([f"  {target}:", f"    binary: targets/{target}/{binaries(target)[0]}"])
+    if manifest.decode().splitlines() != expected_manifest:
+        raise ValueError("apps.yaml must use schema_version 1, command browser and the native target binary paths")
+    files = [("apps.yaml", manifest, 0o644)]
     for target in TARGETS:
         directory = targets / target
         if directory.is_symlink() or not directory.is_dir():
@@ -150,12 +177,14 @@ def pack(targets, output, standalone_output=None):
                     raise ValueError(f"binary differs from native-tested receipt: {target}/{name}")
             # Explicit allowlist: neither source trees, state nor receipts enter the archive.
             files.append((f"targets/{target}/{name}", data, 0o755 if name in names else 0o644))
-    if sum(len(data) for _, data, _ in files) > 2 * 1024**3:
-        raise ValueError("expanded package exceeds Honeycomb's 2 GiB limit")
+    if len(files) > MAX_ENTRIES:
+        raise ValueError("package exceeds Silicon Apps' 20,000 entry limit")
+    if sum(len(data) for _, data, _ in files) > MAX_EXPANDED_SIZE:
+        raise ValueError("expanded package exceeds Silicon Apps' 1 GiB limit")
     write_archive(output, files)
-    if output.stat().st_size > 512 * 1024**2:
+    if output.stat().st_size > MAX_COMPRESSED_SIZE:
         output.unlink()
-        raise ValueError("compressed package exceeds Honeycomb's 512 MiB limit")
+        raise ValueError("compressed package exceeds Silicon Apps' 512 MiB limit")
     if standalone_output:
         payloads = {name: (data, mode) for name, data, mode in files}
         for target, triple in STANDALONE_TARGETS.items():
@@ -172,7 +201,7 @@ def pack(targets, output, standalone_output=None):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--targets", type=Path, default=ROOT / "target/honeycomb/targets")
+    parser.add_argument("--targets", type=Path, default=ROOT / "target/apps/targets")
     parser.add_argument("--output", type=Path)
     parser.add_argument("--standalone-output", type=Path)
     parser.add_argument("--stage", choices=TARGETS)
@@ -184,4 +213,4 @@ if __name__ == "__main__":
             parser.error("--stage requires --binary")
         stage(args.stage, args.binary, args.controller, args.targets / args.stage)
     else:
-        pack(args.targets, args.output or ROOT / f"target/honeycomb-browser-{version()}.tar.gz", args.standalone_output)
+        pack(args.targets, args.output or ROOT / f"target/apps-browser-{version()}.tar.gz", args.standalone_output)

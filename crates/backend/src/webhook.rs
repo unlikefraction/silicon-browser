@@ -1,6 +1,4 @@
-//! Verified IAM notifications invalidate short-lived authorization snapshots.
-//! Raw event data is never persisted; only delivery receipts are retained.
-
+//! Accounts HMAC notifications invalidate bounded authorization snapshots.
 use crate::{auth_cache::AuthorizationCache, store::Store};
 use axum::{
     Json, Router,
@@ -9,129 +7,136 @@ use axum::{
     http::{HeaderMap, StatusCode},
     routing::post,
 };
+use hmac::{Hmac, Mac};
+use serde::Deserialize;
 use serde_json::json;
-use silicon_iam_client::{
-    EnvironmentKey,
-    webhook::{WebhookSecret, WebhookSecretKeyring, WebhookVerifier},
-};
 use std::sync::Arc;
-
-const MAX_BODY: usize = 1024 * 1024;
-
 #[derive(Clone)]
 struct WebhookState {
-    verifier: Arc<WebhookVerifier>,
-    environment: Option<EnvironmentKey>,
+    secret: Arc<str>,
+    app_id: Arc<str>,
     store: Store,
     cache: Arc<AuthorizationCache>,
 }
-
-pub fn router(
-    store: Store,
-    cache: Arc<AuthorizationCache>,
-    secret: &str,
-    version: i64,
-    test_key: Option<&str>,
-) -> Result<Router, String> {
-    let secret =
-        WebhookSecret::new(secret).map_err(|_| "IAM_WEBHOOK_SECRET must be 32–512 non-whitespace ASCII characters")?;
-    let keyring = WebhookSecretKeyring::new(version, secret).map_err(|_| "IAM_WEBHOOK_KEY_VERSION must be positive")?;
-    let state = WebhookState {
-        verifier: Arc::new(WebhookVerifier::new(keyring).with_max_body_bytes(MAX_BODY)),
-        store,
-        cache,
-        environment: test_key
-            .map(EnvironmentKey::new)
-            .transpose()
-            .map_err(|_| "invalid IAM webhook test environment")?,
-    };
+#[derive(Deserialize)]
+struct Event {
+    event_id: uuid::Uuid,
+    #[serde(rename = "type")]
+    kind: String,
+    app_id: Option<String>,
+    silicon: Option<String>,
+    occurred_at: chrono::DateTime<chrono::Utc>,
+}
+pub fn router(store: Store, cache: Arc<AuthorizationCache>, secret: &str, app_id: &str) -> Result<Router, String> {
+    if !secret.starts_with("whsec_")
+        || secret.len() < 8
+        || secret.len() > 512
+        || !secret.bytes().all(|b| b.is_ascii_graphic())
+    {
+        return Err("ACCOUNTS_WEBHOOK_SECRET must be an Accounts whsec_ secret".into());
+    }
     Ok(Router::new()
-        .route("/webhooks/iam", post(receive))
-        .route("/webhooks/iam/", post(receive))
-        .layer(DefaultBodyLimit::max(MAX_BODY))
-        .with_state(state))
+        .route("/webhooks/accounts", post(receive))
+        .route("/webhooks/accounts/", post(receive))
+        .layer(DefaultBodyLimit::max(1024 * 1024))
+        .with_state(WebhookState { secret: secret.into(), app_id: app_id.into(), store, cache }))
 }
-
+fn header<'a>(headers: &'a HeaderMap, name: &str) -> Result<&'a str, StatusCode> {
+    if headers.get_all(name).iter().count() != 1 {
+        return Err(StatusCode::UNAUTHORIZED);
+    }
+    headers.get(name).and_then(|v| v.to_str().ok()).ok_or(StatusCode::UNAUTHORIZED)
+}
 async fn receive(
     State(state): State<WebhookState>,
     headers: HeaderMap,
     body: Bytes,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
-    let verified = state.verifier.verify(&headers, &body).map_err(|_| StatusCode::UNAUTHORIZED)?;
-    match &state.environment {
-        Some(key) => verified.verify_testing_environment(key).map_err(|_| StatusCode::UNAUTHORIZED)?,
-        None if verified.is_testing() => return Err(StatusCode::UNAUTHORIZED),
-        None => (),
+    let timestamp = header(&headers, "x-accounts-timestamp")?;
+    let ts = timestamp.parse::<i64>().map_err(|_| StatusCode::UNAUTHORIZED)?;
+    if chrono::Utc::now().timestamp().abs_diff(ts) > 300 {
+        return Err(StatusCode::UNAUTHORIZED);
     }
-    // Invalidate before durable acknowledgement. Retried events also invalidate, so an uncertain
-    // database commit never leaves a new cache generation relying on the old event's receipt.
+    let mut mac =
+        Hmac::<sha2_10::Sha256>::new_from_slice(state.secret.as_bytes()).map_err(|_| StatusCode::UNAUTHORIZED)?;
+    mac.update(timestamp.as_bytes());
+    mac.update(b".");
+    mac.update(&body);
+    let valid = header(&headers, "x-accounts-signature")?
+        .split(|c: char| c == ',' || c.is_ascii_whitespace())
+        .filter_map(|part| part.strip_prefix("v1="))
+        .filter_map(|signature| hex::decode(signature).ok())
+        .any(|signature| mac.clone().verify_slice(&signature).is_ok());
+    if !valid {
+        return Err(StatusCode::UNAUTHORIZED);
+    }
+    let event: Event = serde_json::from_slice(&body).map_err(|_| StatusCode::UNAUTHORIZED)?;
+    if event.event_id.to_string() != header(&headers, "x-accounts-event-id")?
+        || event.kind != header(&headers, "x-accounts-event-type")?
+        || event.app_id.as_deref() != Some(&state.app_id)
+        || event.silicon.is_some()
+        || event.kind.is_empty()
+        || event.kind.len() > 128
+    {
+        return Err(StatusCode::UNAUTHORIZED);
+    }
+    let _ = event.occurred_at;
     state.cache.invalidate();
-    let event = verified.event();
-    let inserted = sqlx::query("INSERT INTO iam_webhook_receipts (event_id, event_type, aggregate_id, aggregate_version, received_at) VALUES (?, ?, ?, ?, ?) ON CONFLICT(event_id) DO NOTHING")
-        .bind(event.event_id.to_string()).bind(&event.event_type)
-        .bind(event.aggregate.get("id").and_then(|value| value.as_str()).unwrap_or_default())
-        .bind(event.aggregate.get("version").and_then(|value| value.as_i64()).unwrap_or_default())
-        .bind(chrono::Utc::now().to_rfc3339()).execute(state.store.pool()).await
-        .map_err(|_| StatusCode::SERVICE_UNAVAILABLE)?.rows_affected();
-    // Keep an operational receipt window rather than accumulating a second IAM directory.
-    sqlx::query("DELETE FROM iam_webhook_receipts WHERE received_at < ?")
+    let inserted =
+        sqlx::query("INSERT OR IGNORE INTO accounts_webhook_receipts(event_id,event_type,received_at) VALUES (?,?,?)")
+            .bind(event.event_id.to_string())
+            .bind(&event.kind)
+            .bind(chrono::Utc::now().to_rfc3339())
+            .execute(state.store.pool())
+            .await
+            .map_err(|_| StatusCode::SERVICE_UNAVAILABLE)?
+            .rows_affected();
+    sqlx::query("DELETE FROM accounts_webhook_receipts WHERE received_at < ?")
         .bind((chrono::Utc::now() - chrono::Duration::days(45)).to_rfc3339())
         .execute(state.store.pool())
         .await
         .map_err(|_| StatusCode::SERVICE_UNAVAILABLE)?;
-    Ok(Json(json!({"received": true, "duplicate": inserted == 0})))
+    Ok(Json(json!({"received":true,"duplicate":inserted==0})))
 }
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use axum::body::Body;
-    use hmac::{Hmac, Mac};
     use http::Request;
     use tower::ServiceExt;
-
+    const SECRET: &str = "whsec_test_secret";
     fn signed(body: &str, event: &str, timestamp: i64) -> Request<Body> {
-        let mut mac = Hmac::<sha2_10::Sha256>::new_from_slice(&[b'x'; 32]).unwrap();
+        let mut mac = Hmac::<sha2_10::Sha256>::new_from_slice(SECRET.as_bytes()).unwrap();
         mac.update(format!("{timestamp}.{body}").as_bytes());
-        let signature = hex::encode(mac.finalize().into_bytes());
-        Request::post("/webhooks/iam")
-            .header("x-silicon-iam-event-id", event)
-            .header("x-silicon-iam-timestamp", timestamp.to_string())
-            .header("x-silicon-iam-key-version", "1")
-            .header("x-silicon-iam-signature", format!("v1={signature}"))
+        Request::post("/webhooks/accounts")
+            .header("x-accounts-event-id", event)
+            .header("x-accounts-event-type", "membership.access_removed")
+            .header("x-accounts-timestamp", timestamp.to_string())
+            .header("x-accounts-signature", format!("v1={}", hex::encode(mac.finalize().into_bytes())))
             .body(Body::from(body.to_owned()))
             .unwrap()
     }
-
-    /// Test group: exact signed bytes, idempotent receipts, no test-plane authority in production.
     #[tokio::test]
-    async fn production_webhook_authenticates_and_deduplicates() {
+    async fn validates_exact_body_freshness_receiver_and_duplicate_receipts() {
         let store = Store::connect("sqlite::memory:").await.unwrap();
-        let app = router(store.clone(), Arc::new(AuthorizationCache::default()), &"x".repeat(32), 1, None).unwrap();
-        let event = uuid::Uuid::new_v4().to_string();
-        let body = json!({"spec_version":"1.0","event_id":event,"event_type":"organization.membership.removed.v1",
-            "occurred_at":chrono::Utc::now().to_rfc3339(),"organization_id":null,
-            "aggregate":{"type":"membership","id":uuid::Uuid::new_v4(),"version":1},"data":{}})
-        .to_string();
-        let timestamp = chrono::Utc::now().timestamp();
+        let app = router(store.clone(), Arc::new(AuthorizationCache::default()), SECRET, "browser").unwrap();
+        let id = uuid::Uuid::new_v4().to_string();
+        let now = chrono::Utc::now().timestamp();
+        let body=json!({"event_id":id,"type":"membership.access_removed","app_id":"browser","silicon":null,"occurred_at":chrono::Utc::now().to_rfc3339(),"data":{"uuid":"8HV"}}).to_string();
         for _ in 0..2 {
-            assert_eq!(app.clone().oneshot(signed(&body, &event, timestamp)).await.unwrap().status(), StatusCode::OK);
+            assert_eq!(app.clone().oneshot(signed(&body, &id, now)).await.unwrap().status(), StatusCode::OK);
         }
-        let count: (i64,) =
-            sqlx::query_as("SELECT count(*) FROM iam_webhook_receipts").fetch_one(store.pool()).await.unwrap();
-        assert_eq!(count.0, 1);
-        let mut forged = signed(&body, &event, timestamp);
+        let count: i64 =
+            sqlx::query_scalar("SELECT count(*) FROM accounts_webhook_receipts").fetch_one(store.pool()).await.unwrap();
+        assert_eq!(count, 1);
+        let mut forged = signed(&body, &id, now);
         *forged.body_mut() = Body::from(format!("{body} "));
         assert_eq!(app.clone().oneshot(forged).await.unwrap().status(), StatusCode::UNAUTHORIZED);
         assert_eq!(
-            app.clone().oneshot(signed(&body, &event, timestamp - 360)).await.unwrap().status(),
+            app.clone().oneshot(signed(&body, &id, now - 301)).await.unwrap().status(),
             StatusCode::UNAUTHORIZED
         );
-        let wrapped = json!({"test":{"testing_key":"A".repeat(32),"metadata":{
-            "spec_version":"1.0","event_id":event,"event_type":"organization.membership.removed.v1",
-            "occurred_at":chrono::Utc::now().to_rfc3339(),"organization_id":null,
-            "aggregate":{"type":"membership","id":uuid::Uuid::new_v4(),"version":1}},"data":{}}})
-        .to_string();
-        assert_eq!(app.oneshot(signed(&wrapped, &event, timestamp)).await.unwrap().status(), StatusCode::UNAUTHORIZED);
+        let other = body.replace("browser", "other");
+        assert_eq!(app.oneshot(signed(&other, &id, now)).await.unwrap().status(), StatusCode::UNAUTHORIZED);
     }
 }

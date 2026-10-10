@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Isolated IAM CLI regression checks. Synthetic credentials; no live IAM calls."""
+"""Historical IAM CLI regression checks. Synthetic credentials; no live IAM calls."""
 import argparse
 import concurrent.futures
 import json

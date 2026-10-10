@@ -5,7 +5,7 @@ import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 
 const root = fileURLToPath(new URL('..', import.meta.url));
-const targets = resolve(process.argv[2] || join(root, '../target/honeycomb/targets'));
+const targets = resolve(process.argv[2] || join(root, '../target/apps/targets'));
 const version = readFileSync(join(root, '../Cargo.toml'), 'utf8').match(/\[workspace\.package\][\s\S]*?\nversion = "([^"]+)"/)[1];
 const platforms = {
   'darwin-arm64': 'macos-aarch64',

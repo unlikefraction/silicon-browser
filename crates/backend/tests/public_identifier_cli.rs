@@ -1,9 +1,10 @@
-use std::net::TcpListener;
-use std::path::Path;
-use std::process::{Command, Output, Stdio};
-use std::time::{Duration, Instant};
-
-fn migrate(directory: &Path, database: &Path, upstream: &TcpListener, args: &[&str]) -> Output {
+use std::{
+    net::TcpListener,
+    path::Path,
+    process::{Command, Output, Stdio},
+    time::{Duration, Instant},
+};
+fn launch(directory: &Path, database: &Path, upstream: &TcpListener, args: &[&str]) -> Output {
     let origin = format!("http://{}", upstream.local_addr().unwrap());
     let mut child = Command::new(env!("CARGO_BIN_EXE_silicon-browser-backend"))
         .current_dir(directory)
@@ -11,12 +12,10 @@ fn migrate(directory: &Path, database: &Path, upstream: &TcpListener, args: &[&s
         .env("SB_DATABASE_URL", format!("sqlite://{}?mode=rwc", database.display()))
         .env("SB_ORIGIN", &origin)
         .env("SB_ENCRYPTION_KEY", "17".repeat(32))
-        .env("SILICON_IAM_URL", &origin)
-        .env("IAM_APP_ID", "browser")
-        .env("IAM_APP_SECRET", "offline-test-secret")
+        .env("ACCOUNTS_URL", &origin)
+        .env("ACCOUNTS_APP_ID", "browser")
+        .env("ACCOUNTS_APP_SECRET", "sa_app_test_secret")
         .env("BROWSER_USE_API_KEY", "offline-provider-secret")
-        .env("BRIEFCASE_URL", &origin)
-        .env("BRIEFCASE_APP_ID", "briefcase")
         .args(args)
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -27,91 +26,44 @@ fn migrate(directory: &Path, database: &Path, upstream: &TcpListener, args: &[&s
         if Instant::now() >= deadline {
             child.kill().unwrap();
             child.wait().unwrap();
-            panic!("offline migration did not exit; it must not start network requests or workers");
+            panic!("backend must reject legacy state before network or workers");
         }
         std::thread::sleep(Duration::from_millis(10));
     }
     let output = child.wait_with_output().unwrap();
-    assert!(matches!(upstream.accept(), Err(error) if error.kind() == std::io::ErrorKind::WouldBlock));
+    assert!(matches!(upstream.accept(),Err(error) if error.kind()==std::io::ErrorKind::WouldBlock));
     output
 }
-
 #[tokio::test]
-async fn migration_cli_is_offline_world_scoped_and_refuses_accidental_new_databases() {
+async fn retired_migration_commands_never_create_or_mutate_databases() {
     let directory = tempfile::tempdir().unwrap();
     let upstream = TcpListener::bind("127.0.0.1:0").unwrap();
     upstream.set_nonblocking(true).unwrap();
-    std::fs::write(directory.path().join("mapping.json"), "[]").unwrap();
-    let args = ["--migrate-public-identifiers", "mapping.json"];
     let missing = directory.path().join("missing.db");
-    for arguments in [args.as_slice(), &["--unknown", "mapping.json"][..]] {
-        let output = migrate(directory.path(), &missing, &upstream, arguments);
+    for args in [
+        &["--migrate-public-identifiers", "mapping.json"][..],
+        &["--verify-public-identifiers-only"][..],
+        &["--unknown"][..],
+    ] {
+        let output = launch(directory.path(), &missing, &upstream, args);
         assert!(!output.status.success());
-        let message = String::from_utf8_lossy(&output.stdout);
-        assert!(message.contains(if arguments == args { "existing SQLite database" } else { "usage:" }), "{message}");
+        assert!(String::from_utf8_lossy(&output.stdout).contains("usage:"));
         assert!(!missing.exists());
     }
-    let world = "00000000-0000-0000-0000-000000000001";
-    let testing = directory.path().join(format!("{world}-{}.db", "a".repeat(64)));
-    std::fs::write(&testing, []).unwrap();
-    for arguments in [
-        args.as_slice(),
-        &["--migrate-public-identifiers", "mapping.json", "--scope-key", "00000000-0000-0000-0000-000000000002"][..],
-        &["--migrate-public-identifiers", "mapping.json", "--unknown", world][..],
-    ] {
-        let output = migrate(directory.path(), &testing, &upstream, arguments);
-        assert!(!output.status.success());
-        assert_eq!(std::fs::metadata(&testing).unwrap().len(), 0);
-    }
-    let production = directory.path().join("production.db");
-    std::fs::write(&production, []).unwrap();
-    for (database, scope, arguments) in [
-        (&production, "", args.as_slice()),
-        (&testing, world, &["--migrate-public-identifiers", "mapping.json", "--scope-key", world][..]),
-    ] {
-        let output = migrate(directory.path(), database, &upstream, arguments);
-        assert!(
-            output.status.success(),
-            "{}{}",
-            String::from_utf8_lossy(&output.stdout),
-            String::from_utf8_lossy(&output.stderr)
-        );
-        let pool = sqlx::SqlitePool::connect(&format!("sqlite://{}?mode=ro", database.display())).await.unwrap();
-        let persisted: (String, String) =
-            sqlx::query_as("SELECT scope_key, mapping_json FROM public_identifier_schema")
-                .fetch_one(&pool)
-                .await
-                .unwrap();
-        assert_eq!(persisted, (scope.into(), "[]".into()));
-        pool.close().await;
-    }
 }
-
 #[tokio::test]
-async fn verification_cli_applies_only_schema_and_world_marker_without_network() {
+async fn legacy_database_startup_rejects_ownership_without_schema_changes_or_network() {
     let directory = tempfile::tempdir().unwrap();
     let upstream = TcpListener::bind("127.0.0.1:0").unwrap();
     upstream.set_nonblocking(true).unwrap();
-    let database = directory.path().join("canonical.db");
-    let arguments = ["--verify-public-identifiers-only"];
-    assert!(!migrate(directory.path(), &database, &upstream, &arguments).status.success());
-    assert!(!database.exists());
-    std::fs::write(&database, []).unwrap();
-    let output = migrate(directory.path(), &database, &upstream, &arguments);
-    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stdout));
-    let pool = sqlx::SqlitePool::connect(&format!("sqlite://{}?mode=ro", database.display())).await.unwrap();
-    let marker: (String, Option<String>) =
-        sqlx::query_as("SELECT scope_key, mapping_json FROM public_identifier_schema").fetch_one(&pool).await.unwrap();
-    assert_eq!(marker, (String::new(), None));
+    let database = directory.path().join("legacy.db");
+    let pool = sqlx::SqlitePool::connect(&format!("sqlite://{}?mode=rwc", database.display())).await.unwrap();
+    sqlx::query("CREATE TABLE identity_projection(principal_id TEXT)").execute(&pool).await.unwrap();
+    sqlx::query("INSERT INTO identity_projection VALUES ('old-owner')").execute(&pool).await.unwrap();
     pool.close().await;
-    assert!(
-        !migrate(
-            directory.path(),
-            &database,
-            &upstream,
-            &["--verify-public-identifiers-only", "--scope-key", "00000000-0000-0000-0000-000000000001"]
-        )
-        .status
-        .success()
-    );
+    let original = std::fs::read(&database).unwrap();
+    let output = launch(directory.path(), &database, &upstream, &[]);
+    assert!(!output.status.success());
+    assert!(String::from_utf8_lossy(&output.stdout).contains("IAM-owned"));
+    assert_eq!(std::fs::read(&database).unwrap(), original);
 }

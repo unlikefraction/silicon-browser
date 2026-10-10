@@ -1,18 +1,18 @@
-name: Honeycomb package
+name: Silicon Apps package
 
 on:
   workflow_dispatch:
   push:
     paths:
-      - honeycomb.yaml
-      - .github/workflows/honeycomb.yml
+      - apps.yaml
+      - .github/workflows/apps.yml
       - Cargo.toml
       - Cargo.lock
       - crates/cli/**
       - crates/client/**
       - crates/shared/**
-      - scripts/package_honeycomb.py
-      - scripts/test_honeycomb_package.py
+      - scripts/package_apps.py
+      - scripts/test_apps_package.py
 
 permissions:
   contents: read
@@ -77,18 +77,18 @@ jobs:
         if: matrix.target == 'windows-aarch64'
         # browser does not expose the upstream dashboard; its development placeholder is sufficient.
         run: cargo build --locked --release --manifest-path target/controller-source/cli/Cargo.toml --target ${{ matrix.triple }}
-      - name: Stage binaries, verify versions and run help natively
+      - name: Stage binaries and verify versions and discovery commands natively
         run: |
           controller=()
           if [[ '${{ matrix.target }}' == windows-aarch64 ]]; then
             controller=(--controller target/controller-source/cli/target/${{ matrix.triple }}/release/agent-browser.exe)
           fi
-          python scripts/package_honeycomb.py --stage '${{ matrix.target }}' \
+          python scripts/package_apps.py --stage '${{ matrix.target }}' \
             --binary 'target/${{ matrix.triple }}/release/browser${{ matrix.suffix }}' "${controller[@]}"
       - uses: actions/upload-artifact@v4
         with:
-          name: honeycomb-${{ matrix.target }}
-          path: target/honeycomb/targets/${{ matrix.target }}
+          name: apps-${{ matrix.target }}
+          path: target/apps/targets/${{ matrix.target }}
           if-no-files-found: error
           retention-days: 14
 
@@ -102,17 +102,17 @@ jobs:
           python-version: '3.12'
       - uses: actions/download-artifact@v4
         with:
-          pattern: honeycomb-*
-          path: target/honeycomb/artifacts
+          pattern: apps-*
+          path: target/apps/artifacts
       - name: Validate and pack all six targets
         id: package
         run: |
-          python scripts/test_honeycomb_package.py
-          mkdir -p target/honeycomb/targets
-          for artifact in target/honeycomb/artifacts/honeycomb-*; do
-            mv "$artifact" "target/honeycomb/targets/${artifact##*/honeycomb-}"
+          python scripts/test_apps_package.py
+          mkdir -p target/apps/targets
+          for artifact in target/apps/artifacts/apps-*; do
+            mv "$artifact" "target/apps/targets/${artifact##*/apps-}"
           done
-          archive=$(python scripts/package_honeycomb.py --standalone-output target/browser-standalone)
+          archive=$(python scripts/package_apps.py --standalone-output target/browser-standalone)
           echo "archive=$archive" >> "$GITHUB_OUTPUT"
           echo "name=${archive##*/}" >> "$GITHUB_OUTPUT"
       - uses: actions/upload-artifact@v4

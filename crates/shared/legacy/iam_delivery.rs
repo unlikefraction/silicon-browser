@@ -21,25 +21,44 @@ pub enum DeliveryAuthorizationState {
     Disabled,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DeliveryAuthorizationConsent {
+    pub authorization_id: uuid::Uuid,
+    pub authorization_url: String,
+    pub expires_at: chrono::DateTime<chrono::Utc>,
+}
+
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct DeliveryAuthorizationRequest {
-    pub short_lived_token: String,
+    pub authorization_id: uuid::Uuid,
+    pub authorization_code: String,
 }
 impl DeliveryAuthorizationRequest {
-    /// Test actors are accepted only through an IAM-authenticated testing context.
     pub fn validate_testing(&self) -> Result<(), crate::ValidationError> {
-        crate::AuthExchangeRequest { short_lived_token: self.short_lived_token.clone(), org_id: None }
-            .validate_testing()
+        crate::Validate::validate(self)
     }
 }
 impl std::fmt::Debug for DeliveryAuthorizationRequest {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("DeliveryAuthorizationRequest").field("short_lived_token", &"[REDACTED]").finish()
+        f.debug_struct("DeliveryAuthorizationRequest")
+            .field("authorization_id", &self.authorization_id)
+            .field("authorization_code", &"[REDACTED]")
+            .finish()
     }
 }
 impl crate::Validate for DeliveryAuthorizationRequest {
     fn validate(&self) -> Result<(), crate::ValidationError> {
-        crate::AuthExchangeRequest { short_lived_token: self.short_lived_token.clone(), org_id: None }.validate()
+        if self.authorization_id.is_nil()
+            || self.authorization_code.is_empty()
+            || self.authorization_code.len() > 4096
+            || !self.authorization_code.bytes().all(|c| c.is_ascii_graphic())
+        {
+            return Err(crate::ValidationError::Invalid {
+                field: "authorization_code",
+                reason: "expected the code from the pending IAM permission request".into(),
+            });
+        }
+        Ok(())
     }
 }

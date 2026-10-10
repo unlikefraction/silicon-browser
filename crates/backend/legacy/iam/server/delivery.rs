@@ -1,9 +1,8 @@
 //! Delivery orchestration: durable claims surround each external mutation.
 use super::*;
 use crate::{
-    auth::RecordingProofRequest,
-    delivery_auth::{DeliveryAuth, DeliveryAuthError},
-    providers::BriefcaseClient,
+    delivery_auth::{DeliveryAccess, DeliveryAuth, DeliveryAuthError, DeliveryBinding},
+    providers::{BriefcaseClient, BriefcaseEntry, BriefcaseUploadManifest, BriefcaseUploadState},
     recording_delivery::{DeliveryError, RecordingDelivery},
     store::{RecordingArtifactKind, RecordingDeliveryClaim},
 };
@@ -16,7 +15,34 @@ pub(super) struct RecordingDeliveryServices {
     auth: DeliveryAuth,
     transfer: RecordingDelivery,
     issuer: String,
-    audience: String,
+}
+
+#[derive(Debug, thiserror::Error)]
+enum DeliveryAttemptError {
+    #[error(transparent)]
+    Auth(#[from] DeliveryAuthError),
+    #[error(transparent)]
+    Source(#[from] DeliveryError),
+    #[error(transparent)]
+    Provider(#[from] ProviderError),
+    #[error(transparent)]
+    Store(#[from] StoreError),
+}
+impl RecordingDeliveryServices {
+    async fn access(
+        &self,
+        claim: &RecordingDeliveryClaim,
+        endpoint: &str,
+    ) -> Result<(BriefcaseClient, DeliveryAccess), DeliveryAttemptError> {
+        let destination = claim
+            .destination_org
+            .as_deref()
+            .zip(claim.destination_actor.as_deref())
+            .ok_or(DeliveryAuthError::NeedsAuthorization)?;
+        let access = self.auth.access(&claim.org_id, &claim.actor_id, endpoint, Some(destination), false).await?;
+        let client = self.transfer.briefcase().with_testing_secret(access.testing_app_secret.as_deref())?;
+        Ok((client, access))
+    }
 }
 
 impl AppState {
@@ -37,7 +63,6 @@ impl AppState {
             auth: DeliveryAuth::new(self.store.clone(), self.secrets.clone(), self.identity.clone(), audience.clone()),
             transfer: RecordingDelivery::new(briefcase, self.browser.clone()),
             issuer,
-            audience,
         }));
         Ok(self)
     }
@@ -45,7 +70,7 @@ impl AppState {
     pub(super) async fn require_recording_authorization(
         &self,
         scope: &Scope,
-    ) -> Result<Option<(String, String)>, ApiFailure> {
+    ) -> Result<Option<DeliveryBinding>, ApiFailure> {
         // Unconfigured AppState supports isolated tests and explicit partial deployments.
         let Some(delivery) = &self.recording_delivery else {
             return if self.recording_delivery_required {
@@ -67,10 +92,12 @@ impl AppState {
                 &scope.principal.membership_id.to_string(),
             )
             .await?;
-        if binding.0 != scope.principal.principal_id || binding.1 != scope.principal.membership_id {
+        if binding.principal_id != scope.principal.principal_id
+            || binding.membership_id != scope.principal.membership_id
+        {
             return Err(ApiFailure::conflict(
                 "recording_authorization_required",
-                "recording delivery needs a fresh SLT for this membership",
+                "recording delivery needs permission for this membership",
             ));
         }
         Ok(Some(binding))
@@ -125,93 +152,166 @@ impl AppState {
         {
             return self.retry_recording_delivery(&claim, "recording_authorization_required", false).await;
         }
-        let staged = match claim.kind {
-            RecordingArtifactKind::Video => match &claim.provider_session_id {
-                Some(id) => delivery.transfer.prepare_video(&claim.session_id, id).await,
-                None => Err(DeliveryError::Unavailable),
-            },
-            RecordingArtifactKind::Commands => {
-                delivery
-                    .transfer
-                    .prepare_log_pages(&claim.session_id, |after| {
-                        let store = self.store.clone();
-                        let claim = claim.clone();
-                        let secrets = self.secrets.clone();
-                        async move {
-                            store
-                                .recording_delivery_logs(&claim, after, 128, &secrets)
-                                .await
-                                .map_err(|_| DeliveryError::Io)
-                        }
-                    })
-                    .await
-            }
-        };
-        let artifact = match staged {
-            Ok(value) => value,
-            Err(DeliveryError::Unavailable) => {
-                self.store.fail_recording_delivery(&claim, "native_recording_unavailable", Utc::now()).await?;
-                return Ok(());
-            }
-            Err(DeliveryError::InvalidSource) => {
-                self.store.fail_recording_delivery(&claim, "recording_source_invalid", Utc::now()).await?;
-                return Ok(());
-            }
-            Err(DeliveryError::TooLarge) => {
-                self.store.fail_recording_delivery(&claim, "recording_size_limit", Utc::now()).await?;
-                return Ok(());
-            }
-            Err(_) => return self.retry_recording_delivery(&claim, "recording_source_unavailable", true).await,
-        };
-        if !self.store.bind_recording_delivery(&claim, &artifact.body_sha256, artifact.size, Utc::now()).await? {
-            if self.store.recording_delivery_is_current(&claim, Utc::now()).await? {
-                self.store.fail_recording_delivery(&claim, "recording_source_changed", Utc::now()).await?;
-            }
-            return Ok(());
-        }
-        let request = RecordingProofRequest {
-            expected_org_id: claim.org_id.clone(),
-            expected_actor_id: claim.actor_id.clone(),
-            audience: delivery.audience.clone(),
-            path: String::new(),
-            name: artifact.name.clone(),
-            content_type: artifact.content_type.into(),
-            body_sha256: artifact.body_sha256.clone(),
-            idempotency_key: format!("recording-{}-{}-{}", claim.session_id, claim.lease_id, claim.kind.as_str()),
-        };
-        let proof = match delivery.auth.issue_recording_proof_for_principal(principal, membership, request).await {
-            Ok(proof) => proof,
-            Err(DeliveryAuthError::NeedsAuthorization)
-            | Err(DeliveryAuthError::Identity(IdentityError::Unauthenticated | IdentityError::Forbidden)) => {
-                return self.retry_recording_delivery(&claim, "recording_authorization_required", false).await;
-            }
-            Err(DeliveryAuthError::Busy) => {
-                return self.retry_recording_delivery(&claim, "recording_authorization_refreshing", false).await;
-            }
-            Err(_) => return self.retry_recording_delivery(&claim, "recording_proof_unavailable", true).await,
-        };
-        if proof.expires_at <= Utc::now() + TimeDelta::seconds(5) {
-            return self.retry_recording_delivery(&claim, "recording_proof_expired", true).await;
-        }
-        // Cancellation/lease checks immediately precede the single network mutation.
-        if !delivery
-            .auth
-            .authorized_binding_for_principal(&claim.org_id, &claim.actor_id, principal, membership)
-            .await
-            .is_ok_and(|binding| binding.0 == *principal && binding.1 == *membership)
-        {
-            return self.retry_recording_delivery(&claim, "recording_authorization_required", false).await;
-        }
-        if !self.store.begin_recording_upload(&claim, Utc::now()).await? {
-            return Ok(());
-        }
-        match delivery.transfer.upload(artifact, &proof.grant, &claim.org_id, &delivery.issuer).await {
-            Ok(receipt) => {
+        match self.upload_recording_artifact(&claim).await {
+            Ok(Some(receipt)) => {
                 self.store.complete_recording_delivery(&claim, &receipt, &self.secrets, Utc::now()).await?;
             }
-            Err(_) => self.retry_recording_delivery(&claim, "briefcase_upload_unconfirmed", true).await?,
+            Ok(None) => {}
+            Err(DeliveryAttemptError::Auth(
+                DeliveryAuthError::NeedsAuthorization
+                | DeliveryAuthError::Identity(IdentityError::Unauthenticated | IdentityError::Forbidden),
+            )) => {
+                self.retry_recording_delivery(&claim, "recording_authorization_required", false).await?;
+            }
+            Err(DeliveryAttemptError::Auth(DeliveryAuthError::Busy)) => {
+                self.retry_recording_delivery(&claim, "recording_authorization_refreshing", false).await?;
+            }
+            Err(DeliveryAttemptError::Source(DeliveryError::Unavailable)) => {
+                self.store.fail_recording_delivery(&claim, "native_recording_unavailable", Utc::now()).await?;
+            }
+            Err(DeliveryAttemptError::Source(DeliveryError::InvalidSource)) => {
+                self.store.fail_recording_delivery(&claim, "recording_source_invalid", Utc::now()).await?;
+            }
+            Err(DeliveryAttemptError::Source(DeliveryError::TooLarge)) => {
+                self.store.fail_recording_delivery(&claim, "recording_size_limit", Utc::now()).await?;
+            }
+            Err(DeliveryAttemptError::Store(error)) => return Err(error),
+            Err(_) => {
+                self.retry_recording_delivery(&claim, "briefcase_upload_unconfirmed", true).await?;
+            }
         }
         Ok(())
+    }
+
+    async fn upload_recording_artifact(
+        &self,
+        claim: &RecordingDeliveryClaim,
+    ) -> Result<Option<BriefcaseEntry>, DeliveryAttemptError> {
+        let delivery = self.recording_delivery.as_ref().expect("configured delivery");
+        let (client, access) = delivery.access(claim, "briefcase.uploads.status").await?;
+        let mut status = match client
+            .upload_status(&access.org_id, &delivery.issuer, &access.token, claim.upload_operation_id)
+            .await
+        {
+            Ok(status) => Some(status),
+            Err(ProviderError::Http { status: 404, .. }) => None,
+            Err(error) => return Err(error.into()),
+        };
+        // Status comes first: an uncertain commit can already be complete even after
+        // the browser's source URL has expired. Never reserve a new operation to retry it.
+        let mut manifest =
+            claim.body_sha256.as_ref().zip(claim.size_bytes).map(|(digest, size)| BriefcaseUploadManifest {
+                operation_id: claim.upload_operation_id,
+                parent_path: String::new(),
+                name: match claim.kind {
+                    RecordingArtifactKind::Video => format!("{}.mp4", claim.session_id),
+                    RecordingArtifactKind::Commands => format!("{}-commands.jsonl", claim.session_id),
+                },
+                content_type: match claim.kind {
+                    RecordingArtifactKind::Video => "video/mp4",
+                    RecordingArtifactKind::Commands => "application/x-ndjson",
+                }
+                .into(),
+                size,
+                sha256: digest.clone(),
+            });
+        if status.as_ref().is_none_or(|s| s.state == BriefcaseUploadState::Reserved) {
+            let artifact = match claim.kind {
+                RecordingArtifactKind::Video => match &claim.provider_session_id {
+                    Some(id) => delivery.transfer.prepare_video(&claim.session_id, id).await?,
+                    None => return Err(DeliveryError::Unavailable.into()),
+                },
+                RecordingArtifactKind::Commands => {
+                    delivery
+                        .transfer
+                        .prepare_log_pages(&claim.session_id, |after| {
+                            let store = self.store.clone();
+                            let claim = claim.clone();
+                            let secrets = self.secrets.clone();
+                            async move {
+                                store
+                                    .recording_delivery_logs(&claim, after, 128, &secrets)
+                                    .await
+                                    .map_err(|_| DeliveryError::Io)
+                            }
+                        })
+                        .await?
+                }
+            };
+            if !self.store.bind_recording_delivery(claim, &artifact.body_sha256, artifact.size, Utc::now()).await? {
+                if self.store.recording_delivery_is_current(claim, Utc::now()).await? {
+                    self.store.fail_recording_delivery(claim, "recording_source_changed", Utc::now()).await?;
+                }
+                return Ok(None);
+            }
+            manifest = Some(artifact.manifest(claim.upload_operation_id));
+            if !self.store.begin_recording_upload(claim, Utc::now()).await? {
+                return Ok(None);
+            }
+            let (client, access) = delivery.access(claim, "briefcase.uploads.reserve").await?;
+            let reservation = client
+                .reserve_upload(
+                    &access.org_id,
+                    &delivery.issuer,
+                    &access.token,
+                    manifest.as_ref().expect("staged manifest"),
+                )
+                .await?;
+            status = if reservation.status.state == BriefcaseUploadState::Reserved {
+                Some(
+                    client
+                        .transfer_upload(
+                            &access.org_id,
+                            &reservation,
+                            artifact.into_file(),
+                            manifest.as_ref().expect("staged manifest").size,
+                        )
+                        .await?,
+                )
+            } else {
+                Some(reservation.status)
+            };
+        }
+        let Some(mut status) = status else {
+            return Err(DeliveryAuthError::NeedsAuthorization.into());
+        };
+        let Some(manifest) = manifest else {
+            return Err(DeliveryAuthError::NeedsAuthorization.into());
+        };
+        if status.state == BriefcaseUploadState::Staged {
+            if !self.store.begin_recording_upload(claim, Utc::now()).await? {
+                return Ok(None);
+            }
+            let (client, access) = delivery.access(claim, "briefcase.uploads.commit").await?;
+            status = client
+                .commit_upload(
+                    &access.org_id,
+                    &delivery.issuer,
+                    &access.token,
+                    claim.upload_operation_id,
+                    status.upload_id,
+                )
+                .await?;
+        }
+        if status.state == BriefcaseUploadState::Committed {
+            let (client, access) = delivery.access(claim, "briefcase.entries.list").await?;
+            let entry = client
+                .resolve_upload_entry(
+                    &access.org_id,
+                    &delivery.issuer,
+                    &access.token,
+                    &manifest,
+                    status.published_entry_id.ok_or(DeliveryAuthError::NeedsAuthorization)?,
+                )
+                .await?;
+            return Ok(Some(entry));
+        }
+        if matches!(status.state, BriefcaseUploadState::Cancelled | BriefcaseUploadState::Expired) {
+            self.store.fail_recording_delivery(claim, "briefcase_upload_expired", Utc::now()).await?;
+        } else {
+            self.retry_recording_delivery(claim, "briefcase_upload_unconfirmed", true).await?;
+        }
+        Ok(None)
     }
 
     async fn retry_recording_delivery(
@@ -246,17 +346,14 @@ pub(super) async fn authorization_status(
     Ok(success(status))
 }
 
-pub(super) async fn authorize(
+pub(super) async fn begin_authorization(
     State(state): State<AppState>,
     scope: Scope,
-    payload: Result<Json<DeliveryAuthorizationRequest>, JsonRejection>,
+    headers: HeaderMap,
 ) -> Result<impl IntoResponse, ApiFailure> {
-    let request = json_payload(payload)?;
-    if state.identity.is_testing() {
-        request.validate_testing().map_err(ApiFailure::validation)?;
-    } else {
-        request.validate().map_err(ApiFailure::validation)?;
-    }
+    let key = required_header(&headers, "idempotency-key", "an idempotency key is required")?;
+    let key = Uuid::parse_str(&key)
+        .map_err(|_| ApiFailure::bad_request("invalid_idempotency_key", "use a UUID idempotency key"))?;
     let delivery = state.recording_delivery.as_ref().ok_or_else(|| {
         ApiFailure::new(
             StatusCode::SERVICE_UNAVAILABLE,
@@ -264,7 +361,24 @@ pub(super) async fn authorize(
             "recording delivery is not configured",
         )
     })?;
-    let authorization = delivery.auth.enroll(&scope.org_id, &scope.principal, &request.short_lived_token).await?;
+    Ok(success(delivery.auth.begin(&scope.principal, &bearer(&headers)?, key).await?))
+}
+
+pub(super) async fn authorize(
+    State(state): State<AppState>,
+    scope: Scope,
+    payload: Result<Json<DeliveryAuthorizationRequest>, JsonRejection>,
+) -> Result<impl IntoResponse, ApiFailure> {
+    let request = json_payload(payload)?;
+    request.validate().map_err(ApiFailure::validation)?;
+    let delivery = state.recording_delivery.as_ref().ok_or_else(|| {
+        ApiFailure::new(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "recording_delivery_unavailable",
+            "recording delivery is not configured",
+        )
+    })?;
+    let authorization = delivery.auth.complete(&scope.principal, &request).await?;
     state.store.wake_recording_deliveries(&scope.org_id, &scope.identity.id, Utc::now()).await?;
     Ok(success(authorization))
 }
@@ -297,7 +411,7 @@ pub(super) async fn retry_recording(
             "only the initiating identity can retry delivery",
         ));
     }
-    let Some((principal, membership)) = state.require_recording_authorization(&scope).await? else {
+    let Some(binding) = state.require_recording_authorization(&scope).await? else {
         return Err(ApiFailure::new(
             StatusCode::SERVICE_UNAVAILABLE,
             "recording_delivery_unavailable",
@@ -310,8 +424,8 @@ pub(super) async fn retry_recording(
             &scope.org_id,
             &session_id,
             &scope.identity.id,
-            &principal,
-            &membership,
+            &binding.principal_id,
+            &binding.membership_id,
             Utc::now(),
         )
         .await?

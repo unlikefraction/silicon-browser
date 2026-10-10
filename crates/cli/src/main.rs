@@ -1,7 +1,7 @@
 mod runtime;
 mod state;
 
-use std::io::{self, IsTerminal, Read, Write};
+use std::io::{self, IsTerminal, Write};
 use std::process::ExitCode;
 
 use chrono::NaiveDate;
@@ -64,37 +64,28 @@ struct Cli {
     /// Print structured JSON instead of concise text. Place before the subcommand.
     #[arg(long)]
     json: bool,
-    /// Override the organization; setup saves it with newly exchanged credentials.
+    /// Browser workspace selector (compatibility option; use browser).
     #[arg(long = "org-id", global = true, env = "SB_ORG_ID", hide_env_values = true)]
     org_id: Option<String>,
     /// Override the backend URL; setup saves it with newly exchanged credentials.
     #[arg(long, global = true, env = "SB_BACKEND_URL", hide_env_values = true)]
     backend: Option<String>,
-    /// Use one enrolled IAM test environment. Enroll first with `browser testing login`.
-    #[arg(long, global = true, value_name = "ENVIRONMENT_UUID")]
-    test: Option<uuid::Uuid>,
     #[command(subcommand)]
     command: Option<Command>,
 }
 
 #[derive(Subcommand, Debug)]
 enum Command {
-    /// Enroll and verify IAM test environments, isolated from production credentials.
+    /// Print this application's Silicon Accounts identifier.
+    Accounts,
+    /// Exchange a Silicon Accounts short-lived token and remember the session.
     #[command(
-        long_about = "Enroll an IAM test environment using explicit developer credentials.\n\n  browser testing login --credentials-stdin < test-credentials.json\n  browser --test <environment-uuid> login si:worker --org-id tos\n  browser --test <environment-uuid> testing status --json\n\nEvery ordinary command accepts --test. Production and each test environment keep separate credentials and browser state. Credentials JSON requires app_secret; iam_test_key and briefcase_test_environment_key are optional; keep this file private. Test keys are developer configuration; normal login still accepts only an IAM short-lived token."
-    )]
-    Testing(Service<TestingCommand>),
-    /// Print this application's IAM identifier.
-    #[command(
-        long_about = "Print this application's canonical IAM identifier without authentication.\n\nUse it when minting a short-lived token with the official IAM CLI:\n  iam login --app-id '<app-id>' --grant-org <org>\n  browser login '<short-lived-token>'"
-    )]
-    Iam,
-    /// Exchange an IAM short-lived token and store the resulting session.
-    #[command(
-        long_about = "Exchange an IAM short-lived token and store the resulting session.\n\nTokens come from the official IAM CLI or its web consent flow; Browser never asks for an IAM password or credentials.\n\nTypical flow:\n  iam login --app-id '<app-id>' --grant-org <org>\n  browser login '<short-lived-token>'\n  browser login status --json\n\nIAM testing: browser testing --help; after enrollment, browser --test <environment-uuid> login <test-actor-id> --org-id <org>"
+        long_about = "Request an SLT with `silicon-accounts login --app browser`, then run `browser login --slt TOKEN`. Browser never receives a Silicon's STK."
     )]
     Login {
         token: Option<String>,
+        #[arg(long, conflicts_with = "token")]
+        slt: Option<String>,
         #[command(subcommand)]
         command: Option<LoginCommand>,
     },
@@ -111,12 +102,9 @@ enum Command {
         #[arg(long, visible_alias = "pr-ref")]
         pr: Option<String>,
     },
-    /// Install/check the runner and authenticate with an IAM short-lived token.
-    /// Recording delivery uses a separate fresh Browser oac_ token via SB_RECORDING_SLT
-    /// or a masked prompt. Test mode enrolls the authenticated test actor automatically.
-    /// An active backend authorization is reused.
+    /// Install/check the runner and authenticate with a Silicon Accounts short-lived token.
     Setup {
-        /// Select an organization already authorized by the short-lived token.
+        /// Select the Browser application workspace (browser).
         #[arg(long)]
         org: Option<String>,
     },
@@ -141,21 +129,6 @@ enum Command {
 #[derive(Subcommand, Debug)]
 enum LoginCommand {
     /// Report whether the stored session is authenticated.
-    Status,
-}
-
-#[derive(Subcommand, Debug)]
-enum TestingCommand {
-    /// Verify and securely store test configuration; reports the environment UUID.
-    #[command(
-        long_about = "Verify explicit developer credentials with IAM, then store them in an owner-only test partition.\n\n  browser testing login --credentials-stdin < test-credentials.json\n\nWithout --credentials-stdin, reads SB_TEST_APP_SECRET, plus optional SB_IAM_TEST_KEY and SB_BRIEFCASE_TEST_KEY. Then run browser --test <environment-uuid> login si:worker --org-id tos, or use an IAM test short-lived token. Re-enrollment clears that environment's saved login."
-    )]
-    Login {
-        /// Read credentials JSON from standard input; never pass test secrets as arguments.
-        #[arg(long)]
-        credentials_stdin: bool,
-    },
-    /// Verify the selected environment's stored test credentials against IAM.
     Status,
 }
 
@@ -264,32 +237,21 @@ enum RecordingCommand {
     },
     /// Show a recording or its honest pending state.
     Show { session_id: String },
-    /// Retry eligible failed delivery artifacts as the initiating identity.
-    /// Requires active recording authorization; completed Briefcase artifacts are preserved.
-    /// A pending response means delivery was queued, not completed.
-    Send { session_id: String },
-    /// Hide a recording in Browser; its Briefcase files remain unchanged.
+    /// Hide a recording in Browser.
     Rm { session_id: String },
 }
 
 #[derive(Subcommand, Debug)]
 enum UsageCommand {
-    /// Read current browser capacity, shared across organizations.
+    /// Read current browser capacity of the shared provider account.
     Limits,
     /// List per-session usage.
     Ls {
         #[arg(long)]
         filter: Option<String>,
     },
-    /// Show one session, or the organization total with --org.
-    Show {
-        session_id: Option<String>,
-        #[arg(long, conflicts_with = "session_id")]
-        org: bool,
-        /// Usage filter; organization totals accept only a between date window.
-        #[arg(long, requires = "org", conflicts_with = "session_id")]
-        filter: Option<String>,
-    },
+    /// Show usage for one accessible session.
+    Show { session_id: String },
 }
 
 #[derive(Args, Debug)]
@@ -468,19 +430,10 @@ fn execute(cli: Cli, arguments: &[String]) -> Result<(), Box<dyn std::error::Err
     }
     let root_backend =
         silicon_browser::normalize_backend_url(cli.backend.as_deref().unwrap_or(silicon_browser::DEFAULT_BACKEND_URL))?;
-    if let Some(Command::Testing(service)) = &cli.command {
-        return testing(&root_backend, cli.test, service.command.as_ref(), cli.json);
-    }
-    let backend = test_backend(&root_backend, cli.test);
-    let backend = backend.as_str();
+    let backend = root_backend.as_str();
     match &cli.command {
-        Some(Command::Iam) => {
-            let info = if cli.test.is_some() {
-                let (_, state) = load_selected_state(backend, cli.test)?;
-                Client::iam_with_transport(backend, std::sync::Arc::new(transport(&state)?))?
-            } else {
-                Client::iam(backend)?
-            };
+        Some(Command::Accounts) => {
+            let info = AccountsInfo { app_id: "browser".into() };
             if cli.json {
                 print_json(&info)?;
             } else {
@@ -492,15 +445,13 @@ fn execute(cli: Cli, arguments: &[String]) -> Result<(), Box<dyn std::error::Err
             return report_bug(title, details, pr.as_deref(), cli.json);
         }
         Some(Command::Login { command: Some(LoginCommand::Status), .. }) => {
-            return login_status(backend, cli.test, cli.json, cli.org_id.as_deref());
+            return login_status(backend, None, cli.json, cli.org_id.as_deref());
         }
-        Some(Command::Login { token: Some(token), command: None }) => {
-            let (home, mut state) = load_selected_state(backend, cli.test)?;
+        Some(Command::Login { token, slt, command: None }) if token.is_some() || slt.is_some() => {
+            let token = slt.as_ref().or(token.as_ref()).expect("token checked above");
+            let (home, mut state) = load_selected_state(backend, None)?;
             let request = AuthExchangeRequest { short_lived_token: token.clone(), org_id: cli.org_id.clone() };
-            let auth = match &state.testing {
-                Some(credentials) => Client::exchange_testing(backend, &request, credentials.clone())?,
-                None => Client::exchange(backend, &request)?,
-            };
+            let auth = Client::exchange(backend, &request)?;
             apply_auth_session(&mut state, &home, auth)?;
             if cli.json {
                 print_json(
@@ -515,12 +466,12 @@ fn execute(cli: Cli, arguments: &[String]) -> Result<(), Box<dyn std::error::Err
             }
             return Ok(());
         }
-        Some(Command::Login { token: None, command: None }) => {
-            return Err("usage: browser login <short-lived-token>".into());
+        Some(Command::Login { token: None, slt: None, command: None }) => {
+            return Err("usage: browser login --slt <short-lived-token>".into());
         }
         _ => {}
     }
-    let (home, mut state) = load_selected_state(backend, cli.test)?;
+    let (home, mut state) = load_selected_state(backend, None)?;
     if state.stored_token().is_some() && state.credential_generation.is_none() {
         state = State::update(&home, |saved| {
             if saved.credential_generation.is_none() {
@@ -532,8 +483,8 @@ fn execute(cli: Cli, arguments: &[String]) -> Result<(), Box<dyn std::error::Err
     if let Some(Command::Setup { org }) = &cli.command {
         // Refresh stored credentials against their stored issuer and org before applying
         // one-command overrides. Setup is also the recovery path, so a failed refresh must not
-        // prevent an interactive replacement with a new single-use IAM token. Any explicit
-        // environment credential takes precedence, including an oac_ token that setup will
+        // prevent an interactive replacement with a new single-use Silicon Accounts token. Any explicit
+        // environment credential takes precedence, including an slt_ token that setup will
         // exchange, so it must not first rotate an unrelated stored credential.
         let refresh_failure = if environment_auth_token().is_some() {
             None
@@ -642,100 +593,13 @@ fn report_bug(title: &str, details: &str, pr: Option<&str>, json: bool) -> Resul
     Ok(())
 }
 
-fn test_backend(root: &str, environment: Option<uuid::Uuid>) -> String {
-    environment.map_or_else(|| root.to_owned(), |id| format!("{root}/testing/{id}"))
-}
-
 fn load_selected_state(
     backend: &str,
-    environment: Option<uuid::Uuid>,
+    _environment: Option<uuid::Uuid>,
 ) -> Result<(std::path::PathBuf, State), Box<dyn std::error::Error>> {
     let home = state::home_for_backend(&default_home(), backend)?;
     let state = State::load(&home)?;
-    if let Some(environment) = environment
-        && state.testing.is_none()
-    {
-        return Err(format!("IAM test environment {environment} is not enrolled for this backend; run `browser testing login --credentials-stdin` with private credentials JSON, then retry with --test {environment}").into());
-    }
     Ok((home, state))
-}
-
-fn testing(
-    root: &str,
-    selected: Option<uuid::Uuid>,
-    command: Option<&TestingCommand>,
-    json: bool,
-) -> Result<(), Box<dyn std::error::Error>> {
-    match command {
-        None => unreachable!("testing help is handled before state loading"),
-        Some(TestingCommand::Login { credentials_stdin }) => {
-            let credentials: TestingCredentials = if *credentials_stdin {
-                let mut bytes = Vec::new();
-                io::stdin().take(64 * 1024 + 1).read_to_end(&mut bytes)?;
-                if bytes.len() > 64 * 1024 {
-                    return Err("test credentials JSON exceeds 64 KiB".into());
-                }
-                serde_json::from_slice(&bytes).map_err(|error| format!("invalid test credentials JSON at line {}, column {}; expected app_secret, optional iam_test_key and briefcase_test_environment_key", error.line(), error.column()))?
-            } else {
-                TestingCredentials {
-                    app_secret: std::env::var("SB_TEST_APP_SECRET")
-                        .map_err(|_| "set SB_TEST_APP_SECRET, or use --credentials-stdin")?,
-                    iam_test_key: std::env::var("SB_IAM_TEST_KEY").ok(),
-                    briefcase_test_environment_key: std::env::var("SB_BRIEFCASE_TEST_KEY").ok(),
-                }
-            };
-            credentials.validate()?;
-            let environment = Client::testing_context(root, &credentials)?;
-            if selected.is_some_and(|id| id != environment.environment_id) {
-                return Err(format!("IAM credentials belong to environment {}, which does not match --test {}; no credentials were saved", environment.environment_id, selected.unwrap()).into());
-            }
-            let backend = test_backend(root, Some(environment.environment_id));
-            let home = state::home_for_backend(&default_home(), &backend)?;
-            State::update(&home, |state| {
-                *state = State::default();
-                state.backend_url = backend;
-                state.testing = Some(credentials);
-            })?;
-            if json {
-                print_json(
-                    &serde_json::json!({"configured": true, "authenticated": false, "environment": environment}),
-                )?;
-            } else {
-                println!(
-                    "enrolled {} ({}) for {}; next: browser --test {} login <test-actor-id> --org-id <org>",
-                    environment.name, environment.environment_id, environment.app_id, environment.environment_id
-                );
-            }
-        }
-        Some(TestingCommand::Status) => {
-            let id = selected.ok_or("select an environment: browser --test <environment-uuid> testing status --json; enroll with browser testing login")?;
-            let backend = test_backend(root, Some(id));
-            let home = state::home_for_backend(&default_home(), &backend)?;
-            let state = State::load(&home)?;
-            let Some(credentials) = state.testing else {
-                let guidance = "enroll with browser testing login --credentials-stdin, then retry with --test";
-                if json {
-                    print_json(&serde_json::json!({"configured": false, "environment_id": id, "guidance": guidance}))?;
-                } else {
-                    println!("environment {id} is not enrolled; {guidance}");
-                }
-                return Ok(());
-            };
-            let environment = Client::testing_context(root, &credentials)?;
-            if environment.environment_id != id {
-                return Err(
-                    "saved test credentials belong to a different IAM environment; run browser testing login again"
-                        .into(),
-                );
-            }
-            if json {
-                print_json(&serde_json::json!({"configured": true, "environment": environment}))?;
-            } else {
-                println!("verified {} ({}) for {}", environment.name, environment.environment_id, environment.app_id);
-            }
-        }
-    }
-    Ok(())
 }
 
 fn login_status(
@@ -761,18 +625,23 @@ fn login_status(
     if let Some(org) = org_override {
         state.org_id = Some(org.to_owned());
     }
-    let authenticated = match state.token() {
+    if state.org_id.is_none() {
+        state.org_id = Some("browser".into());
+    }
+    let identity = match state.token() {
         Some(token) => match client_with_token(&state, &token).and_then(|client| Ok(client.me()?)) {
-            Ok(_) => true,
-            Err(error) if is_unauthenticated(error.as_ref()) => false,
+            Ok(identity) => Some(identity),
+            Err(error) if is_unauthenticated(error.as_ref()) => None,
             Err(error) => return Err(error),
         },
-        None => false,
+        None => None,
     };
     if json {
-        print_json(&serde_json::json!({"authenticated": authenticated}))?;
+        print_json(&serde_json::json!({"authenticated": identity.is_some(), "identity": identity}))?;
+    } else if let Some(identity) = identity {
+        println!("authenticated as {} ({:?}, {})", identity.name, identity.kind, identity.id);
     } else {
-        println!("{}", if authenticated { "authenticated" } else { "not authenticated" });
+        println!("not authenticated");
     }
     Ok(())
 }
@@ -798,21 +667,21 @@ fn validate_runtime_environment_auth(state: &State) -> Result<(), Box<dyn std::e
     let Some(token) = environment_auth_token() else {
         return Ok(());
     };
-    if token.starts_with("oat_") {
+    if accounts_access_token(&token) {
         return Ok(());
     }
-    if token.starts_with("oac_") && state.stored_token().is_some() {
-        // An exported single-use setup token must never shadow the OAT obtained
+    if token.starts_with("slt_") && state.stored_token().is_some() {
+        // An exported single-use setup token must never shadow the access token obtained
         // from it. State::token deliberately ignores this known family.
         return Ok(());
     }
-    if token.starts_with("oac_") {
+    if token.starts_with("slt_") {
         return Err(
-            "SB_AUTHTOKEN contains an IAM oac_ short-lived token; run `browser setup` to exchange it and select an organization"
+            "SB_AUTHTOKEN contains a Silicon Accounts slt_ short-lived token; run `browser setup` to exchange it"
                 .into(),
         );
     }
-    Err("SB_AUTHTOKEN must be an IAM oat_ access token, or an oac_ short-lived token exchanged with `browser setup`"
+    Err("SB_AUTHTOKEN must be a Silicon Accounts JWT access token, or an slt_ short-lived token exchanged with `browser setup`"
         .into())
 }
 
@@ -843,19 +712,20 @@ fn resolve_org_if_missing(state: &mut State, home: &std::path::Path) -> Result<(
 
 fn sole_bound_org(orgs: Vec<Org>) -> Result<String, Box<dyn std::error::Error>> {
     match orgs.as_slice() {
-        [] => Err("this token has no accessible organization; run `browser setup` with an IAM token authorized for an organization".into()),
+        [] => Err("this token has no accessible Browser workspace; sign in again with Silicon Accounts".into()),
         [org] => Ok(org.id.clone()),
-        _ => Err("this token can access multiple organizations; pass --org-id <id> explicitly".into()),
+        _ => {
+            Err("the API returned multiple workspaces; Silicon Accounts sign-in requires the Browser workspace".into())
+        }
     }
 }
 
 fn print_service_verbs(command: &Command, json: bool) -> Result<bool, serde_json::Error> {
     let verbs: Option<&[&str]> = match command {
-        Command::Testing(Service { command: None }) => Some(&["login", "status"]),
         Command::Profile(Service { command: None }) => Some(&["ls", "show", "new", "set", "end"]),
         Command::Proxy(Service { command: None }) => Some(&["ls"]),
         Command::Session(Service { command: None }) => Some(&["new", "ls", "show", "live", "logs", "sync", "end"]),
-        Command::Recording(Service { command: None }) => Some(&["ls", "show", "send", "rm"]),
+        Command::Recording(Service { command: None }) => Some(&["ls", "show", "rm"]),
         Command::Usage(Service { command: None }) => Some(&["ls", "show"]),
         _ => None,
     };
@@ -896,12 +766,12 @@ fn setup(
         if !io::stdin().is_terminal() {
             if let Some(error) = refresh_failure {
                 return Err(format!(
-                    "stored authentication could not be refreshed: {error}; rerun `browser setup` interactively with a new IAM short-lived token"
+                    "stored authentication could not be refreshed: {error}; rerun `browser setup` interactively with a new Silicon Accounts short-lived token"
                 )
                 .into());
             }
             return Err(
-                "no auth token: set SB_AUTHTOKEN to an oat_ access token, or run `browser setup` with an IAM oac_ short-lived token"
+                "no auth token: set SB_AUTHTOKEN to a JWT access token, or run `browser setup` with a Silicon Accounts slt_ short-lived token"
                     .into(),
             );
         }
@@ -913,7 +783,7 @@ fn setup(
         let auth = Auth::new(state.token().ok_or("no auth token")?)?;
         let client = Client::with_transport(state.backend_url.clone(), auth, std::sync::Arc::new(transport(state)?))?;
         match client.orgs() {
-            Ok(orgs) => state.org_id = Some(select_org(orgs)?),
+            Ok(orgs) => state.org_id = Some(sole_bound_org(orgs)?),
             Err(_) if can_replace_auth && !exchanged => {
                 exchange_setup_token(state, home)?;
                 exchanged = true;
@@ -922,8 +792,7 @@ fn setup(
         }
     }
 
-    // Possessing an OAT is not readiness: prove that this exact token can act in the selected
-    // organization before installing anything or printing success.
+    // Verify the exact access token before installing anything or printing success.
     let mut setup_client = client_for_setup(state, exchanged)?;
     let identity = match validate_setup_client(&setup_client) {
         Ok(identity) => identity,
@@ -934,22 +803,34 @@ fn setup(
         }
         Err(error) => return Err(error.into()),
     };
+    let expected_generation = state.credential_generation.clone();
+    let expected_token = state.stored_token().map(str::to_owned);
+    let expected_backend = state.backend_url.clone();
     let services = setup_client.services()?;
-    let delivery = setup_delivery_authorization(&setup_client, &services, state.testing.as_ref())?;
     state.identity_id = Some(identity.id.clone());
     state.services.clone_from(&services);
     let selected_org = state.org_id.clone();
     let persisted_services = services.clone();
-    // An environment OAT belongs only to this invocation. Its validated identity and org
+    // An environment access token belongs only to this invocation. Its validated identity and org
     // must never be attached to a different stored access/refresh credential.
     if environment_kind != Some(SetupEnvironmentTokenKind::Access) {
-        State::update(home, move |latest| {
-            latest.identity_id = Some(identity.id);
-            latest.services = persisted_services;
-            if persist_org {
-                latest.org_id = selected_org;
+        let mut applied = false;
+        State::update(home, |latest| {
+            if latest.credential_generation == expected_generation
+                && latest.stored_token() == expected_token.as_deref()
+                && latest.backend_url == expected_backend
+            {
+                latest.identity_id = Some(identity.id);
+                latest.services = persisted_services;
+                if persist_org {
+                    latest.org_id = selected_org;
+                }
+                applied = true;
             }
         })?;
+        if !applied {
+            return Err("sign-in changed during setup; run setup again".into());
+        }
     }
 
     let mut setup_events = Vec::new();
@@ -984,8 +865,7 @@ fn setup(
             "runner_version": status.version,
             "org": state.org_id,
             "services": services,
-            "events": setup_events,
-            "recording_delivery": delivery
+            "events": setup_events
         }))?;
     } else {
         println!(
@@ -995,53 +875,6 @@ fn setup(
         );
     }
     Ok(())
-}
-
-fn setup_delivery_authorization(
-    client: &Client,
-    services: &[String],
-    testing: Option<&TestingCredentials>,
-) -> Result<Option<DeliveryAuthorization>, Box<dyn std::error::Error>> {
-    if !services.iter().any(|service| service == "recording_delivery") {
-        return Ok(None);
-    }
-    let current = client.delivery_authorization()?;
-    if current.enabled
-        && matches!(current.state, DeliveryAuthorizationState::Active | DeliveryAuthorizationState::Refreshing)
-    {
-        return Ok(Some(current));
-    }
-    if !current.configured || current.state == DeliveryAuthorizationState::Unavailable {
-        return Err("recording delivery is unavailable on this backend; its configuration must be completed before setup is ready".into());
-    }
-    if matches!(current.state, DeliveryAuthorizationState::Pending | DeliveryAuthorizationState::Revoking) {
-        return Err("recording authorization is being updated; retry `browser setup` after it finishes".into());
-    }
-    let token = match std::env::var("SB_RECORDING_SLT").ok().filter(|value| !value.trim().is_empty()) {
-        Some(token) => token,
-        None if testing.is_some() => current.actor_id,
-        None if io::stdin().is_terminal() => rpassword::prompt_password(
-            "Fresh IAM oac_ token for background recording delivery (separate from CLI login): ",
-        )?,
-        None => return Err("recording delivery needs a separate fresh Browser IAM oac_ token; set SB_RECORDING_SLT and rerun `browser setup`, or rerun interactively. Do not reuse the CLI login token.".into()),
-    };
-    if testing.is_none() && !token.starts_with("oac_") {
-        return Err("SB_RECORDING_SLT must be a fresh IAM oac_ short-lived token for Browser".into());
-    }
-    if token.starts_with("oac_") && environment_auth_token().as_deref() == Some(token.as_str()) {
-        return Err("recording delivery requires a different fresh oac_ token from SB_AUTHTOKEN; the CLI login token cannot be reused".into());
-    }
-    let request = DeliveryAuthorizationRequest { short_lived_token: token };
-    let enrolled = match testing {
-        Some(credentials) => client.authorize_delivery_testing(&request, credentials.clone())?,
-        None => client.authorize_delivery(&request)?,
-    };
-    if !enrolled.enabled
-        || !matches!(enrolled.state, DeliveryAuthorizationState::Active | DeliveryAuthorizationState::Refreshing)
-    {
-        return Err(format!("recording delivery authorization is {:?}; setup is not ready", enrolled.state).into());
-    }
-    Ok(Some(enrolled))
 }
 
 fn setup_needs_initial_exchange(has_environment_token: bool, has_stored_token: bool, refresh_failed: bool) -> bool {
@@ -1055,12 +888,12 @@ enum SetupEnvironmentTokenKind {
 }
 
 fn setup_environment_token_kind(token: &str) -> Result<SetupEnvironmentTokenKind, Box<dyn std::error::Error>> {
-    if token.starts_with("oac_") {
+    if token.starts_with("slt_") {
         Ok(SetupEnvironmentTokenKind::ShortLived)
-    } else if token.starts_with("oat_") {
+    } else if accounts_access_token(token) {
         Ok(SetupEnvironmentTokenKind::Access)
     } else {
-        Err("SB_AUTHTOKEN must use IAM's oac_ short-lived-token or oat_ access-token form".into())
+        Err("SB_AUTHTOKEN must use Silicon Accounts slt_ short-lived-token or JWT access-token form".into())
     }
 }
 
@@ -1068,14 +901,15 @@ fn client_for_setup(state: &State, prefer_stored_token: bool) -> Result<Client, 
     if !prefer_stored_token {
         return client(state);
     }
-    let token = state.stored_token().ok_or("IAM exchange did not produce a stored access token")?;
+    let token = state.stored_token().ok_or("Silicon Accounts exchange did not produce a stored access token")?;
     client_with_token(state, token)
 }
 
 fn exchange_setup_token(state: &mut State, home: &std::path::Path) -> Result<(), Box<dyn std::error::Error>> {
     let org_id = state.org_id.clone();
-    let short_lived_token =
-        rpassword::prompt_password("IAM oac_ short-lived token (never your password or long-lived credential): ")?;
+    let short_lived_token = rpassword::prompt_password(
+        "Silicon Accounts slt_ short-lived token (never your password or long-lived credential): ",
+    )?;
     exchange_setup_token_value(state, home, short_lived_token, org_id)
 }
 
@@ -1137,7 +971,7 @@ fn dispatch(
     home: &std::path::Path,
 ) -> Result<(), Box<dyn std::error::Error>> {
     match command {
-        Command::Iam | Command::Login { .. } | Command::ReportBug { .. } | Command::Testing(_) => unreachable!(),
+        Command::Accounts | Command::Login { .. } | Command::ReportBug { .. } => unreachable!(),
         Command::Setup { .. } => unreachable!(),
         Command::Profile(service) => profile(client, service.command, json)?,
         Command::Proxy(service) => match service.command {
@@ -1323,16 +1157,13 @@ fn session(
 
 fn recording(client: &Client, command: Option<RecordingCommand>, json: bool) -> Result<(), Box<dyn std::error::Error>> {
     match command {
-        None => println!("verbs: ls, show, send, rm"),
+        None => println!("verbs: ls, show, rm"),
         Some(RecordingCommand::Ls { filter }) => output(&client.recordings(filter.as_deref())?, json, |recordings| {
             for recording in recordings {
                 println!("{}\t{}", recording.session_name, recording.session_id);
             }
         })?,
         Some(RecordingCommand::Show { session_id }) => output(&client.recording(&session_id)?, json, print_recording)?,
-        Some(RecordingCommand::Send { session_id }) => {
-            output(&client.retry_recording_delivery(&session_id)?, json, print_recording)?
-        }
         Some(RecordingCommand::Rm { session_id }) => {
             output(&client.trash_recording(&session_id)?, json, print_recording)?
         }
@@ -1359,22 +1190,7 @@ fn usage(client: &Client, command: Option<UsageCommand>, json: bool) -> Result<(
                 );
             }
         })?,
-        Some(UsageCommand::Show { session_id: Some(id), org: false, .. }) => {
-            output(&client.usage(&id)?, json, print_usage)?
-        }
-        Some(UsageCommand::Show { session_id: None, org: true, filter }) => {
-            output(&client.org_usage(filter.as_deref())?, json, |total| {
-                println!("scope: organization");
-                println!("organization sessions: {}", total.sessions);
-                println!("browser minutes: {:.2}", total.browser_minutes());
-                println!("proxy GB in/out: {:.6}/{:.6}", total.proxy_gb_in(), total.proxy_gb_out());
-                if total.proxy_bytes_unclassified > 0 {
-                    println!("proxy GB unclassified: {:.6}", total.proxy_gb_unclassified());
-                }
-                println!("cost: {} {}", money_total(&total.cost), total.cost.total.currency);
-            })?
-        }
-        Some(UsageCommand::Show { .. }) => return Err("pass a session id or --org".into()),
+        Some(UsageCommand::Show { session_id: id }) => output(&client.usage(&id)?, json, print_usage)?,
     }
     Ok(())
 }
@@ -1384,12 +1200,8 @@ fn client(state: &State) -> Result<Client, Box<dyn std::error::Error>> {
     client_with_token(state, &token)
 }
 
-fn transport(state: &State) -> Result<silicon_browser::HttpTransport, silicon_browser::Error> {
-    let transport = silicon_browser::HttpTransport::default();
-    match &state.testing {
-        Some(credentials) => transport.with_testing(&state.backend_url, credentials.clone()),
-        None => Ok(transport),
-    }
+fn transport(_state: &State) -> Result<silicon_browser::HttpTransport, silicon_browser::Error> {
+    Ok(silicon_browser::HttpTransport::default())
 }
 
 fn client_with_token(state: &State, token: &str) -> Result<Client, Box<dyn std::error::Error>> {
@@ -1443,13 +1255,23 @@ fn recover_rejected_access(
             return Ok(current.stored_token().map(str::to_owned));
         }
         // A public identity string cannot distinguish another refresh from a concurrent
-        // setup with a different IAM principal. Never transfer queued intent to that token.
+        // setup with a different Accounts principal. Never transfer queued intent to that token.
         return Err("credentials changed after the rejected request; run the command again".into());
     }
     let refresh = current
         .refresh_token()
         .ok_or("no owned refresh token; run `browser setup` with a fresh Browser token")?
         .to_owned();
+    let mut claimed = false;
+    State::update(home, |latest| {
+        if matches_binding(latest) && latest.refresh_token() == Some(refresh.as_str()) {
+            latest.consume_refresh_token();
+            claimed = true;
+        }
+    })?;
+    if !claimed {
+        return Err("sign-in changed before refreshing; run the command again".into());
+    }
     let session = Client::refresh_with_transport(
         backend,
         &AuthRefreshRequest { refresh_token: refresh.clone(), org_id: org.into() },
@@ -1460,7 +1282,7 @@ fn recover_rejected_access(
     }
     let mut applied = false;
     let latest = State::update(home, |latest| {
-        if matches_binding(latest) && latest.refresh_token() == Some(refresh.as_str()) {
+        if matches_binding(latest) && latest.refresh_token().is_none() {
             latest.set_tokens(session.access_token, Some(session.refresh_token), Some(session.expires_at.to_rfc3339()));
             latest.services = session.services;
             applied = true;
@@ -1478,30 +1300,54 @@ fn refresh_if_needed(state: &mut State, home: &std::path::Path) -> Result<(), Bo
     }
     let _guard = refresh_lock(home)?;
     let current = State::load(home)?;
+    if current.credential_generation != state.credential_generation
+        || current.identity_id != state.identity_id
+        || current.backend_url != state.backend_url
+        || current.org_id != state.org_id
+    {
+        return Err("sign-in changed while waiting to refresh; run the command again".into());
+    }
     if !needs_refresh(&current) {
         *state = current;
         return Ok(());
     }
     let refresh_token = current
         .refresh_token()
-        .ok_or("the saved login expired or needs identifier migration and has no refresh token; run `browser setup` with a new IAM short-lived token")?
+        .ok_or("the saved login expired or needs identifier migration and has no refresh token; run `browser setup` with a new Silicon Accounts short-lived token")?
         .to_owned();
     let org_id = current.org_id.clone().ok_or("the saved login has no organization; run `browser setup`")?;
-    // The backend derives a stable idempotency key from the refresh token and organization,
-    // so another command can safely replay an uncertain exchange with the saved credential.
+    let mut claimed = false;
+    State::update(home, |latest| {
+        if latest.refresh_token() == Some(refresh_token.as_str())
+            && latest.credential_generation == current.credential_generation
+            && latest.identity_id == current.identity_id
+            && latest.backend_url == current.backend_url
+            && latest.org_id == current.org_id
+        {
+            latest.consume_refresh_token();
+            claimed = true;
+        }
+    })?;
+    if !claimed {
+        return Err("sign-in changed before refreshing; run the command again".into());
+    }
+    // Accounts rotates a refresh token once; an uncertain response requires a fresh sign-in.
     let session = Client::refresh_with_transport(
         current.backend_url.clone(),
         &AuthRefreshRequest { refresh_token: refresh_token.clone(), org_id },
         std::sync::Arc::new(transport(&current)?),
     )?;
-    if current.identity_id.as_deref().is_some_and(|id| actor_id(id, "identity").is_ok() && id != session.identity.id) {
+    if current.identity_id.as_deref().is_some_and(|id| account_id(id, "identity").is_ok() && id != session.identity.id)
+    {
         return Err("refresh returned a different identity; sign in again".into());
     }
     let mut applied = false;
     let latest = State::update(home, |latest| {
         // A concurrent setup may have replaced the credential while this HTTP request was in
         // flight. Never overwrite that newer credential with this response.
-        if latest.refresh_token() == Some(refresh_token.as_str())
+        if latest.refresh_token().is_none()
+            && latest.credential_generation == current.credential_generation
+            && latest.identity_id == current.identity_id
             && latest.backend_url == current.backend_url
             && latest.org_id == current.org_id
         {
@@ -1512,8 +1358,8 @@ fn refresh_if_needed(state: &mut State, home: &std::path::Path) -> Result<(), Bo
             applied = true;
         }
     })?;
-    if !applied && needs_refresh(&latest) {
-        return Err("credentials changed while refreshing; retry the command".into());
+    if !applied {
+        return Err("sign-in changed while refreshing; run the command again".into());
     }
     *state = latest;
     Ok(())
@@ -1524,7 +1370,10 @@ fn needs_refresh(state: &State) -> bool {
         return false;
     }
     state.stored_token().is_none()
-        || state.identity_id.as_deref().is_none_or(|id| actor_id(id, "identity").is_err())
+        || state
+            .identity_id
+            .as_deref()
+            .is_none_or(|id| account_id(id, "identity").is_err() && actor_id(id, "identity").is_err())
         || state
             .token_expires_at
             .as_deref()
@@ -1588,7 +1437,7 @@ fn print_recording(recording: &Recording) {
     println!(
         "briefcase: {}",
         recording.briefcase_link.as_deref().unwrap_or(match recording.status {
-            RecordingStatus::Pending => "pending OBO storage",
+            RecordingStatus::Pending => "recording pending",
             RecordingStatus::Available => "link unavailable",
             RecordingStatus::Trashed => "trashed",
             RecordingStatus::Failed => "delivery failed",
@@ -1685,40 +1534,6 @@ fn cli_date(value: &str) -> Result<NaiveDate, String> {
     NaiveDate::parse_from_str(value, "%d-%m-%Y").map_err(|_| "expected a valid DD-MM-YYYY date".into())
 }
 
-fn prompt(label: &str) -> io::Result<String> {
-    eprint!("{label}: ");
-    io::stderr().flush()?;
-    let mut value = String::new();
-    io::stdin().read_line(&mut value)?;
-    let value = value.trim().to_owned();
-    if value.is_empty() {
-        Err(io::Error::new(io::ErrorKind::InvalidInput, format!("{label} is required")))
-    } else {
-        Ok(value)
-    }
-}
-
-fn select_org(orgs: Vec<Org>) -> Result<String, Box<dyn std::error::Error>> {
-    match orgs.as_slice() {
-        [] => Err(
-            "this token has no accessible organization; mint an IAM short-lived token authorized for an organization"
-                .into(),
-        ),
-        [org] => Ok(org.id.clone()),
-        many if io::stdin().is_terminal() => {
-            for (index, org) in many.iter().enumerate() {
-                eprintln!("{}: {} ({})", index + 1, org.name, org.id);
-            }
-            let chosen =
-                prompt("organization number")?.parse::<usize>().map_err(|_| "organization must be a number")?;
-            many.get(chosen.saturating_sub(1))
-                .map(|org| org.id.clone())
-                .ok_or_else(|| "organization number is out of range".into())
-        }
-        _ => Err("more than one organization is available; rerun setup with --org <id>".into()),
-    }
-}
-
 fn setup_event(event: &silicon_browser::setup::SetupEvent) -> &'static str {
     match event {
         silicon_browser::setup::SetupEvent::Checking => "checking the local browser controller",
@@ -1791,8 +1606,8 @@ mod tests {
             state.org_id = Some("org".into());
             state.identity_id = Some("reused-name".into());
             state.set_tokens(
-                "oat_other_principal".into(),
-                Some("ort_other_principal".into()),
+                "jwt.other_principal.signature".into(),
+                Some("sar_other_principal".into()),
                 Some("2099-01-01T00:00:00Z".into()),
             );
         })
@@ -1800,14 +1615,15 @@ mod tests {
         let request = silicon_browser::Request {
             method: silicon_browser::Method::Post,
             url: "http://127.0.0.1:1/api/v1/sessions".into(),
-            bearer: Some("oat_old_principal".into()),
+            bearer: Some("jwt.old_principal.signature".into()),
             org: Some("org".into()),
             body: None,
+            idempotency_key: None,
         };
         let error = recover_rejected_access(&home, "http://127.0.0.1:1", "org", Some("reused-name"), None, &request)
             .unwrap_err();
         assert!(error.to_string().contains("credentials changed after"));
-        assert_eq!(State::load(&home).unwrap().stored_token(), Some("oat_other_principal"));
+        assert_eq!(State::load(&home).unwrap().stored_token(), Some("jwt.other_principal.signature"));
     }
 
     #[test]
@@ -1819,21 +1635,22 @@ mod tests {
             state.org_id = Some("org".into());
             state.identity_id = Some("si:actor".into());
             state.credential_generation = Some("generation".into());
-            state.set_tokens("oat_new".into(), Some("ort_new".into()), Some("2099-01-01T00:00:00Z".into()));
+            state.set_tokens("jwt.new.signature".into(), Some("sar_new".into()), Some("2099-01-01T00:00:00Z".into()));
         })
         .unwrap();
         let request = silicon_browser::Request {
             method: silicon_browser::Method::Get,
             url: "http://127.0.0.1:1/api/v1/profiles".into(),
-            bearer: Some("oat_old".into()),
+            bearer: Some("jwt.old.signature".into()),
             org: Some("org".into()),
             body: None,
+            idempotency_key: None,
         };
         assert_eq!(
             recover_rejected_access(&home, "http://127.0.0.1:1", "org", Some("si:actor"), Some("generation"), &request)
                 .unwrap()
                 .as_deref(),
-            Some("oat_new")
+            Some("jwt.new.signature")
         );
         assert!(
             recover_rejected_access(
@@ -1904,7 +1721,7 @@ mod tests {
                 "profile:p1 -> for:@si:silicon-1 -> name:market* -> description:^research -> is:shared",
             ],
             vec!["browser", "recording", "rm", "s1"],
-            vec!["browser", "usage", "show", "--org"],
+            vec!["browser", "usage", "show", "s1"],
             vec!["browser", "search", "query", "--purpose", "reason"],
             vec!["browser", "fetch", "https://example.com", "--purpose", "reason"],
             vec!["browser", "report-bug", "--title", "broken", "--details", "steps and output", "--pr", "owner/repo#1"],
@@ -1969,7 +1786,7 @@ mod tests {
         .unwrap();
         apply_runtime_overrides(&mut state, Some("https://new.example"), Some("new-org"));
         let auth = serde_json::from_value(serde_json::json!({
-            "access_token": "oat_new", "refresh_token": "ort_new",
+            "access_token": "jwt.new.signature", "refresh_token": "sar_new",
             "expires_at": "2030-03-17T17:46:40Z",
             "identity": {"id":"si:silicon-1","name":"Silicon","kind":"silicon"},
             "org": {"id":"new-org","name":"New"}, "services": ["session"]
@@ -1979,8 +1796,8 @@ mod tests {
         let saved = State::load(&home).unwrap();
         assert_eq!(saved.backend_url, "https://new.example");
         assert_eq!(saved.org_id.as_deref(), Some("new-org"));
-        assert_eq!(saved.stored_token(), Some("oat_new"));
-        assert_eq!(saved.refresh_token(), Some("ort_new"));
+        assert_eq!(saved.stored_token(), Some("jwt.new.signature"));
+        assert_eq!(saved.refresh_token(), Some("sar_new"));
     }
 
     /// Test group: endpoint and org overrides only affect the in-memory invocation snapshot.
@@ -2008,7 +1825,7 @@ mod tests {
     #[test]
     fn malformed_or_missing_expiry_requires_refresh() {
         let mut state = State::default();
-        state.set_tokens("oat_old".into(), Some("ort_old".into()), None);
+        state.set_tokens("jwt.old.signature".into(), Some("sar_old".into()), None);
         assert!(needs_refresh(&state));
         state.token_expires_at = Some("not-a-timestamp".into());
         assert!(needs_refresh(&state));
@@ -2030,12 +1847,12 @@ mod tests {
         assert!(!setup_needs_initial_exchange(true, false, true));
     }
 
-    /// Test group: setup distinguishes the two IAM token families locally so
+    /// Test group: setup distinguishes the two Silicon Accounts token families locally so
     /// an unknown credential is never tried as either bearer or exchange input.
     #[test]
     fn setup_environment_token_families_are_explicit() {
-        assert_eq!(setup_environment_token_kind("oac_single-use").unwrap(), SetupEnvironmentTokenKind::ShortLived);
-        assert_eq!(setup_environment_token_kind("oat_access").unwrap(), SetupEnvironmentTokenKind::Access);
+        assert_eq!(setup_environment_token_kind("slt_single-use").unwrap(), SetupEnvironmentTokenKind::ShortLived);
+        assert_eq!(setup_environment_token_kind("jwt.access.signature").unwrap(), SetupEnvironmentTokenKind::Access);
         assert!(setup_environment_token_kind("sat_not-supported-here").is_err());
         assert!(setup_environment_token_kind("unknown").is_err());
     }
@@ -2045,7 +1862,7 @@ mod tests {
     #[test]
     fn automatic_org_resolution_requires_exactly_one_org() {
         assert_eq!(sole_bound_org(vec![Org { id: "tos".into(), name: "TOS".into() }]).unwrap(), "tos");
-        assert!(sole_bound_org(Vec::new()).unwrap_err().to_string().contains("no accessible organization"));
+        assert!(sole_bound_org(Vec::new()).unwrap_err().to_string().contains("no accessible Browser workspace"));
         assert!(
             sole_bound_org(vec![
                 Org { id: "one".into(), name: "One".into() },
@@ -2053,7 +1870,7 @@ mod tests {
             ])
             .unwrap_err()
             .to_string()
-            .contains("multiple organizations")
+            .contains("multiple workspaces")
         );
     }
 
@@ -2068,22 +1885,28 @@ mod tests {
     }
 
     /// Test group: setup readiness comes from a real scoped `me` request, not from merely finding
-    /// an OAT string; an invalid org is rejected without contacting external providers.
+    /// an access token string; an invalid workspace is rejected without contacting external providers.
     #[test]
     fn setup_identity_validation_is_scoped_to_the_selected_org() {
         let transport = Arc::new(SetupMeTransport::default());
-        let allowed =
-            Client::with_transport("https://backend.example", Auth::new("oat_test").unwrap(), transport.clone())
-                .unwrap()
-                .org("org-allowed")
-                .unwrap();
+        let allowed = Client::with_transport(
+            "https://backend.example",
+            Auth::new("jwt.test.signature").unwrap(),
+            transport.clone(),
+        )
+        .unwrap()
+        .org("org-allowed")
+        .unwrap();
         assert_eq!(validate_setup_client(&allowed).unwrap().id, "si:public-silicon");
 
-        let denied =
-            Client::with_transport("https://backend.example", Auth::new("oat_test").unwrap(), transport.clone())
-                .unwrap()
-                .org("org-denied")
-                .unwrap();
+        let denied = Client::with_transport(
+            "https://backend.example",
+            Auth::new("jwt.test.signature").unwrap(),
+            transport.clone(),
+        )
+        .unwrap()
+        .org("org-denied")
+        .unwrap();
         let error = validate_setup_client(&denied).unwrap_err();
         assert!(error.to_string().contains("token cannot access that org"));
 
@@ -2091,7 +1914,7 @@ mod tests {
         assert_eq!(requests.len(), 2);
         assert_eq!(requests[0].org.as_deref(), Some("org-allowed"));
         assert_eq!(requests[1].org.as_deref(), Some("org-denied"));
-        assert!(requests.iter().all(|request| request.bearer.as_deref() == Some("oat_test")));
+        assert!(requests.iter().all(|request| request.bearer.as_deref() == Some("jwt.test.signature")));
     }
 
     /// Test group: service discovery is local and preserves the compact documented verbs.

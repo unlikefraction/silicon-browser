@@ -1,4 +1,4 @@
-"""Offline operator invariants; the Rust migration suite tests cryptographic conversion."""
+"""Historical IAM migration invariants; not part of current release verification."""
 from contextlib import closing
 import importlib.util
 from pathlib import Path
@@ -8,7 +8,7 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-DEPLOY = Path(__file__).resolve().parents[1] / 'deploy'
+DEPLOY = Path(__file__).resolve().parents[3] / 'deploy' / 'legacy' / 'iam'
 sys.path.insert(0, str(DEPLOY))
 spec = importlib.util.spec_from_file_location('public_id_cutover', DEPLOY / 'public-id-cutover.py')
 operator = importlib.util.module_from_spec(spec)

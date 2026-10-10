@@ -43,6 +43,9 @@ impl Identity {
 
 impl Validate for Identity {
     fn validate(&self) -> Result<(), ValidationError> {
+        if crate::account_id(&self.id, "identity.id").is_ok() {
+            return Ok(());
+        }
         if actor_id(&self.id, "identity.id")? != self.kind {
             return Err(ValidationError::Invalid {
                 field: "identity.kind",
@@ -60,101 +63,17 @@ pub struct Org {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct IamInfo {
+pub struct AccountsInfo {
     pub app_id: String,
 }
 
-/// Explicit developer enrollment for one IAM test environment. Never used for production login.
-#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct TestingCredentials {
-    pub app_secret: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub iam_test_key: Option<String>,
-    /// The imported Briefcase IAM app secret (`ask_` plus 43 base64url characters)
-    /// from this same test environment. The field name is retained for wire compatibility.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub briefcase_test_environment_key: Option<String>,
-}
-
-impl fmt::Debug for TestingCredentials {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter.write_str("TestingCredentials([REDACTED])")
-    }
-}
-
-impl Validate for TestingCredentials {
-    fn validate(&self) -> Result<(), ValidationError> {
-        opaque_auth_token(&self.app_secret, "ask_", "app_secret")?;
-        if let Some(value) = &self.iam_test_key
-            && (value.len() != 32 || !value.bytes().all(|byte| byte.is_ascii_alphanumeric()))
-        {
-            return Err(ValidationError::Invalid {
-                field: "iam_test_key",
-                reason: "expected exactly 32 ASCII letters or digits".into(),
-            });
-        }
-        if let Some(value) = &self.briefcase_test_environment_key
-            && (value.len() != 47
-                || !value.starts_with("ask_")
-                || !value[4..].bytes().all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-')))
-        {
-            return Err(ValidationError::Invalid {
-                field: "briefcase_test_environment_key",
-                reason: "expected the imported Briefcase app secret: ask_ followed by 43 base64url characters".into(),
-            });
-        }
-        Ok(())
-    }
-}
-
-#[cfg(test)]
-#[test]
-fn test_credentials_validate_optional_keys_without_debugging_secrets() {
-    let mut credentials = TestingCredentials {
-        app_secret: "ask_private".into(),
-        iam_test_key: None,
-        briefcase_test_environment_key: None,
-    };
-    assert!(credentials.validate().is_ok());
-    credentials.iam_test_key = Some("a".repeat(32));
-    credentials.briefcase_test_environment_key = Some(format!("ask_{}_-9", "B".repeat(40)));
-    assert!(credentials.validate().is_ok());
-    assert_eq!(format!("{credentials:?}"), "TestingCredentials([REDACTED])");
-    for secret in [
-        "B".repeat(32),
-        format!("ask_{}", "B".repeat(42)),
-        format!("ask_{}", "B".repeat(44)),
-        format!("ort_{}", "B".repeat(43)),
-        format!("ask_{}+", "B".repeat(42)),
-    ] {
-        credentials.briefcase_test_environment_key = Some(secret);
-        assert!(credentials.validate().is_err());
-    }
-    credentials.briefcase_test_environment_key = Some(format!("ask_{}", "B".repeat(43)));
-    credentials.iam_test_key = Some("a".repeat(31));
-    assert!(credentials.validate().is_err());
-    credentials.iam_test_key = None;
-    credentials.app_secret = "ask_bad\nheader".into();
-    assert!(credentials.validate().is_err());
-    assert!(serde_json::from_str::<TestingCredentials>(r#"{"app_secret":"ask_private","unexpected":true}"#).is_err());
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct TestingEnvironment {
-    pub environment_id: uuid::Uuid,
-    pub app_id: String,
-    pub name: String,
-}
-
-/// Exchanges an IAM short-lived token (SLT) for browser OAuth-style tokens.
+/// Exchanges a Silicon Accounts short-lived token (SLT) for browser OAuth-style tokens.
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct AuthExchangeRequest {
     #[serde(alias = "token")]
     pub short_lived_token: String,
-    /// Optional workspace preference among organizations already authorized in IAM.
-    /// When absent, Browser selects the first authorized organization by ID.
+    /// Browser workspace. Silicon Accounts does not provide organization membership.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub org_id: Option<OrgId>,
 }
@@ -171,56 +90,11 @@ impl fmt::Debug for AuthExchangeRequest {
 
 impl Validate for AuthExchangeRequest {
     fn validate(&self) -> Result<(), ValidationError> {
-        opaque_auth_token(&self.short_lived_token, "oac_", "short_lived_token")?;
+        opaque_auth_token(&self.short_lived_token, "slt_", "short_lived_token")?;
         if let Some(org) = &self.org_id {
             identifier(org, "org_id")?;
         }
         Ok(())
-    }
-}
-
-impl AuthExchangeRequest {
-    /// Test-only actor selection is valid only after the caller verifies developer enrollment.
-    /// Production callers must continue using `Validate::validate`.
-    pub fn validate_testing(&self) -> Result<(), ValidationError> {
-        if self.short_lived_token.starts_with("oac_") {
-            return self.validate();
-        }
-        actor_id(&self.short_lived_token, "short_lived_token")?;
-        if let Some(org) = &self.org_id {
-            identifier(org, "org_id")?;
-        }
-        Ok(())
-    }
-}
-
-#[cfg(test)]
-#[test]
-fn actor_login_requires_testing_and_rejects_other_credentials() {
-    for actor in ["c:worker0", "si:worker", "si:worker-1", "oac_one_use"] {
-        let request = AuthExchangeRequest { short_lived_token: actor.into(), org_id: Some("tos".into()) };
-        assert!(request.validate_testing().is_ok(), "{actor}");
-        assert_eq!(request.validate().is_ok(), actor.starts_with("oac_"));
-    }
-    for actor in [
-        "",
-        ":tos",
-        "worker:",
-        "a:b:c",
-        "two words",
-        "worker\nheader",
-        "ask_private",
-        "oat_private",
-        "ort_private",
-        "iat_private",
-        "irt_private",
-        "cat_private",
-        "sat_private",
-        "crt_private",
-        "srt_private",
-    ] {
-        let request = AuthExchangeRequest { short_lived_token: actor.into(), org_id: None };
-        assert!(request.validate_testing().is_err(), "{actor}");
     }
 }
 
@@ -244,13 +118,13 @@ impl fmt::Debug for AuthRefreshRequest {
 
 impl Validate for AuthRefreshRequest {
     fn validate(&self) -> Result<(), ValidationError> {
-        opaque_auth_token(&self.refresh_token, "ort_", "refresh_token")?;
+        opaque_auth_token(&self.refresh_token, "sar_", "refresh_token")?;
         identifier(&self.org_id, "org_id")?;
         Ok(())
     }
 }
 
-/// Tokens returned by IAM. Callers must persist these owner-only and atomically.
+/// Tokens returned by Silicon Accounts. Callers must persist these owner-only and atomically.
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AuthSession {
     pub access_token: String,
@@ -280,8 +154,13 @@ impl fmt::Debug for AuthSession {
 
 impl Validate for AuthSession {
     fn validate(&self) -> Result<(), ValidationError> {
-        opaque_auth_token(&self.access_token, "oat_", "access_token")?;
-        opaque_auth_token(&self.refresh_token, "ort_", "refresh_token")?;
+        if !crate::accounts_access_token(&self.access_token) {
+            return Err(ValidationError::Invalid {
+                field: "access_token",
+                reason: "expected a bounded Silicon Accounts JWT".into(),
+            });
+        }
+        opaque_auth_token(&self.refresh_token, "sar_", "refresh_token")?;
         self.identity.validate()?;
         identifier(&self.org.id, "org.id")?;
         for service in &self.services {
@@ -1131,7 +1010,7 @@ mod model_tests {
     #[test]
     fn request_payloads_reject_unknown_fields() {
         rejects_unknown_field::<AuthExchangeRequest>(json!({"short_lived_token": "slt_value", "org_id": "tos"}));
-        rejects_unknown_field::<AuthRefreshRequest>(json!({"refresh_token": "ort_value", "org_id": "tos"}));
+        rejects_unknown_field::<AuthRefreshRequest>(json!({"refresh_token": "sar_value", "org_id": "tos"}));
         rejects_unknown_field::<ProfileCreate>(json!({"name": "primary", "location": "in", "access": []}));
         rejects_unknown_field::<ProfileUpdate>(json!({"name": "renamed"}));
         rejects_unknown_field::<ProfileEnd>(json!({"note": "done"}));
@@ -1228,43 +1107,43 @@ mod model_tests {
         assert!(ProfileUpdate { name: Some("new name".into()), access: None }.validate().is_ok());
     }
 
-    /// Test group: IAM secrets never appear in Debug output and token families validate.
+    /// Test group: Accounts secrets never appear in Debug output and token families validate.
     #[test]
     fn auth_tokens_are_redacted_and_typed() {
-        let exchange = AuthExchangeRequest { short_lived_token: "oac_single_use".into(), org_id: Some("tos".into()) };
+        let exchange = AuthExchangeRequest { short_lived_token: "slt_single_use".into(), org_id: Some("tos".into()) };
         assert!(exchange.validate().is_ok());
         assert_eq!(
             serde_json::to_value(&exchange).unwrap(),
-            json!({"short_lived_token": "oac_single_use", "org_id": "tos"})
+            json!({"short_lived_token": "slt_single_use", "org_id": "tos"})
         );
-        assert!(!format!("{exchange:?}").contains("oac_single_use"));
+        assert!(!format!("{exchange:?}").contains("slt_single_use"));
         assert!(
-            AuthExchangeRequest { short_lived_token: "oac_single_use".into(), org_id: Some(String::new()) }
+            AuthExchangeRequest { short_lived_token: "slt_single_use".into(), org_id: Some(String::new()) }
                 .validate()
                 .is_err()
         );
         assert!(
-            AuthExchangeRequest { short_lived_token: "oat_wrong_family".into(), org_id: Some("tos".into()) }
+            AuthExchangeRequest { short_lived_token: "jwt.wrong_family.signature".into(), org_id: Some("tos".into()) }
                 .validate()
                 .is_err()
         );
         assert!(
             serde_json::from_value::<AuthExchangeRequest>(json!({
-                "short_lived_token": "oac_single_use"
+                "short_lived_token": "slt_single_use"
             }))
             .is_ok()
         );
 
-        let request = AuthRefreshRequest { refresh_token: "ort_secret".into(), org_id: "tos".into() };
+        let request = AuthRefreshRequest { refresh_token: "sar_secret".into(), org_id: "tos".into() };
         assert!(request.validate().is_ok());
-        assert!(!format!("{request:?}").contains("ort_secret"));
+        assert!(!format!("{request:?}").contains("sar_secret"));
 
-        let bad = AuthRefreshRequest { refresh_token: "oat_wrong-family".into(), org_id: "tos".into() };
+        let bad = AuthRefreshRequest { refresh_token: "jwt.wrong-family.signature".into(), org_id: "tos".into() };
         assert!(bad.validate().is_err());
 
         let mut session = AuthSession {
-            access_token: "oat_access".into(),
-            refresh_token: "ort_refresh".into(),
+            access_token: "jwt.access.signature".into(),
+            refresh_token: "sar_refresh".into(),
             expires_at: Utc.timestamp_opt(1_800_000_000, 0).unwrap(),
             identity: Identity {
                 id: "si:silicon-1".into(),
@@ -1281,7 +1160,7 @@ mod model_tests {
         assert!(session.validate().is_err());
         session.identity.id = "c:alice0".into();
         assert!(session.validate().is_ok());
-        session.access_token = "oat_bad\nheader".into();
+        session.access_token = "jwt.bad.signature\nheader".into();
         assert!(session.validate().is_err());
     }
 

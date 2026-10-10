@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Rehearse or apply the typed public-ID namespace upgrade without starting APIs or workers.
+"""Historical IAM public-ID migration; not applicable to the Accounts backend.
 
 Apply requires a stopped Browser service. A failed offline conversion restores
 all databases from the new snapshot while the service remains stopped. Once the
@@ -17,7 +17,10 @@ import shlex
 import shutil
 import sqlite3
 import subprocess
+import sys
 
+# Keep the archived helper executable against the retained backup module.
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from backup import snapshots
 
 ROOT = Path('/var/lib/silicon-browser/browser.db')

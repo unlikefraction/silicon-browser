@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Opt-in live auth contract checks; no browser/provider sessions are created.
+"""Historical IAM live auth checks; unsupported by the current Accounts backend.
 
 Run against a backend configured with IAM_TEST_ENVIRONMENT_KEY. Supply a fresh
 IAM SLT authorized for the test organization in SB_TEST_SLT, its org in

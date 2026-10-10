@@ -1,5 +1,11 @@
 # Architecture and readiness evidence — 2026-09-06
 
+> Historical architecture and readiness evidence for the retired IAM and
+> Briefcase integrations. These results do not verify the current Accounts
+> backend. See [Deployment](DEPLOYMENT.md) and [Apps](APPS.md) for current
+> architecture, configuration, and release instructions. The original record is
+> preserved below.
+
 The current architecture is a local usability wrapper: `browser` runs its native controller on the caller's machine and connects directly to the remote browser. AWS supplies IAM-backed access, profile/session management, sensitive connection capabilities, usage and cooperative command-log storage. It never executes browser commands or relays their output. Vercel hosts a minimal SolidJS/TypeScript frontend whose live iframe connects directly to the remote viewer.
 
 The native AWS daemon also performs completed-recording delivery and shared-key search/fetch scheduling. These separate integrations remain server-side. Neither Docker nor an AWS browser-controller installation is required. See [deployment layout](DEPLOYMENT.md) for configuration and traffic paths.

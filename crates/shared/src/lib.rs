@@ -1,25 +1,23 @@
 //! Stable domain and wire contracts shared by every Silicon Browser component.
 //!
-//! Identifiers deliberately remain strings: IAM, the browser provider, and
+//! Identifiers deliberately remain strings: Silicon Accounts, the browser provider, and
 //! Briefcase own their formats. Validation here checks only guarantees Silicon
 //! Browser itself can safely enforce.
 
 mod access;
-mod delivery;
 mod error;
 mod filter;
 mod model;
 mod validation;
 
 pub use access::AccessList;
-pub use delivery::*;
 pub use error::{ApiError, ApiErrorEnvelope, Envelope, FieldError};
 pub use filter::{
     FilterError, RecordingFacet, RecordingFilter, RecordingPredicate, SessionFacet, SessionFilter, SessionPredicate,
     TextPattern, UsageFilter, UsagePredicate,
 };
 pub use model::*;
-pub use validation::{Validate, ValidationError, actor_id, app_id};
+pub use validation::{Validate, ValidationError, account_id, accounts_access_token, actor_id, app_id};
 
 pub type IdentityId = String;
 pub type OrgId = String;

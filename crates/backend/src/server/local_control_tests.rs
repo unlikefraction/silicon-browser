@@ -10,7 +10,7 @@ async fn start(fixture: &Fixture, carbon: bool, profile: bool) -> Session {
             "POST",
             "/api/v1/profiles",
             Some((token, "org-1")),
-            Some(json!({"name":"Shared","location":"in","access":["@c:viewer-1", "workers"]})),
+            Some(json!({"name":"Shared","location":"in","access":["@c:viewer-1"]})),
         )
         .await;
         assert_eq!(status, StatusCode::OK, "{}", String::from_utf8_lossy(&body));
@@ -288,8 +288,7 @@ async fn five_hundred_concurrent_clients_read_connections_and_report_without_bro
     let mut workers = tokio::task::JoinSet::new();
     for i in 0..500 {
         let token = format!("oat_load_{i}");
-        let mut identity = principal(&format!("si:worker-{i}"), IdentityKind::Silicon, true);
-        identity.tags = Some(vec!["workers".into()]);
+        let identity = principal("si:owner-1", IdentityKind::Silicon, true);
         fixture.identity.allow_identity(&token, identity);
         let (app, session, barrier) = (fixture.app.clone(), session.clone(), barrier.clone());
         workers.spawn(async move {
@@ -333,7 +332,7 @@ async fn five_hundred_concurrent_clients_read_connections_and_report_without_bro
     assert_eq!(fixture.browser.state.lock().unwrap().get_calls, 0);
     assert_eq!(fixture.browser.state.lock().unwrap().browsers.len(), 1);
     eprintln!(
-        "500 clients / 1000 authenticated metadata requests: p50={:?} p95={:?} max={:?}; fake IAM/provider, local SQLite WAL",
+        "500 clients / 1000 authenticated metadata requests: p50={:?} p95={:?} max={:?}; fake Accounts/provider, local SQLite WAL",
         timings[249], timings[474], timings[499]
     );
 }

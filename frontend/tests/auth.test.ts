@@ -1,60 +1,79 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { loginUrl, readEntry, requireLiveEnvironment, liveOrganization, matchingCallback, IAM_AUTH_ORIGIN } from '../src/auth';
+import { loginUrl, readEntry, matchingCallback, matchingRedirect, signInPopup, ACCOUNTS_ORIGIN } from '../src/auth';
 
-test('IAM popup uses canonical application without an organization, with a nonce in callback', () => {
-  const url = new URL(loginUrl('https://browser.teamofsilicons.com', 'random-nonce'));
-  assert.equal(url.origin, IAM_AUTH_ORIGIN); assert.equal(url.pathname, '/login'); assert.equal(url.searchParams.get('app_id'), 'browser'); assert.equal(url.searchParams.get('org_id'), null);
-  const callback = new URL(url.searchParams.get('redirect_uri')!); assert.equal(callback.origin, 'https://browser.teamofsilicons.com'); assert.equal(callback.pathname, '/auth/callback'); assert.equal(callback.searchParams.get('nonce'), 'random-nonce');
+const origin = 'https://browser.teamofsilicons.com';
+function attempt() {
+  const attempt_id = '11111111-1111-4111-8111-111111111111', state = `${attempt_id}.${'a'.repeat(64)}`;
+  const url = new URL('/authorize', ACCOUNTS_ORIGIN);
+  url.search = new URLSearchParams({ app_id:'browser', redirect_uri:`${origin}/auth/callback`, response_type:'code', state, code_challenge:'b'.repeat(43), code_challenge_method:'S256' }).toString();
+  return { attempt_id, state, authorize_url:url.href };
+}
+test('Carbon sign-in uses the backend PKCE attempt and only the Accounts authorize page', () => {
+  const valid = attempt();
+  assert.equal(loginUrl(origin, valid), valid.authorize_url);
+  for (const change of [
+    (url: URL) => { url.hostname = 'evil.example'; },
+    (url: URL) => { url.pathname = '/login'; },
+    (url: URL) => { url.searchParams.set('state', 'another'); },
+    (url: URL) => { url.searchParams.set('code_challenge_method', 'plain'); },
+    (url: URL) => { url.searchParams.set('redirect_uri', `${origin}/auth/callback?attempt_id=another`); },
+    (url: URL) => { url.searchParams.set('redirect_uri', 'https://evil.example/auth/callback?attempt_id=request-id'); },
+  ]) {
+    const url = new URL(valid.authorize_url); change(url);
+    assert.throws(() => loginUrl(origin, {...valid, authorize_url:url.href}));
+  }
 });
-test('callback credentials and live grant are stripped from displayed entry URL', () => {
-  const callback = readEntry(new URL('https://browser.teamofsilicons.com/auth/callback?nonce=n&slt=oac_private#extra'));
-  assert.equal(callback.cleanPath, '/auth/callback'); assert.equal(callback.callback?.token, 'oac_private');
-  const live = readEntry(new URL('https://browser.teamofsilicons.com/sessions/session%201/live#grant=private'));
+test('callback codes and live grants are stripped from the displayed entry URL', () => {
+  const request = attempt();
+  const callback = readEntry(new URL(`${origin}/auth/callback?state=${request.state}&code=sac_private#extra`));
+  assert.equal(callback.callback?.attempt, request.attempt_id);
+  assert.equal(callback.cleanPath, '/auth/callback'); assert.equal(callback.callback?.code, 'sac_private');
+  const live = readEntry(new URL(`${origin}/sessions/session%201/live#grant=private&org=browser`));
   assert.deepEqual(live.pending, {id:'session 1',grant:'private'}); assert.equal(live.cleanPath, '/sessions/session%201/live');
 });
-test('live invitations open in their issuing organization among those one sign-in reaches', () => {
-  const entry = readEntry(new URL('https://browser.teamofsilicons.com/sessions/session-1/live#grant=private&org=tos'));
-  assert.deepEqual(entry.pending, { id: 'session-1', grant: 'private', orgId: 'tos' });
-  for (const org of ['', 'TOS', 'a/b', 'tos&org=bricks']) {
-    const invalid = readEntry(new URL(`https://browser.teamofsilicons.com/sessions/session-1/live#grant=private&org=${org}`));
-    assert.equal(invalid.pending, null); assert.match(invalid.error, /invalid organization/);
+test('retired organization and testing invitations cannot be redeemed in Browser', () => {
+  for (const selector of ['org=tos', 'org=browser&org=browser', 'test=11111111-1111-4111-8111-111111111111']) {
+    const invalid = readEntry(new URL(`${origin}/sessions/session-1/live#grant=private&${selector}`));
+    assert.equal(invalid.pending, null); assert.match(invalid.error, /older workspace/);
   }
-  const reachable = [{ id: 'bricks', name: 'Bricks' }, { id: 'tos', name: 'Team of Silicons' }];
-  assert.deepEqual(liveOrganization(entry.pending!, 'bricks', reachable), { id: 'tos', name: 'Team of Silicons' });
-  assert.equal(liveOrganization(entry.pending!, 'tos', reachable), null);
-  assert.equal(liveOrganization({ id: 'session-1', grant: 'legacy' }, 'bricks', reachable), null);
-  assert.throws(() => liveOrganization(entry.pending!, 'bricks', [reachable[0]]), /belongs to organization tos/);
 });
 test('unrelated and malformed routes cannot create a live handoff', () => {
-  for (const path of ['/other#grant=x', '/sessions/%zz/live#grant=x', '/sessions/id/live']) assert.equal(readEntry(new URL(`https://browser.teamofsilicons.com${path}`)).pending, null);
+  for (const path of ['/other#grant=x', '/sessions/%zz/live#grant=x', '/sessions/id/live']) assert.equal(readEntry(new URL(`${origin}${path}`)).pending, null);
 });
-test('test live invitations retain their environment and cannot cross production or another environment', () => {
-  const environment = '11111111-1111-4111-8111-111111111111';
-  const entry = readEntry(new URL(`https://browser.teamofsilicons.com/sessions/session-1/live#grant=private&test=${environment}`));
-  assert.deepEqual(entry.pending, { id: 'session-1', grant: 'private', testEnvironmentId: environment });
-  assert.equal(entry.cleanPath, '/sessions/session-1/live');
-  assert.throws(() => requireLiveEnvironment(entry.pending!), /requires testing environment/);
-  assert.throws(() => requireLiveEnvironment(entry.pending!, '22222222-2222-4222-8222-222222222222'), /requires testing environment/);
-  assert.doesNotThrow(() => requireLiveEnvironment(entry.pending!, environment));
-  assert.throws(() => requireLiveEnvironment({ id: 'session-1', grant: 'production' }, environment), /belongs to production/);
-  for (const selector of ['', '../production', `${environment}&test=${environment}`]) {
-    const invalid = readEntry(new URL(`https://browser.teamofsilicons.com/sessions/session-1/live#grant=private&test=${selector}`));
-    assert.equal(invalid.pending, null); assert.match(invalid.error, /invalid/);
-  }
+test('popup handoff requires exact origin, source window, state, attempt and authorization code', () => {
+  const popup = {} as Window, request = attempt();
+  const valid = {origin,source:popup,data:{type:'silicon-browser:sign-in',nonce:request.state,attempt:request.attempt_id,code:'sac_fresh'}};
+  assert.equal(matchingCallback(valid,origin,popup,request),'sac_fresh');
+  for (const event of [ {...valid, origin:'https://evil.example'}, {...valid, source:{} as Window}, {...valid, data:{...valid.data,nonce:'different'}}, {...valid, data:{...valid.data,attempt:'different'}}, {...valid, data:{...valid.data,type:'other'}}, {...valid, data:{...valid.data,code:'sar_wrong'}}, {...valid, data:{...valid.data,code:'sac_bad\nvalue'}} ]) assert.equal(matchingCallback(event,origin,popup,request),null);
 });
-test('popup handoff requires exact same origin, source window, nonce and token type', () => {
-  const popup = {} as Window;
-  const valid = {origin:'https://browser.teamofsilicons.com',source:popup,data:{type:'silicon-browser:sign-in',nonce:'secret-random',token:'oac_fresh'}};
-  assert.equal(matchingCallback(valid,valid.origin,popup,'secret-random'),'oac_fresh');
-  for (const event of [ {...valid, origin:'https://evil.example'}, {...valid, source:{} as Window}, {...valid, data:{...valid.data,nonce:'different'}}, {...valid, data:{...valid.data,type:'other'}}, {...valid, data:{...valid.data,token:'ort_wrong'}}, {...valid, data:{...valid.data,token:'oac_bad\nvalue'}} ]) assert.equal(matchingCallback(event,valid.origin,popup,'secret-random'),null);
+test('popup is reserved before the backend attempt and resolves only its exact code', async () => {
+  const originalWindow = globalThis.window, originalLocation = globalThis.location;
+  let receive!: (event: unknown) => void; const calls: string[] = [];
+  const popup = { closed: false, location: { href: '' }, focus() {}, close() { this.closed = true; } };
+  globalThis.window = { open() { calls.push('popup'); return popup; }, addEventListener(_type: string, listener: typeof receive) { receive = listener; }, removeEventListener() {} } as unknown as Window & typeof globalThis;
+  globalThis.location = { origin } as Location;
+  try {
+    const request = attempt();
+    const pending = signInPopup(async () => { calls.push('backend'); return request; });
+    await Promise.resolve();
+    assert.deepEqual(calls, ['popup', 'backend']);
+    receive({ origin, source: popup, data: {type:'silicon-browser:sign-in',nonce:request.state,attempt:request.attempt_id,code:'sac_once'} });
+    assert.deepEqual(await pending, {attempt_id:request.attempt_id,state:request.state,code:'sac_once'});
+    assert.equal(popup.closed, true);
+  } finally { globalThis.window = originalWindow; globalThis.location = originalLocation; }
 });
-test('detached-opener handoff still requires the initiating nonce and bounded SLT', async () => {
-  const {matchingBroadcast} = await import('../src/auth');
-  const payload = {type:'silicon-browser:sign-in',nonce:'random-secret',token:'oac_one-use'};
-  assert.equal(matchingBroadcast(payload,'random-secret'),'oac_one-use');
-  assert.equal(matchingBroadcast(payload,'another-popup'),null);
-  assert.equal(matchingBroadcast({...payload,token:'ort_refresh'},'random-secret'),null);
-  assert.equal(matchingBroadcast({...payload,token:'oac_'+'x'.repeat(16381)},'random-secret'),null);
-  assert.equal(matchingBroadcast(null,'random-secret'),null);
+
+test('full-page fallback requires its tab-bound attempt and rejects expired state', () => {
+  const original = globalThis.sessionStorage, request = attempt();
+  let saved: unknown = { attempt_id:request.attempt_id, state:request.state, created:Date.now() };
+  globalThis.sessionStorage = { getItem() { return JSON.stringify(saved); } } as unknown as Storage;
+  const callback = {nonce:request.state,attempt:request.attempt_id,code:'sac_once'};
+  try {
+    assert.equal(matchingRedirect(callback), true);
+    assert.equal(matchingRedirect({...callback, nonce:'another'}), false);
+    assert.equal(matchingRedirect({...callback, code:'sar_wrong'}), false);
+    saved = {attempt_id:request.attempt_id, state:request.state, created:Date.now()-600001};
+    assert.equal(matchingRedirect(callback), false);
+  } finally { globalThis.sessionStorage = original; }
 });

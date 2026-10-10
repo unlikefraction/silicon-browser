@@ -1,42 +1,18 @@
 # Frontend verification
 
-## IAM testing additions — 14 September 2026
+## Accounts migration — 10 October 2026
 
-The current frontend adds the visible Testing environment selector, memory-only
-test authentication, actor/token recording authorization, and environment-bound
-live invitations. API regressions cover secret-only enrollment, production
-session preservation, test refresh headers, cancellation by client closure,
-invalid contexts, and refusal to route test requests or grants to production.
+`npm test --prefix frontend` passes 34 tests covering:
 
-Validation uses the CLI: `npm test --prefix frontend` and
-`npm run build --prefix frontend`. Browser UI automation was not run for these
-changes. Deployment and live IAM/provider checks must be established separately.
+- Accounts authorization URL validation and PKCE binding.
+- Exact popup origin, source, state, attempt, and authorization-code matching.
+- Callback credential removal and rejection of retired live-invitation scopes.
+- Stable account UUIDs, saved account switching, and display-handle changes.
+- One refresh per account, clearing persisted refresh tokens before submission, and no replay after ambiguous failures.
+- No cookies or redirect following in API calls; mutation replay only on a pre-handler auth rejection.
+- Static preview deep links, documentation routes, cache policy, CSP, and path restrictions.
+- Recording status and available retry actions.
 
-## Historical verification — 6 September 2026
+`npm run build --prefix frontend` passes TypeScript checking, Vite bundling, and Markdown documentation publication.
 
-The standalone frontend is SolidJS + TypeScript with Vite. The workspace follows the deployed IAM interface's gray rail, white content area, blue controls and IBM Plex Sans/Mono typography. Browser provider names are absent from the normal user flows.
-
-## Automated checks
-
-- `npm test --prefix frontend`: 27 passing contracts covering authentication replay boundaries, concurrent refresh, sign-out races, identity/organization binding, native browser fetch receiver, nonce/source/origin callback checks, detached-opener handoff, safe URLs and command exports, approved API origins, static deep links and headers.
-- `npm run build --prefix frontend`: TypeScript and production Vite build pass.
-- `npm audit --prefix frontend --omit=dev --audit-level=high`: zero production dependency vulnerabilities reported.
-- Production main JavaScript: 44.51 kB, 15.06 kB gzip. Static assets have immutable cache headers; HTML remains `no-store`.
-
-## Real browser checks
-
-Used a separate native browser session with the built static preview on `127.0.0.1:8092`, strict deployment headers and an isolated API fixture on `127.0.0.1:8091`. The fixture uses synthetic tokens and data; these checks do not establish production IAM token exchange, provider browser creation or real recording delivery.
-
-Verified by clicking and filling the actual interface:
-
-1. Login opens the real canonical IAM sign-in page with the Browser application ID; IAM handles organization consent. Returning through a synthetic one-use callback signs in to the fixture API. The callback URL is stripped immediately.
-2. A callback whose opener is absent completes through a same-origin BroadcastChannel keyed by the initiating random nonce. This found a gap that strict `window.opener.postMessage` alone did not handle.
-3. Sessions render; a profile's name and access list can be edited and saved.
-4. Starting a profile session submits its name, description and selected duration, then opens its details.
-5. Live view loads the returned HTTPS URL directly in its iframe. No Browser API route proxies viewer content.
-6. Ending a session submits the closing note and removes active controls. Command logs render safely quoted CLI commands.
-7. Recordings and usage pages render. Recording authorization can be disabled, then re-enabled through a separate fresh popup callback.
-8. Mobile checks at 390 × 844 show no document overflow. Origin-scoped sessionStorage restores the interactive session after reload; localStorage remains empty and credentials do not survive a browser restart.
-9. No JavaScript errors appeared in the completed journey. A browser-native fetch receiver error discovered during the first run was fixed and covered by a regression contract.
-
-The fixture servers and test browser were closed. The last build was restored to the production backend origin. Public deployment and real account/provider verification are recorded separately by the release owner.
+These checks use synthetic access/refresh tokens. Live Accounts credentials, hosted Carbon sign-in, Silicon SLT exchange, provider browser creation, and recording delivery still require verification against configured services. The frontend build does not deploy the website.

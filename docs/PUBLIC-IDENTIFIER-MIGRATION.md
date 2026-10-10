@@ -1,5 +1,10 @@
 # Public identifier migration
 
+> Historical IAM migration record. This procedure and its archived operator do
+> not apply to the Accounts backend. See [Deployment](DEPLOYMENT.md) and
+> [Apps](APPS.md) for current configuration and release instructions. The original
+> record is preserved below.
+
 Browser uses `c:alice` for Carbons, `si:chef` for Silicons, and bare application
 IDs (`browser`, `briefcase`). Organization selection remains explicit. Both
 actor kinds contain a colon; kind must agree with IAM's verified actor type.
@@ -151,7 +156,7 @@ cargo test --locked --workspace --all-targets
 cargo clippy --locked --workspace --all-targets -- -D warnings
 npm test --prefix frontend
 npm run build --prefix frontend
-python3 scripts/test_honeycomb_package.py
+python3 scripts/test_apps_package.py
 ```
 
 The migration regression uses populated disposable SQLite stores. It checks
