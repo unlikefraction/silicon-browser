@@ -61,7 +61,7 @@ real redirect and webhook registration before deployment.
 Use Node 24, Vercel root `frontend` and the Vite preset. Set the public
 `SB_PUBLIC_BACKEND_URL` at build time; no service secret belongs in frontend
 configuration. Requests omit cookies and refuse redirects. Sign-ins are saved
-in origin-scoped sessionStorage for the current tab; callback codes and live
+in origin-scoped localStorage shared across tabs; callback codes and live
 invitation secrets are removed from URLs.
 
 For local checks:

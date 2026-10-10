@@ -22,10 +22,10 @@ export class BrowserApi {
   private generation = 0;
   private refreshing: Promise<void> | null = null;
   private closed = false;
-  constructor(readonly origin: string, private fetcher: typeof fetch = fetch.bind(globalThis), private persist?: (session: AuthSession | null) => void) {}
+  constructor(readonly origin: string, private fetcher: typeof fetch = fetch.bind(globalThis), private persist?: (session: AuthSession | null, previous: AuthSession | null) => void, private renew?: (session: AuthSession, exchange: (latest: AuthSession) => Promise<AuthSession>) => Promise<AuthSession>) {}
   close() { this.closed = true; this.session = null; this.generation++; this.refreshing = null; }
-  setSession(session: AuthSession | null) {
-    this.persist?.(session);
+  setSession(session: AuthSession | null, persist = true) {
+    if (persist) this.persist?.(session, this.session);
     this.session = session; this.generation++;
     this.refreshing = null;
   }
@@ -54,17 +54,24 @@ export class BrowserApi {
     if (!this.session || generation !== this.generation) throw new ApiError('Sign-in changed. Please try again.');
     if (session !== this.session) return;
     if (!this.refreshing) {
-      // Remove the persisted old token before a one-use refresh can reach Accounts.
-      this.persist?.(null);
-      const operation = this.request<AuthSession>('/auth/refresh', 'POST', { refresh_token: session.refresh_token, org_id: session.org.id }, null)
+      const exchange = async (latest: AuthSession) => {
+        if (this.session !== session || generation !== this.generation) throw new ApiError('Sign-in changed during renewal.');
+        const result = await this.request<AuthSession>('/auth/refresh', 'POST', { refresh_token: latest.refresh_token, org_id: latest.org.id }, null);
+        if (!this.renew && (this.session !== session || generation !== this.generation)) throw new ApiError('Sign-in changed during renewal.');
+        return acceptAuth(result, session.org.id, session.identity.id);
+      };
+      // Shared browser storage coordinates rotation across every open tab.
+      if (!this.renew) this.persist?.(null, session);
+      const operation = (this.renew ? this.renew(session, exchange) : exchange(session))
         .then(result => {
           if (this.session !== session || generation !== this.generation) throw new ApiError('Sign-in changed during renewal.');
           const renewed = acceptAuth(result, session.org.id, session.identity.id);
-          this.persist?.(renewed);
+          if (!this.renew) this.persist?.(renewed, session);
           this.session = renewed;
         }).catch(error => {
           if (this.session === session && generation === this.generation) {
-            this.setSession(null);
+            if (this.renew) this.setSession(null, false);
+            else this.setSession(null);
             throw new ApiError('Your sign-in could not be renewed. Sign in again.');
           }
           throw error;

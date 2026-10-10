@@ -14,9 +14,9 @@ silicon-accounts login --app browser
 
 The frontend sends the token directly to `/api/v1/auth/exchange`. A token works once, expires after two minutes, and is bound to Browser. Browser never receives the Silicon's STK.
 
-The API returns a JWT access token, rotating `sar_` refresh token, stable Accounts UUID, and the single `browser` workspace. Account handles can change; saved sign-ins are keyed by UUID. Each signed-in account has its own origin-scoped sessionStorage entry in this tab. Legacy saved sessions require a new sign-in. Browser uses one workspace for all signed-in accounts.
+The API returns a JWT access token, rotating `sar_` refresh token, stable Accounts UUID, and the single `browser` workspace. Account handles can change; saved sign-ins are keyed by UUID. Signed-in accounts persist in origin-scoped localStorage across tabs and browser restarts. Existing tab-scoped Accounts sessions migrate automatically; signing out removes that account across tabs. Legacy saved sessions require a new sign-in. Browser uses one workspace for all signed-in accounts.
 
-A refresh runs once per account at a time. The old token is removed from persisted storage before submission and the new pair is saved on success. A failed or interrupted refresh ends the local sign-in, because retrying a spent Accounts refresh token revokes its entire sign-in. API mutations are replayed only after an explicit pre-handler authentication rejection.
+Native Web Locks serialize refresh across tabs. Each waiting tab rereads the saved pair and adopts an already rotated token. The old token is marked consumed before submission and the new pair is saved on success; pending rotation keeps the workspace visible. A failed or interrupted refresh ends the local sign-in, because retrying a spent Accounts refresh token revokes its entire sign-in. API mutations are replayed only after an explicit pre-handler authentication rejection.
 
 Live invitation grants and sign-in codes are removed from the displayed URL before rendering or making API calls. Live viewers connect directly to their returned HTTPS provider URL. Legacy testing or organization-specific invitations are rejected with instructions to obtain a new invitation.
 

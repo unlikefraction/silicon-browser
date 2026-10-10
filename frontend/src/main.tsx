@@ -9,17 +9,17 @@ import brandMark from './assets/mark.svg';
 import { BrowserApi, acceptAuth, publicError, safeHttps, segment, shellQuote, dateForApi } from './api';
 import { readEntry, completeCallback, signInPopup, matchingRedirect, clearRedirectAttempt, type LoginAttempt } from './auth';
 import { recordingStatusMessage } from './recordings';
-import { TabSession, contextKey } from './session';
+import { BrowserSession, contextKey } from './session';
 import type { AuthSession, Profile, Session, Recording, Usage, UsageLimits, Location, SessionLog } from './types';
 
 const entry = readEntry(new URL(location.href));
 // Remove one-use credentials and live grants before rendering, login, or API requests.
 if (location.hash || location.search) history.replaceState(null, '', entry.cleanPath);
-const savedSession = new TabSession(import.meta.env.SB_BACKEND_ORIGIN);
-const productionApi = new BrowserApi(import.meta.env.SB_BACKEND_ORIGIN, undefined, value => savedSession.save(value));
+const savedSession = new BrowserSession(import.meta.env.SB_BACKEND_ORIGIN);
+const productionApi = new BrowserApi(import.meta.env.SB_BACKEND_ORIGIN, undefined, (value, previous) => savedSession.save(value, previous), (session, exchange) => savedSession.refresh(session, exchange));
 // The popup only hands off its one-use code; it must not restore the opener's session.
 const restored = entry.callback ? null : savedSession.load();
-if (restored) productionApi.setSession(restored);
+if (restored) productionApi.setSession(restored, false);
 const date = (value: string) => new Date(value).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' });
 const cost = (value?: Usage) => value?.cost?.total ? `${(value.cost.total.micros / 1e6).toFixed(4)} ${value.cost.total.currency}` : 'Pending';
 const bytes = (value: number) => value >= 1e9 ? `${(value / 1e9).toFixed(2)} GB` : `${(value / 1e6).toFixed(1)} MB`;
@@ -68,7 +68,7 @@ function App() {
     if (busy()) return;
     setBusy(true); setNotice('');
     try { await task(); } catch (error) {
-      if (auth() && !api.currentSession()) logout();
+      if (auth() && !api.currentSession()) { setAuth(null); clearWorkspace(); loadContexts(); }
       setNotice(publicError(error));
     } finally { setAuth(api.currentSession()); setBusy(false); }
   }
@@ -149,7 +149,9 @@ function App() {
     history.replaceState(null, '', '/');
   }
   function logout() {
-    api.setSession(null); setAuth(null); clearWorkspace(); loadContexts();
+    const current = api.currentSession() ?? auth();
+    if (current) savedSession.forget(current);
+    api.setSession(null, false); setAuth(null); clearWorkspace(); loadContexts();
   }
   async function refreshRecordings(ticket = revision, background = false) {
     if (background && recordingRefreshes) return;
@@ -161,12 +163,27 @@ function App() {
   }
   onMount(() => {
     if (restored) void perform(enterWorkspace);
+    const synchronize = () => {
+      const next = savedSession.load(), current = api.currentSession();
+      loadContexts();
+      // Another tab's token rotation does not change this workspace or its requests.
+      if ((!next && !current) || (next && current && contextKey(next) === contextKey(current))) return;
+      clearWorkspace(); api.setSession(next, false); setAuth(next);
+      if (next) void enterWorkspace().catch(error => setNotice(publicError(error)));
+    };
+    const storageChanged = (event: StorageEvent) => { if (event.key === savedSession.storageKey || event.key === null) synchronize(); };
+    window.addEventListener('storage', storageChanged);
+    window.addEventListener('focus', synchronize);
     const timer = window.setInterval(() => {
       if (auth() && view() === 'recordings' && !busy() && !loading() && recordings().some(item => ['recording', 'pending'].includes(item.status))) {
         void refreshRecordings(revision, true).catch(() => {});
       }
     }, 10000);
-    onCleanup(() => window.clearInterval(timer));
+    onCleanup(() => {
+      window.clearInterval(timer);
+      window.removeEventListener('storage', storageChanged);
+      window.removeEventListener('focus', synchronize);
+    });
   });
   async function newSession(selected?: Profile) {
     setProfile(selected); setView('new-session'); ++revision;
@@ -288,7 +305,7 @@ function App() {
             }}</For></div></Show>
           </Show>
           <Show when={view() === 'usage'}><div class="page-heading"><div><span class="eyebrow">WORKSPACE ACTIVITY</span><h1>Usage</h1><p class="muted">Browser time and network usage for sessions you can access.</p></div>{button('Refresh', () => navigate('usage'))}</div><Show when={total()}>{sum => <div class="stats"><div><span>Browser time</span><strong>{(sum().browser_seconds / 60).toFixed(1)} <small>min</small></strong></div><div><span>Proxy traffic</span><strong>{bytes(sum().proxy_bytes_in + sum().proxy_bytes_out + (sum().proxy_bytes_unclassified || 0))}</strong></div><div><span>Visible sessions</span><strong>{sum().sessions}</strong></div></div>}</Show><Show when={limits()} fallback={<p class="muted">Service capacity is temporarily unavailable.</p>}>{capacity => <p class="muted"><strong>{capacity().concurrent_browser_limit} concurrent browsers</strong> · Shared service limit · Checked {date(capacity().checked_at)}</p>}</Show><div class="table-wrap"><table><thead><tr><th>Session</th><th>Browser time</th><th>Usage</th></tr></thead><tbody><For each={usage()}>{item => <tr><td class="mono">{item.session_id}</td><td>{(item.browser_seconds / 60).toFixed(1)} min</td><td>{cost(item)}</td></tr>}</For></tbody></table><Show when={!usage().length}><Empty>No session usage yet.</Empty></Show></div></Show>
-          <Show when={view() === 'settings'}><div class="page-heading"><div><h1>Settings</h1><p class="muted">Your Browser account.</p></div></div><section class="panel form-panel"><h2>Signed in</h2><dl><dt>Account</dt><dd>{auth()?.identity.name}</dd><dt>Account UUID</dt><dd class="mono">{auth()?.identity.id}</dd><dt>Kind</dt><dd>{auth()?.identity.kind}</dd></dl><p class="fine">You stay signed in when you refresh this tab. Sign out to clear this tab’s saved sign-in.</p><ExternalLink href="https://accounts.teamofsilicons.com">Manage your account</ExternalLink></section></Show>
+          <Show when={view() === 'settings'}><div class="page-heading"><div><h1>Settings</h1><p class="muted">Your Browser account.</p></div></div><section class="panel form-panel"><h2>Signed in</h2><dl><dt>Account</dt><dd>{auth()?.identity.name}</dd><dt>Account UUID</dt><dd class="mono">{auth()?.identity.id}</dd><dt>Kind</dt><dd>{auth()?.identity.kind}</dd></dl><p class="fine">You stay signed in across tabs and browser restarts. Sign out to remove this account from this browser.</p><ExternalLink href="https://accounts.teamofsilicons.com">Manage your account</ExternalLink></section></Show>
           </Show>
         </Show>
       </main><footer><span>Silicon Browser</span><span class="mono">BUILT FOR CARBONS & SILICONS</span></footer>
