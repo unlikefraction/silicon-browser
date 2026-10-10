@@ -64,9 +64,6 @@ struct Cli {
     /// Print structured JSON instead of concise text. Place before the subcommand.
     #[arg(long)]
     json: bool,
-    /// Browser workspace selector (compatibility option; use browser).
-    #[arg(long = "org-id", global = true, env = "SB_ORG_ID", hide_env_values = true)]
-    org_id: Option<String>,
     /// Override the backend URL; setup saves it with newly exchanged credentials.
     #[arg(long, global = true, env = "SB_BACKEND_URL", hide_env_values = true)]
     backend: Option<String>,
@@ -103,11 +100,9 @@ enum Command {
         pr: Option<String>,
     },
     /// Install/check the runner and authenticate with a Silicon Accounts short-lived token.
-    Setup {
-        /// Select the Browser application workspace (browser).
-        #[arg(long)]
-        org: Option<String>,
-    },
+    Setup,
+    /// Remove the saved login on this machine.
+    Logout,
     /// Manage persistent browser identities.
     Profile(Service<ProfileCommand>),
     /// List proxy locations available to new profiles.
@@ -445,24 +440,30 @@ fn execute(cli: Cli, arguments: &[String]) -> Result<(), Box<dyn std::error::Err
             return report_bug(title, details, pr.as_deref(), cli.json);
         }
         Some(Command::Login { command: Some(LoginCommand::Status), .. }) => {
-            return login_status(backend, None, cli.json, cli.org_id.as_deref());
+            return login_status(backend, cli.json);
         }
         Some(Command::Login { token, slt, command: None }) if token.is_some() || slt.is_some() => {
             let token = slt.as_ref().or(token.as_ref()).expect("token checked above");
-            let (home, mut state) = load_selected_state(backend, None)?;
-            let request = AuthExchangeRequest { short_lived_token: token.clone(), org_id: cli.org_id.clone() };
+            let (home, mut state) = load_selected_state(backend)?;
+            let request = AuthExchangeRequest { short_lived_token: token.clone() };
             let auth = Client::exchange(backend, &request)?;
             apply_auth_session(&mut state, &home, auth)?;
             if cli.json {
-                print_json(
-                    &serde_json::json!({"authenticated": true, "org": state.org_id, "identity": state.identity_id}),
-                )?;
+                print_json(&serde_json::json!({"authenticated": true, "identity": state.identity_id}))?;
             } else {
-                println!(
-                    "authenticated as {} in {}",
-                    state.identity_id.as_deref().unwrap_or("authenticated"),
-                    state.org_id.as_deref().unwrap_or("unknown organization")
-                );
+                println!("authenticated as {}", state.identity_id.as_deref().unwrap_or("authenticated"));
+            }
+            return Ok(());
+        }
+        Some(Command::Logout) => {
+            let (home, _) = load_selected_state(backend)?;
+            State::update(&home, |state| {
+                state.clear_login();
+            })?;
+            if cli.json {
+                print_json(&serde_json::json!({"authenticated": false}))?;
+            } else {
+                println!("signed out");
             }
             return Ok(());
         }
@@ -471,7 +472,7 @@ fn execute(cli: Cli, arguments: &[String]) -> Result<(), Box<dyn std::error::Err
         }
         _ => {}
     }
-    let (home, mut state) = load_selected_state(backend, None)?;
+    let (home, mut state) = load_selected_state(backend)?;
     if state.stored_token().is_some() && state.credential_generation.is_none() {
         state = State::update(&home, |saved| {
             if saved.credential_generation.is_none() {
@@ -480,8 +481,8 @@ fn execute(cli: Cli, arguments: &[String]) -> Result<(), Box<dyn std::error::Err
         })?;
     }
 
-    if let Some(Command::Setup { org }) = &cli.command {
-        // Refresh stored credentials against their stored issuer and org before applying
+    if let Some(Command::Setup) = &cli.command {
+        // Refresh stored credentials against their stored issuer before applying
         // one-command overrides. Setup is also the recovery path, so a failed refresh must not
         // prevent an interactive replacement with a new single-use Silicon Accounts token. Any explicit
         // environment credential takes precedence, including an slt_ token that setup will
@@ -491,11 +492,7 @@ fn execute(cli: Cli, arguments: &[String]) -> Result<(), Box<dyn std::error::Err
         } else {
             refresh_if_needed(&mut state, &home).err().map(|error| error.to_string())
         };
-        apply_runtime_overrides(&mut state, None, cli.org_id.as_deref());
-        if let Some(org) = org {
-            state.org_id = Some(org.clone());
-        }
-        setup(&mut state, &home, cli.json, org.is_some() || cli.org_id.is_none(), refresh_failure.as_deref())?;
+        setup(&mut state, &home, cli.json, refresh_failure.as_deref())?;
         return Ok(());
     }
 
@@ -507,8 +504,6 @@ fn execute(cli: Cli, arguments: &[String]) -> Result<(), Box<dyn std::error::Err
 
     validate_runtime_environment_auth(&state)?;
     refresh_if_needed(&mut state, &home)?;
-    apply_runtime_overrides(&mut state, None, cli.org_id.as_deref());
-    resolve_org_if_missing(&mut state, &home)?;
     let Some(command) = cli.command else {
         let client = client(&state)?;
         let identity = client.me()?;
@@ -516,12 +511,10 @@ fn execute(cli: Cli, arguments: &[String]) -> Result<(), Box<dyn std::error::Err
         if cli.json {
             print_json(&serde_json::json!({
                 "identity": identity,
-                "org": state.org_id,
                 "services": services
             }))?;
         } else {
             println!("{} ({:?})", identity.name, identity.kind);
-            println!("org: {}", state.org_id.as_deref().unwrap_or("not selected"));
             if services.is_empty() {
                 println!("services: not advertised for this credential");
             } else {
@@ -593,22 +586,14 @@ fn report_bug(title: &str, details: &str, pr: Option<&str>, json: bool) -> Resul
     Ok(())
 }
 
-fn load_selected_state(
-    backend: &str,
-    _environment: Option<uuid::Uuid>,
-) -> Result<(std::path::PathBuf, State), Box<dyn std::error::Error>> {
+fn load_selected_state(backend: &str) -> Result<(std::path::PathBuf, State), Box<dyn std::error::Error>> {
     let home = state::home_for_backend(&default_home(), backend)?;
     let state = State::load(&home)?;
     Ok((home, state))
 }
 
-fn login_status(
-    backend: &str,
-    environment: Option<uuid::Uuid>,
-    json: bool,
-    org_override: Option<&str>,
-) -> Result<(), Box<dyn std::error::Error>> {
-    let (home, mut state) = load_selected_state(backend, environment)?;
+fn login_status(backend: &str, json: bool) -> Result<(), Box<dyn std::error::Error>> {
+    let (home, mut state) = load_selected_state(backend)?;
     validate_runtime_environment_auth(&state)?;
     let refresh = refresh_if_needed(&mut state, &home);
     if let Err(error) = refresh {
@@ -621,12 +606,6 @@ fn login_status(
             println!("not authenticated");
         }
         return Ok(());
-    }
-    if let Some(org) = org_override {
-        state.org_id = Some(org.to_owned());
-    }
-    if state.org_id.is_none() {
-        state.org_id = Some("browser".into());
     }
     let identity = match state.token() {
         Some(token) => match client_with_token(&state, &token).and_then(|client| Ok(client.me()?)) {
@@ -648,15 +627,6 @@ fn login_status(
 
 fn is_unauthenticated(error: &(dyn std::error::Error + 'static)) -> bool {
     matches!(error.downcast_ref::<silicon_browser::Error>(), Some(silicon_browser::Error::Api { code, .. }) if code == "unauthenticated")
-}
-
-fn apply_runtime_overrides(state: &mut State, backend: Option<&str>, org_id: Option<&str>) {
-    if let Some(backend) = backend {
-        state.backend_url = backend.to_owned();
-    }
-    if let Some(org_id) = org_id {
-        state.org_id = Some(org_id.to_owned());
-    }
 }
 
 fn environment_auth_token() -> Option<String> {
@@ -685,41 +655,6 @@ fn validate_runtime_environment_auth(state: &State) -> Result<(), Box<dyn std::e
         .into())
 }
 
-fn resolve_org_if_missing(state: &mut State, home: &std::path::Path) -> Result<(), Box<dyn std::error::Error>> {
-    if state.org_id.is_some() {
-        return Ok(());
-    }
-    let using_environment_access_token = State::has_environment_access_token();
-    let expected_stored_token = state.stored_token().map(str::to_owned);
-    let token = state.token().ok_or("not signed in: set SB_AUTHTOKEN or run `browser setup`")?;
-    let org_id = sole_bound_org(
-        Client::with_transport(state.backend_url.clone(), Auth::new(token)?, std::sync::Arc::new(transport(state)?))?
-            .orgs()?,
-    )?;
-    state.org_id = Some(org_id.clone());
-
-    // Persist only a selection derived from the same stored credential. An
-    // environment override may belong to a different user and remains process-local.
-    if !using_environment_access_token {
-        State::update(home, move |latest| {
-            if latest.org_id.is_none() && latest.stored_token() == expected_stored_token.as_deref() {
-                latest.org_id = Some(org_id);
-            }
-        })?;
-    }
-    Ok(())
-}
-
-fn sole_bound_org(orgs: Vec<Org>) -> Result<String, Box<dyn std::error::Error>> {
-    match orgs.as_slice() {
-        [] => Err("this token has no accessible Browser workspace; sign in again with Silicon Accounts".into()),
-        [org] => Ok(org.id.clone()),
-        _ => {
-            Err("the API returned multiple workspaces; Silicon Accounts sign-in requires the Browser workspace".into())
-        }
-    }
-}
-
 fn print_service_verbs(command: &Command, json: bool) -> Result<bool, serde_json::Error> {
     let verbs: Option<&[&str]> = match command {
         Command::Profile(Service { command: None }) => Some(&["ls", "show", "new", "set", "end"]),
@@ -744,7 +679,6 @@ fn setup(
     state: &mut State,
     home: &std::path::Path,
     json: bool,
-    persist_org: bool,
     refresh_failure: Option<&str>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let explicit_env = environment_auth_token();
@@ -752,8 +686,7 @@ fn setup(
     let can_replace_auth = explicit_env.is_none() && io::stdin().is_terminal();
     let mut exchanged = false;
     if environment_kind == Some(SetupEnvironmentTokenKind::ShortLived) {
-        let org_id = state.org_id.clone();
-        exchange_setup_token_value(state, home, explicit_env.expect("classified token exists"), org_id)?;
+        exchange_setup_token_value(state, home, explicit_env.expect("classified token exists"))?;
         exchanged = true;
     }
     if !exchanged
@@ -779,19 +712,6 @@ fn setup(
         exchanged = true;
     }
 
-    if state.org_id.is_none() {
-        let auth = Auth::new(state.token().ok_or("no auth token")?)?;
-        let client = Client::with_transport(state.backend_url.clone(), auth, std::sync::Arc::new(transport(state)?))?;
-        match client.orgs() {
-            Ok(orgs) => state.org_id = Some(sole_bound_org(orgs)?),
-            Err(_) if can_replace_auth && !exchanged => {
-                exchange_setup_token(state, home)?;
-                exchanged = true;
-            }
-            Err(error) => return Err(error.into()),
-        }
-    }
-
     // Verify the exact access token before installing anything or printing success.
     let mut setup_client = client_for_setup(state, exchanged)?;
     let identity = match validate_setup_client(&setup_client) {
@@ -809,9 +729,8 @@ fn setup(
     let services = setup_client.services()?;
     state.identity_id = Some(identity.id.clone());
     state.services.clone_from(&services);
-    let selected_org = state.org_id.clone();
     let persisted_services = services.clone();
-    // An environment access token belongs only to this invocation. Its validated identity and org
+    // An environment access token belongs only to this invocation. Its validated identity
     // must never be attached to a different stored access/refresh credential.
     if environment_kind != Some(SetupEnvironmentTokenKind::Access) {
         let mut applied = false;
@@ -822,9 +741,6 @@ fn setup(
             {
                 latest.identity_id = Some(identity.id);
                 latest.services = persisted_services;
-                if persist_org {
-                    latest.org_id = selected_org;
-                }
                 applied = true;
             }
         })?;
@@ -863,16 +779,12 @@ fn setup(
         print_json(&serde_json::json!({
             "ready": status.ready,
             "runner_version": status.version,
-            "org": state.org_id,
+            "identity": state.identity_id,
             "services": services,
             "events": setup_events
         }))?;
     } else {
-        println!(
-            "ready: @{} in {}",
-            state.identity_id.as_deref().unwrap_or("authenticated"),
-            state.org_id.as_deref().unwrap()
-        );
+        println!("ready: {}", state.identity_id.as_deref().unwrap_or("authenticated"));
     }
     Ok(())
 }
@@ -906,22 +818,20 @@ fn client_for_setup(state: &State, prefer_stored_token: bool) -> Result<Client, 
 }
 
 fn exchange_setup_token(state: &mut State, home: &std::path::Path) -> Result<(), Box<dyn std::error::Error>> {
-    let org_id = state.org_id.clone();
     let short_lived_token = rpassword::prompt_password(
         "Silicon Accounts slt_ short-lived token (never your password or long-lived credential): ",
     )?;
-    exchange_setup_token_value(state, home, short_lived_token, org_id)
+    exchange_setup_token_value(state, home, short_lived_token)
 }
 
 fn exchange_setup_token_value(
     state: &mut State,
     home: &std::path::Path,
     short_lived_token: String,
-    org_id: Option<String>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let auth = Client::exchange_with_transport(
         state.backend_url.clone(),
-        &AuthExchangeRequest { short_lived_token, org_id },
+        &AuthExchangeRequest { short_lived_token },
         std::sync::Arc::new(transport(state)?),
     )?;
     apply_auth_session(state, home, auth)
@@ -943,22 +853,19 @@ fn apply_auth_session(
     let refresh_token = auth.refresh_token;
     let expires_at = auth.expires_at.to_rfc3339();
     let identity_id = auth.identity.id;
-    let org_id = auth.org.id;
     let services = auth.services;
 
     state.set_tokens(access_token.clone(), Some(refresh_token.clone()), Some(expires_at.clone()));
     state.identity_id = Some(identity_id.clone());
-    state.org_id = Some(org_id.clone());
     state.services.clone_from(&services);
     State::update(home, move |latest| {
         latest.set_tokens(access_token, Some(refresh_token), Some(expires_at));
         latest.identity_id = Some(identity_id);
         latest.credential_generation = Some(credential_generation);
         latest.services = services;
-        // Stored credentials and their issuer/organization are one indivisible binding.
+        // Stored credentials and their issuer are one indivisible binding.
         // Runtime overrides normally stay ephemeral, but setup has replaced the identity.
         latest.backend_url = backend_url;
-        latest.org_id = Some(org_id);
     })?;
     Ok(())
 }
@@ -972,7 +879,7 @@ fn dispatch(
 ) -> Result<(), Box<dyn std::error::Error>> {
     match command {
         Command::Accounts | Command::Login { .. } | Command::ReportBug { .. } => unreachable!(),
-        Command::Setup { .. } => unreachable!(),
+        Command::Setup | Command::Logout => unreachable!(),
         Command::Profile(service) => profile(client, service.command, json)?,
         Command::Proxy(service) => match service.command {
             None => println!("verbs: ls"),
@@ -1205,32 +1112,29 @@ fn transport(_state: &State) -> Result<silicon_browser::HttpTransport, silicon_b
 }
 
 fn client_with_token(state: &State, token: &str) -> Result<Client, Box<dyn std::error::Error>> {
-    let org = state.org_id.clone().ok_or("no organization selected: run `browser setup` or pass --org-id")?;
     let mut transport = transport(state)?;
     if !State::has_environment_access_token() && state.stored_token() == Some(token) {
         let home = state::home_for_backend(&default_home(), &state.backend_url)?;
         let backend = state.backend_url.clone();
-        let bound_org = org.clone();
         let identity = state.identity_id.clone();
         let generation = state.credential_generation.clone();
         transport = transport.with_unauthorized_recovery(move |request| {
-            recover_rejected_access(&home, &backend, &bound_org, identity.as_deref(), generation.as_deref(), request)
-                .map_err(|error| match error.downcast::<silicon_browser::Error>() {
+            recover_rejected_access(&home, &backend, identity.as_deref(), generation.as_deref(), request).map_err(
+                |error| match error.downcast::<silicon_browser::Error>() {
                     Ok(error) => *error,
                     Err(error) => silicon_browser::Error::Local(format!(
                         "access was rejected and automatic refresh could not complete: {error}"
                     )),
-                })
+                },
+            )
         });
     }
-    Ok(Client::with_transport(state.backend_url.clone(), Auth::new(token)?, std::sync::Arc::new(transport))?
-        .org(org)?)
+    Ok(Client::with_transport(state.backend_url.clone(), Auth::new(token)?, std::sync::Arc::new(transport))?)
 }
 
 fn recover_rejected_access(
     home: &std::path::Path,
     backend: &str,
-    org: &str,
     identity: Option<&str>,
     generation: Option<&str>,
     request: &silicon_browser::Request,
@@ -1241,14 +1145,10 @@ fn recover_rejected_access(
         identity.is_some()
             && state.identity_id.as_deref() == identity
             && state.backend_url == backend
-            && state.org_id.as_deref() == Some(org)
             && state.credential_generation.as_deref() == generation
     };
-    if !matches_binding(&current) || request.org.as_deref() != Some(org) {
-        return Err(
-            "stored identity, backend, or organization changed; run the command again with the intended identity"
-                .into(),
-        );
+    if !matches_binding(&current) {
+        return Err("stored identity or backend changed; run the command again with the intended identity".into());
     }
     if current.stored_token() != request.bearer.as_deref() {
         if generation.is_some() && !needs_refresh(&current) {
@@ -1274,7 +1174,7 @@ fn recover_rejected_access(
     }
     let session = Client::refresh_with_transport(
         backend,
-        &AuthRefreshRequest { refresh_token: refresh.clone(), org_id: org.into() },
+        &AuthRefreshRequest { refresh_token: refresh.clone() },
         std::sync::Arc::new(transport(&current)?),
     )?;
     if Some(session.identity.id.as_str()) != identity {
@@ -1303,7 +1203,6 @@ fn refresh_if_needed(state: &mut State, home: &std::path::Path) -> Result<(), Bo
     if current.credential_generation != state.credential_generation
         || current.identity_id != state.identity_id
         || current.backend_url != state.backend_url
-        || current.org_id != state.org_id
     {
         return Err("sign-in changed while waiting to refresh; run the command again".into());
     }
@@ -1315,14 +1214,12 @@ fn refresh_if_needed(state: &mut State, home: &std::path::Path) -> Result<(), Bo
         .refresh_token()
         .ok_or("the saved login expired or needs identifier migration and has no refresh token; run `browser setup` with a new Silicon Accounts short-lived token")?
         .to_owned();
-    let org_id = current.org_id.clone().ok_or("the saved login has no organization; run `browser setup`")?;
     let mut claimed = false;
     State::update(home, |latest| {
         if latest.refresh_token() == Some(refresh_token.as_str())
             && latest.credential_generation == current.credential_generation
             && latest.identity_id == current.identity_id
             && latest.backend_url == current.backend_url
-            && latest.org_id == current.org_id
         {
             latest.consume_refresh_token();
             claimed = true;
@@ -1334,7 +1231,7 @@ fn refresh_if_needed(state: &mut State, home: &std::path::Path) -> Result<(), Bo
     // Accounts rotates a refresh token once; an uncertain response requires a fresh sign-in.
     let session = Client::refresh_with_transport(
         current.backend_url.clone(),
-        &AuthRefreshRequest { refresh_token: refresh_token.clone(), org_id },
+        &AuthRefreshRequest { refresh_token: refresh_token.clone() },
         std::sync::Arc::new(transport(&current)?),
     )?;
     if current.identity_id.as_deref().is_some_and(|id| account_id(id, "identity").is_ok() && id != session.identity.id)
@@ -1349,11 +1246,9 @@ fn refresh_if_needed(state: &mut State, home: &std::path::Path) -> Result<(), Bo
             && latest.credential_generation == current.credential_generation
             && latest.identity_id == current.identity_id
             && latest.backend_url == current.backend_url
-            && latest.org_id == current.org_id
         {
             latest.set_tokens(session.access_token, Some(session.refresh_token), Some(session.expires_at.to_rfc3339()));
             latest.identity_id = Some(session.identity.id);
-            latest.org_id = Some(session.org.id);
             latest.services = session.services;
             applied = true;
         }
@@ -1573,7 +1468,8 @@ mod tests {
 
     impl Transport for SetupMeTransport {
         fn send(&self, request: Request) -> Result<Response, silicon_browser::Error> {
-            let allowed = request.org.as_deref() == Some("org-allowed") && request.url.ends_with("/api/v1/me");
+            let allowed =
+                request.bearer.as_deref() == Some("jwt.allowed.signature") && request.url.ends_with("/api/v1/me");
             self.0.lock().unwrap().push(request);
             if allowed {
                 Ok(Response {
@@ -1590,7 +1486,7 @@ mod tests {
             } else {
                 Ok(Response {
                     status: 403,
-                    body: serde_json::to_vec(&ApiErrorEnvelope::new("org_mismatch", "token cannot access that org"))
+                    body: serde_json::to_vec(&ApiErrorEnvelope::new("forbidden", "token cannot access identity"))
                         .unwrap(),
                 })
             }
@@ -1603,7 +1499,6 @@ mod tests {
         let home = root.path().join("state");
         State::update(&home, |state| {
             state.backend_url = "http://127.0.0.1:1".into();
-            state.org_id = Some("org".into());
             state.identity_id = Some("reused-name".into());
             state.set_tokens(
                 "jwt.other_principal.signature".into(),
@@ -1616,12 +1511,11 @@ mod tests {
             method: silicon_browser::Method::Post,
             url: "http://127.0.0.1:1/api/v1/sessions".into(),
             bearer: Some("jwt.old_principal.signature".into()),
-            org: Some("org".into()),
             body: None,
             idempotency_key: None,
         };
-        let error = recover_rejected_access(&home, "http://127.0.0.1:1", "org", Some("reused-name"), None, &request)
-            .unwrap_err();
+        let error =
+            recover_rejected_access(&home, "http://127.0.0.1:1", Some("reused-name"), None, &request).unwrap_err();
         assert!(error.to_string().contains("credentials changed after"));
         assert_eq!(State::load(&home).unwrap().stored_token(), Some("jwt.other_principal.signature"));
     }
@@ -1632,7 +1526,6 @@ mod tests {
         let home = root.path().join("state");
         State::update(&home, |state| {
             state.backend_url = "http://127.0.0.1:1".into();
-            state.org_id = Some("org".into());
             state.identity_id = Some("si:actor".into());
             state.credential_generation = Some("generation".into());
             state.set_tokens("jwt.new.signature".into(), Some("sar_new".into()), Some("2099-01-01T00:00:00Z".into()));
@@ -1642,26 +1535,18 @@ mod tests {
             method: silicon_browser::Method::Get,
             url: "http://127.0.0.1:1/api/v1/profiles".into(),
             bearer: Some("jwt.old.signature".into()),
-            org: Some("org".into()),
             body: None,
             idempotency_key: None,
         };
         assert_eq!(
-            recover_rejected_access(&home, "http://127.0.0.1:1", "org", Some("si:actor"), Some("generation"), &request)
+            recover_rejected_access(&home, "http://127.0.0.1:1", Some("si:actor"), Some("generation"), &request)
                 .unwrap()
                 .as_deref(),
             Some("jwt.new.signature")
         );
         assert!(
-            recover_rejected_access(
-                &home,
-                "http://127.0.0.1:1",
-                "org",
-                Some("si:actor"),
-                Some("previous-login"),
-                &request
-            )
-            .is_err()
+            recover_rejected_access(&home, "http://127.0.0.1:1", Some("si:actor"), Some("previous-login"), &request)
+                .is_err()
         );
     }
 
@@ -1773,51 +1658,46 @@ mod tests {
         assert_eq!(error_exit_code(&RunnerExit(256)), 1);
     }
 
-    /// Test group: exchanging under setup overrides stores the issuer and org with the
+    /// Test group: exchanging under setup overrides stores the issuer with the
     /// rotating credential so the next process can refresh against the correct endpoint.
     #[test]
-    fn exchanged_credentials_persist_their_backend_and_org_binding() {
+    fn exchanged_credentials_persist_their_backend_binding() {
         let directory = tempfile::tempdir().unwrap();
         let home = directory.path().join("sb");
         let mut state = State::update(&home, |state| {
             state.backend_url = "https://old.example".into();
-            state.org_id = Some("old-org".into());
         })
         .unwrap();
-        apply_runtime_overrides(&mut state, Some("https://new.example"), Some("new-org"));
+        state.backend_url = "https://new.example".into();
         let auth = serde_json::from_value(serde_json::json!({
             "access_token": "jwt.new.signature", "refresh_token": "sar_new",
             "expires_at": "2030-03-17T17:46:40Z",
             "identity": {"id":"si:silicon-1","name":"Silicon","kind":"silicon"},
-            "org": {"id":"new-org","name":"New"}, "services": ["session"]
+            "services": ["session"]
         }))
         .unwrap();
         apply_auth_session(&mut state, &home, auth).unwrap();
         let saved = State::load(&home).unwrap();
         assert_eq!(saved.backend_url, "https://new.example");
-        assert_eq!(saved.org_id.as_deref(), Some("new-org"));
         assert_eq!(saved.stored_token(), Some("jwt.new.signature"));
         assert_eq!(saved.refresh_token(), Some("sar_new"));
     }
 
-    /// Test group: endpoint and org overrides only affect the in-memory invocation snapshot.
+    /// Test group: endpoint overrides only affect the in-memory invocation snapshot.
     #[test]
     fn runtime_overrides_do_not_change_persisted_defaults() {
         let directory = tempfile::tempdir().unwrap();
         let home = directory.path().join("sb");
         State::update(&home, |state| {
             state.backend_url = "https://stored.example".into();
-            state.org_id = Some("stored-org".into());
         })
         .unwrap();
         let mut runtime = State::load(&home).unwrap();
-        apply_runtime_overrides(&mut runtime, Some("https://once.example"), Some("once-org"));
+        runtime.backend_url = "https://once.example".into();
         State::record_activity(&home, "profile ls".into(), None).unwrap();
         let persisted = State::load(&home).unwrap();
         assert_eq!(runtime.backend_url, "https://once.example");
-        assert_eq!(runtime.org_id.as_deref(), Some("once-org"));
         assert_eq!(persisted.backend_url, "https://stored.example");
-        assert_eq!(persisted.org_id.as_deref(), Some("stored-org"));
     }
 
     /// Test group: missing or malformed stored expiry is treated as unsafe whenever refresh state
@@ -1857,25 +1737,6 @@ mod tests {
         assert!(setup_environment_token_kind("unknown").is_err());
     }
 
-    /// Test group: implicit organization resolution is deterministic and never
-    /// guesses when an access token is unbound or has multiple choices.
-    #[test]
-    fn automatic_org_resolution_requires_exactly_one_org() {
-        assert_eq!(sole_bound_org(vec![Org { id: "tos".into(), name: "TOS".into() }]).unwrap(), "tos");
-        assert!(sole_bound_org(Vec::new()).unwrap_err().to_string().contains("no accessible Browser workspace"));
-        assert!(
-            sole_bound_org(vec![
-                Org { id: "one".into(), name: "One".into() },
-                Org { id: "two".into(), name: "Two".into() },
-            ])
-            .unwrap_err()
-            .to_string()
-            .contains("multiple workspaces")
-        );
-    }
-
-    /// Test group: offline managed-run guidance retains the session placeholder
-    /// and useful command categories independently of local runner state.
     #[test]
     fn managed_run_fallback_is_actionable() {
         assert!(MANAGED_RUN_HELP.contains("browser run {sessionid}"));
@@ -1884,18 +1745,15 @@ mod tests {
         assert!(MANAGED_RUN_HELP.contains("browser setup"));
     }
 
-    /// Test group: setup readiness comes from a real scoped `me` request, not from merely finding
-    /// an access token string; an invalid workspace is rejected without contacting external providers.
+    /// Setup verifies the credential with the API before installing the controller.
     #[test]
-    fn setup_identity_validation_is_scoped_to_the_selected_org() {
+    fn setup_identity_validation_rejects_invalid_credentials() {
         let transport = Arc::new(SetupMeTransport::default());
         let allowed = Client::with_transport(
             "https://backend.example",
-            Auth::new("jwt.test.signature").unwrap(),
+            Auth::new("jwt.allowed.signature").unwrap(),
             transport.clone(),
         )
-        .unwrap()
-        .org("org-allowed")
         .unwrap();
         assert_eq!(validate_setup_client(&allowed).unwrap().id, "si:public-silicon");
 
@@ -1904,17 +1762,14 @@ mod tests {
             Auth::new("jwt.test.signature").unwrap(),
             transport.clone(),
         )
-        .unwrap()
-        .org("org-denied")
         .unwrap();
         let error = validate_setup_client(&denied).unwrap_err();
-        assert!(error.to_string().contains("token cannot access that org"));
+        assert!(error.to_string().contains("token cannot access identity"));
 
         let requests = transport.0.lock().unwrap();
         assert_eq!(requests.len(), 2);
-        assert_eq!(requests[0].org.as_deref(), Some("org-allowed"));
-        assert_eq!(requests[1].org.as_deref(), Some("org-denied"));
-        assert!(requests.iter().all(|request| request.bearer.as_deref() == Some("jwt.test.signature")));
+        assert_eq!(requests[0].bearer.as_deref(), Some("jwt.allowed.signature"));
+        assert_eq!(requests[1].bearer.as_deref(), Some("jwt.test.signature"));
     }
 
     /// Test group: service discovery is local and preserves the compact documented verbs.

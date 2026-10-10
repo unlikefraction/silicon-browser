@@ -2,17 +2,17 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { BrowserApi, acceptAuth, dateForApi, publicError, safeHttps, shellQuote } from '../src/api';
 import type { AuthSession } from '../src/types';
-const session = (access = 'eyJheader.eyJpayload.initial'): AuthSession => ({ access_token: access, refresh_token: 'sar_refresh', expires_at: new Date(Date.now() + 900000).toISOString(), identity: { id: 'Ab1', name: 'Tester', kind: 'carbon' }, org: { id: 'browser', name: 'Browser' } });
+const session = (access = 'eyJheader.eyJpayload.initial'): AuthSession => ({ access_token: access, refresh_token: 'sar_refresh', expires_at: new Date(Date.now() + 900000).toISOString(), identity: { id: 'Ab1', name: 'Tester', kind: 'carbon' } });
 const response = (data: unknown, status = 200, headers: Record<string, string> = {}) => new Response(JSON.stringify(status === 200 ? {data} : {error: {message: 'Unauthorized'}}), {status, headers});
 function client(handler: (url: string, options: RequestInit) => Promise<Response>) { const api = new BrowserApi('https://backend.browser.teamofsilicons.com', ((url, options) => handler(String(url), options || {})) as typeof fetch); api.setSession(session()); return api; }
 
 test('API sends authorization directly to configured backend, without cookies or redirects', async () => {
-  const api = client(async (url, options) => { assert.equal(url, 'https://backend.browser.teamofsilicons.com/api/v1/profiles'); assert.equal(options.credentials, 'omit'); assert.equal(options.redirect, 'error'); assert.equal(options.cache, 'no-store'); assert.equal((options.headers as Record<string, string>).Authorization, 'Bearer eyJheader.eyJpayload.initial'); assert.equal((options.headers as Record<string, string>)['X-Org-Id'], 'browser'); return response([]); });
+  const api = client(async (url, options) => { assert.equal(url, 'https://backend.browser.teamofsilicons.com/api/v1/profiles'); assert.equal(options.credentials, 'omit'); assert.equal(options.redirect, 'error'); assert.equal(options.cache, 'no-store'); assert.equal((options.headers as Record<string, string>).Authorization, 'Bearer eyJheader.eyJpayload.initial'); assert.equal((options.headers as Record<string, string>)['X-Org-Id'], undefined); return response([]); });
   assert.deepEqual(await api.call('/profiles'), []);
 });
 test('pre-handler 401 refreshes and replays a mutation exactly once', async () => {
   const calls: string[] = [];
-  const api = client(async (url, options) => { calls.push(url); if (url.endsWith('/auth/refresh')) { assert.equal((options.headers as Record<string, string>).Authorization, undefined); return response(session('eyJheader.eyJpayload.new')); } if ((options.headers as Record<string, string>).Authorization === 'Bearer eyJheader.eyJpayload.initial') return response({}, 401, {'x-sb-auth-rejected':'1'}); assert.equal(options.method, 'POST'); assert.equal(options.body, '{"name":"test"}'); return response({id:'p1'}); });
+  const api = client(async (url, options) => { calls.push(url); if (url.endsWith('/auth/refresh')) { assert.equal((options.headers as Record<string, string>).Authorization, undefined); assert.deepEqual(JSON.parse(String(options.body)), { refresh_token: 'sar_refresh' }); return response(session('eyJheader.eyJpayload.new')); } if ((options.headers as Record<string, string>).Authorization === 'Bearer eyJheader.eyJpayload.initial') return response({}, 401, {'x-sb-auth-rejected':'1'}); assert.equal(options.method, 'POST'); assert.equal(options.body, '{"name":"test"}'); return response({id:'p1'}); });
   assert.deepEqual(await api.call('/profiles', 'POST', {name:'test'}), {id:'p1'}); assert.equal(calls.length, 3);
 });
 test('handler 401 and ambiguous network failures never replay a mutation', async () => {
@@ -27,11 +27,12 @@ test('sign-out during refresh cannot restore tokens or retry the pending mutatio
   const api = client(async url => { calls++; if (url.endsWith('/auth/refresh')) { started(); return new Promise(resolve=>{finish=resolve;}); } return response({}, 401, {'x-sb-auth-rejected':'1'}); });
   const pending = api.call('/sessions', 'POST', {}); await begun; api.setSession(null); finish(response(session('eyJheader.eyJpayload.new'))); await assert.rejects(pending, /Sign-in changed/); assert.equal(api.currentSession(), null); assert.equal(calls, 2);
 });
-test('refresh response must preserve Browser workspace and stable account UUID', () => {
+test('refresh response must preserve the stable account UUID and kind', () => {
   assert.doesNotThrow(() => acceptAuth(session()));
-  assert.throws(()=>acceptAuth(session(), 'other')); assert.throws(()=>acceptAuth(session(), 'browser', '@someone-else'));
-  assert.throws(()=>acceptAuth({...session(), access_token:'secret'}, 'browser')); assert.throws(()=>acceptAuth({...session(), expires_at:'invalid'}, 'browser'));
-  assert.throws(()=>acceptAuth({...session(), access_token:'eyJheader.eyJpayload.'}, 'browser')); assert.throws(()=>acceptAuth({...session(), refresh_token:'sar_bad\nheader'}, 'browser'));
+  assert.doesNotThrow(() => acceptAuth({ ...session(), identity: { id: '0080c488-a9e9-4c22-aa91-1c7a639f1d7b', name: 'si:tos', kind: 'silicon' } }));
+  assert.throws(()=>acceptAuth(session(), '@someone-else')); assert.throws(()=>acceptAuth(session(), undefined, 'silicon'));
+  assert.throws(()=>acceptAuth({...session(), access_token:'secret'})); assert.throws(()=>acceptAuth({...session(), expires_at:'invalid'}));
+  assert.throws(()=>acceptAuth({...session(), access_token:'eyJheader.eyJpayload.'})); assert.throws(()=>acceptAuth({...session(), refresh_token:'sar_bad\nheader'}));
   for (const identity of [{id:'ab', name:'Tester', kind:'carbon'}, {id:'worker:tos', name:'Worker', kind:'silicon'}, {id:'c:tester', name:'Tester', kind:'silicon'}]) {
     assert.throws(() => acceptAuth({...session(), identity: identity as AuthSession['identity']}), /sign in again/);
   }

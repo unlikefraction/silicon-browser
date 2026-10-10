@@ -18,7 +18,6 @@ pub struct Request {
     pub method: Method,
     pub url: String,
     pub bearer: Option<String>,
-    pub org: Option<String>,
     pub body: Option<Value>,
     pub idempotency_key: Option<String>,
 }
@@ -30,7 +29,6 @@ impl std::fmt::Debug for Request {
             .field("method", &self.method)
             .field("url", &self.url.split_once('?').map_or(self.url.as_str(), |(path, _)| path))
             .field("bearer", &self.bearer.as_ref().map(|_| "[REDACTED]"))
-            .field("org", &self.org)
             .field("body", &self.body.as_ref().map(|_| "[REDACTED]"))
             .finish()
     }
@@ -65,7 +63,6 @@ type UnauthorizedRecovery = dyn Fn(&Request) -> Result<Option<String>, Error> + 
 struct RecoveredCredential {
     original: String,
     replacement: String,
-    org: Option<String>,
     origin: String,
 }
 
@@ -119,7 +116,6 @@ impl HttpTransport {
                 self.recovered.lock().map_err(|_| Error::Local("credential recovery lock failed".into()))?;
             if let Some(recovered) = recovered.as_ref()
                 && original.as_deref() == Some(recovered.original.as_str())
-                && request.org == recovered.org
                 && origin == recovered.origin
             {
                 // Only reuse a credential returned by this transport's own recovery callback.
@@ -140,7 +136,6 @@ impl HttpTransport {
                 Some(RecoveredCredential {
                     original: original.expect("recovery requires a bearer"),
                     replacement: token.clone(),
-                    org: request.org.clone(),
                     origin,
                 });
             request.bearer = Some(token);
@@ -170,9 +165,6 @@ impl HttpTransport {
     fn headers<B>(&self, mut built: ureq::RequestBuilder<B>, request: &Request) -> ureq::RequestBuilder<B> {
         if let Some(token) = &request.bearer {
             built = built.header("Authorization", format!("Bearer {token}"));
-        }
-        if let Some(org) = &request.org {
-            built = built.header("X-Org-ID", org);
         }
         if let Some(key) = &request.idempotency_key {
             built = built.header("Idempotency-Key", key);
@@ -269,7 +261,6 @@ mod tests {
                 method: Method::Post,
                 url: format!("http://{redirect_address}/exchange"),
                 bearer: Some("oat_private".into()),
-                org: Some("org-1".into()),
                 body: Some(serde_json::json!({"short_lived_token":"slt_private"})),
                 idempotency_key: None,
             })

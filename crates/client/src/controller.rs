@@ -41,9 +41,9 @@ impl LocalController {
     pub fn new(binary: impl Into<PathBuf>) -> Self {
         Self { binary: binary.into() }
     }
-    pub fn namespace(backend: &str, org: &str, principal: &str, session: &str) -> String {
+    pub fn namespace(backend: &str, principal: &str, session: &str) -> String {
         let mut hash = Sha256::new();
-        for value in [backend, org, principal, session] {
+        for value in [backend, principal, session] {
             hash.update(value.len().to_be_bytes());
             hash.update(value.as_bytes());
         }
@@ -446,10 +446,10 @@ mod tests {
     }
     #[test]
     fn isolation_namespace_is_stable_and_scoped() {
-        let a = LocalController::namespace("https://api.example", "org", "principal", "session");
-        assert_eq!(a, LocalController::namespace("https://api.example", "org", "principal", "session"));
-        assert_ne!(a, LocalController::namespace("https://other.example", "org", "principal", "session"));
-        assert_ne!(a, LocalController::namespace("https://api.example", "org", "other", "session"));
+        let a = LocalController::namespace("https://api.example", "principal", "session");
+        assert_eq!(a, LocalController::namespace("https://api.example", "principal", "session"));
+        assert_ne!(a, LocalController::namespace("https://other.example", "principal", "session"));
+        assert_ne!(a, LocalController::namespace("https://api.example", "other", "session"));
     }
     #[cfg(unix)]
     #[test]

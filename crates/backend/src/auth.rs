@@ -16,7 +16,7 @@ use std::{
 use thiserror::Error;
 use url::Url;
 
-pub const WORKSPACE: &str = "browser";
+pub(crate) const WORKSPACE: &str = "browser";
 const MAX_RESPONSE_BYTES: usize = 1024 * 1024;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -32,11 +32,6 @@ pub struct PrincipalIdentity {
     pub authorization_epoch: i64,
     pub expires_at: DateTime<Utc>,
 }
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct OrganizationAccess {
-    pub id: String,
-    pub name: Option<String>,
-}
 #[derive(Clone, PartialEq, Eq)]
 pub struct ExchangedAuth {
     pub access_token: String,
@@ -47,13 +42,11 @@ pub struct ExchangedAuth {
 #[derive(Clone, PartialEq, Eq)]
 pub struct ExchangeRequest {
     pub short_lived_token: String,
-    pub required_org_id: Option<String>,
     pub idempotency_key: String,
 }
 #[derive(Clone, PartialEq, Eq)]
 pub struct RefreshRequest {
     pub refresh_token: String,
-    pub required_org_id: String,
     pub idempotency_key: String,
 }
 #[derive(Clone)]
@@ -84,8 +77,6 @@ pub enum IdentityError {
     Unauthenticated,
     #[error("the authenticated account is not authorized for this workspace")]
     Forbidden,
-    #[error("the sign-in authorized no workspace")]
-    NoOrganization,
     #[error("identity capability is unavailable: {0:?}")]
     CapabilityUnavailable(IdentityCapability),
     #[error("invalid authentication input in {field}: {reason}")]
@@ -111,8 +102,7 @@ pub trait IdentityProvider: Send + Sync {
     async fn resolve_account_id(&self, selector: &str) -> Result<String, IdentityError> {
         Ok(selector.to_owned())
     }
-    async fn identify(&self, bearer: &str, org: &str) -> Result<PrincipalIdentity, IdentityError>;
-    async fn orgs(&self, bearer: &str) -> Result<Vec<OrganizationAccess>, IdentityError>;
+    async fn identify(&self, bearer: &str) -> Result<PrincipalIdentity, IdentityError>;
     async fn exchange_short_lived_token(&self, request: ExchangeRequest) -> Result<ExchangedAuth, IdentityError>;
     async fn refresh(&self, request: RefreshRequest) -> Result<ExchangedAuth, IdentityError>;
     async fn revoke_application_token(&self, _token: &str, _idempotency_key: &str) -> Result<(), IdentityError> {
@@ -344,20 +334,14 @@ impl IdentityProvider for AccountsIdentityProvider {
         }
         Ok(account.uuid)
     }
-    async fn identify(&self, bearer: &str, org: &str) -> Result<PrincipalIdentity, IdentityError> {
-        require_workspace(Some(org))?;
+    async fn identify(&self, bearer: &str) -> Result<PrincipalIdentity, IdentityError> {
         if let Some(cache) = &self.cache {
-            cache.resolve(bearer, org, || self.introspect(bearer)).await
+            cache.resolve(bearer, WORKSPACE, || self.introspect(bearer)).await
         } else {
             self.introspect(bearer).await
         }
     }
-    async fn orgs(&self, bearer: &str) -> Result<Vec<OrganizationAccess>, IdentityError> {
-        self.identify(bearer, WORKSPACE).await?;
-        Ok(vec![OrganizationAccess { id: WORKSPACE.into(), name: Some("Browser".into()) }])
-    }
     async fn exchange_short_lived_token(&self, request: ExchangeRequest) -> Result<ExchangedAuth, IdentityError> {
-        require_workspace(request.required_org_id.as_deref())?;
         if !opaque(&request.short_lived_token, "slt_") {
             return Err(input("short_lived_token", "expected an Accounts slt_ token"));
         }
@@ -365,7 +349,6 @@ impl IdentityProvider for AccountsIdentityProvider {
             .await
     }
     async fn refresh(&self, request: RefreshRequest) -> Result<ExchangedAuth, IdentityError> {
-        require_workspace(Some(&request.required_org_id))?;
         if !opaque(&request.refresh_token, "sar_") {
             return Err(input("refresh_token", "expected an Accounts sar_ token"));
         }
@@ -403,9 +386,6 @@ fn authorization_url(
         ("scope", "profile"),
     ]);
     Ok(url.to_string())
-}
-fn require_workspace(org: Option<&str>) -> Result<(), IdentityError> {
-    if org.is_some_and(|o| o != WORKSPACE) { Err(IdentityError::Forbidden) } else { Ok(()) }
 }
 fn input(field: &'static str, reason: &'static str) -> IdentityError {
     IdentityError::InvalidInput { field, reason }
@@ -472,66 +452,50 @@ pub struct FakeIdentityProvider {
 }
 #[derive(Default)]
 struct FakeState {
-    identities: HashMap<([u8; 32], String), PrincipalIdentity>,
-    organizations: HashMap<[u8; 32], Result<Vec<OrganizationAccess>, IdentityError>>,
-    exchanges: HashMap<([u8; 32], String), Result<ExchangedAuth, IdentityError>>,
-    refreshes: HashMap<([u8; 32], String), Result<ExchangedAuth, IdentityError>>,
+    identities: HashMap<[u8; 32], PrincipalIdentity>,
+    exchanges: HashMap<[u8; 32], Result<ExchangedAuth, IdentityError>>,
+    refreshes: HashMap<[u8; 32], Result<ExchangedAuth, IdentityError>>,
 }
 impl FakeIdentityProvider {
     pub fn new() -> Self {
         Self::default()
     }
     pub fn allow_identity(&self, bearer: &str, identity: PrincipalIdentity) {
-        self.state.write().unwrap().identities.insert((token_digest(bearer), identity.org_id.clone()), identity);
+        self.state.write().unwrap().identities.insert(token_digest(bearer), identity);
     }
-    pub fn deny_identity(&self, bearer: &str, org: &str) {
-        self.state.write().unwrap().identities.remove(&(token_digest(bearer), org.into()));
+    pub fn deny_identity(&self, bearer: &str) {
+        self.state.write().unwrap().identities.remove(&token_digest(bearer));
     }
-    pub fn allow_orgs(&self, bearer: &str, orgs: Vec<OrganizationAccess>) {
-        self.state.write().unwrap().organizations.insert(token_digest(bearer), Ok(orgs));
+    pub fn allow_exchange(&self, token: &str, result: ExchangedAuth) {
+        self.state.write().unwrap().exchanges.insert(token_digest(token), Ok(result));
     }
-    pub fn fail_orgs(&self, bearer: &str, error: IdentityError) {
-        self.state.write().unwrap().organizations.insert(token_digest(bearer), Err(error));
+    pub fn fail_exchange(&self, token: &str, error: IdentityError) {
+        self.state.write().unwrap().exchanges.insert(token_digest(token), Err(error));
     }
-    pub fn allow_exchange(&self, token: &str, org: &str, result: ExchangedAuth) {
-        self.state.write().unwrap().exchanges.insert((token_digest(token), org.into()), Ok(result));
+    pub fn allow_refresh(&self, token: &str, result: ExchangedAuth) {
+        self.state.write().unwrap().refreshes.insert(token_digest(token), Ok(result));
     }
-    pub fn fail_exchange(&self, token: &str, org: &str, error: IdentityError) {
-        self.state.write().unwrap().exchanges.insert((token_digest(token), org.into()), Err(error));
-    }
-    pub fn allow_refresh(&self, token: &str, org: &str, result: ExchangedAuth) {
-        self.state.write().unwrap().refreshes.insert((token_digest(token), org.into()), Ok(result));
-    }
-    pub fn fail_refresh(&self, token: &str, org: &str, error: IdentityError) {
-        self.state.write().unwrap().refreshes.insert((token_digest(token), org.into()), Err(error));
+    pub fn fail_refresh(&self, token: &str, error: IdentityError) {
+        self.state.write().unwrap().refreshes.insert(token_digest(token), Err(error));
     }
 }
 #[async_trait]
 impl IdentityProvider for FakeIdentityProvider {
-    async fn identify(&self, bearer: &str, org: &str) -> Result<PrincipalIdentity, IdentityError> {
+    async fn identify(&self, bearer: &str) -> Result<PrincipalIdentity, IdentityError> {
         self.state
             .read()
             .unwrap()
             .identities
-            .get(&(token_digest(bearer), org.into()))
-            .cloned()
-            .ok_or(IdentityError::Unauthenticated)
-    }
-    async fn orgs(&self, bearer: &str) -> Result<Vec<OrganizationAccess>, IdentityError> {
-        self.state
-            .read()
-            .unwrap()
-            .organizations
             .get(&token_digest(bearer))
             .cloned()
-            .unwrap_or(Err(IdentityError::Unauthenticated))
+            .ok_or(IdentityError::Unauthenticated)
     }
     async fn exchange_short_lived_token(&self, r: ExchangeRequest) -> Result<ExchangedAuth, IdentityError> {
         self.state
             .read()
             .unwrap()
             .exchanges
-            .get(&(token_digest(&r.short_lived_token), r.required_org_id.unwrap_or_default()))
+            .get(&token_digest(&r.short_lived_token))
             .cloned()
             .unwrap_or(Err(IdentityError::Unauthenticated))
     }
@@ -540,7 +504,7 @@ impl IdentityProvider for FakeIdentityProvider {
             .read()
             .unwrap()
             .exchanges
-            .get(&(token_digest(&r.code), String::new()))
+            .get(&token_digest(&r.code))
             .cloned()
             .unwrap_or(Err(IdentityError::Unauthenticated))
     }
@@ -549,7 +513,7 @@ impl IdentityProvider for FakeIdentityProvider {
             .read()
             .unwrap()
             .refreshes
-            .get(&(token_digest(&r.refresh_token), r.required_org_id))
+            .get(&token_digest(&r.refresh_token))
             .cloned()
             .unwrap_or(Err(IdentityError::Unauthenticated))
     }
@@ -564,7 +528,7 @@ mod tests {
     use crate::providers::test_http::{spawn_json_server, spawn_json_server_with};
     use serde_json::json;
     fn claims(issuer: &str) -> serde_json::Value {
-        json!({"active":true,"iss":issuer,"sub":"8HV","aud":"browser","client_id":"browser","exp":Utc::now().timestamp()+900,"kind":"carbon","id":"c:ada","membership_id":"browser:8HV","token_type":"access_token","scope":"profile"})
+        json!({"active":true,"iss":issuer,"sub":"0080c488-a9e9-4c22-aa91-1c7a639f1d7b","aud":"browser","client_id":"browser","exp":Utc::now().timestamp()+900,"kind":"carbon","id":"c:ada","membership_id":"browser:0080c488-a9e9-4c22-aa91-1c7a639f1d7b","token_type":"access_token","scope":"profile"})
     }
     #[test]
     fn immutable_uuid_is_authority_while_handle_can_change() {
@@ -605,7 +569,7 @@ mod tests {
             ("refresh_token", "sar_once"),
             ("authorization_code", "sac_once"),
         ] {
-            let token = json!({"access_token":"header.payload.signature","refresh_token":"sar_new","token_type":"Bearer","expires_in":900,"membership_id":"browser:8HV","account":{"uuid":"8HV","membership_id":"browser:8HV","kind":"carbon","id":"c:ada"},"scope":"profile"});
+            let token = json!({"access_token":"header.payload.signature","refresh_token":"sar_new","token_type":"Bearer","expires_in":900,"membership_id":"browser:0080c488-a9e9-4c22-aa91-1c7a639f1d7b","account":{"uuid":"0080c488-a9e9-4c22-aa91-1c7a639f1d7b","membership_id":"browser:0080c488-a9e9-4c22-aa91-1c7a639f1d7b","kind":"carbon","id":"c:ada"},"scope":"profile"});
             let (base, mut requests, task) =
                 spawn_json_server_with(|origin| vec![(200, token.to_string()), (200, claims(origin).to_string())])
                     .await;
@@ -616,7 +580,7 @@ mod tests {
                     provider
                         .refresh(RefreshRequest {
                             refresh_token: credential.into(),
-                            required_org_id: WORKSPACE.into(),
+
                             idempotency_key: "ignored".into(),
                         })
                         .await
@@ -634,13 +598,13 @@ mod tests {
                     provider
                         .exchange_short_lived_token(ExchangeRequest {
                             short_lived_token: credential.into(),
-                            required_org_id: None,
+
                             idempotency_key: "ignored".into(),
                         })
                         .await
                 }
             };
-            assert_eq!(result.unwrap().identity.principal_id, "8HV");
+            assert_eq!(result.unwrap().identity.principal_id, "0080c488-a9e9-4c22-aa91-1c7a639f1d7b");
             let request = requests.recv().await.unwrap();
             assert_eq!(request.target, "/v1/oauth/token");
             assert!(request.headers.to_ascii_lowercase().contains("authorization: basic "));
@@ -659,11 +623,11 @@ mod tests {
     async fn current_handle_lookup_resolves_stable_acl_authority() {
         let (base, mut requests, task) = spawn_json_server(vec![(
             200,
-            json!({"uuid":"8HV","id":"c:ada","kind":"carbon","status":"active"}).to_string(),
+            json!({"uuid":"0080c488-a9e9-4c22-aa91-1c7a639f1d7b","id":"c:ada","kind":"carbon","status":"active"}).to_string(),
         )])
         .await;
         let provider = AccountsIdentityProvider::connect(&base, "browser".into(), "sa_app_test".into()).await.unwrap();
-        assert_eq!(provider.resolve_account_id("c:ada").await.unwrap(), "8HV");
+        assert_eq!(provider.resolve_account_id("c:ada").await.unwrap(), "0080c488-a9e9-4c22-aa91-1c7a639f1d7b");
         assert_eq!(provider.resolve_account_id("K1E").await.unwrap(), "K1E");
         let request = requests.recv().await.unwrap();
         assert_eq!(request.method, "GET");
@@ -675,11 +639,11 @@ mod tests {
     async fn revoked_tokens_are_checked_live_and_redirects_never_receive_secrets() {
         let (base, _requests, task) = spawn_json_server(vec![(200, json!({"active":false}).to_string())]).await;
         let provider = AccountsIdentityProvider::connect(&base, "browser".into(), "sa_app_test".into()).await.unwrap();
-        assert_eq!(provider.identify("header.payload.signature", WORKSPACE).await, Err(IdentityError::Unauthenticated));
+        assert_eq!(provider.identify("header.payload.signature").await, Err(IdentityError::Unauthenticated));
         task.await.unwrap();
         let (base, _requests, task) = spawn_json_server(vec![(302, "{}".into())]).await;
         let provider = AccountsIdentityProvider::connect(&base, "browser".into(), "sa_app_test".into()).await.unwrap();
-        assert!(provider.identify("header.payload.signature", WORKSPACE).await.is_err());
+        assert!(provider.identify("header.payload.signature").await.is_err());
         task.await.unwrap();
     }
 }

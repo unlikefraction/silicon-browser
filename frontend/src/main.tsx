@@ -4,7 +4,9 @@ import '@fontsource/ibm-plex-sans/latin-400.css';
 import '@fontsource/ibm-plex-sans/latin-500.css';
 import '@fontsource/ibm-plex-sans/latin-600.css';
 import '@fontsource/ibm-plex-mono/latin-400.css';
+import './silicon-ui/foundation.css';
 import './styles.css';
+import './silicon-ui/controls.css';
 import brandMark from './assets/mark.svg';
 import { BrowserApi, acceptAuth, publicError, safeHttps, segment, shellQuote, dateForApi } from './api';
 import { readEntry, completeCallback, signInPopup, matchingRedirect, clearRedirectAttempt, type LoginAttempt } from './auth';
@@ -104,7 +106,7 @@ function App() {
     signInAbort = new AbortController(); setSigningIn(true);
     try {
       const { attempt_id, ...body } = await signInPopup(() => api.request<LoginAttempt>('/auth/attempts', 'POST', { identity_kind: 'carbon' }, null), signInAbort.signal);
-      const result = acceptAuth(await api.request<AuthSession>(`/auth/attempts/${segment(attempt_id)}/exchange`, 'POST', body, null), 'browser', undefined, 'carbon');
+      const result = acceptAuth(await api.request<AuthSession>(`/auth/attempts/${segment(attempt_id)}/exchange`, 'POST', body, null), undefined, 'carbon');
       if (signInAbort.signal.aborted) throw new Error('Sign-in cancelled. Your workspace is unchanged.');
       await finishLogin(result);
     } finally { setSigningIn(false); signInAbort = null; }
@@ -112,7 +114,7 @@ function App() {
   async function siliconLogin(data: FormData) {
     const token = String(data.get('slt') || '').trim();
     if (!/^slt_[A-Za-z0-9_-]{1,16380}$/.test(token)) throw new Error('Enter the short-lived token from silicon-accounts login --app browser.');
-    const result = acceptAuth(await api.request<AuthSession>('/auth/exchange', 'POST', { short_lived_token: token }, null), 'browser', undefined, 'silicon');
+    const result = acceptAuth(await api.request<AuthSession>('/auth/exchange', 'POST', { short_lived_token: token }, null), undefined, 'silicon');
     await finishLogin(result);
   }
   function SignInOptions() {
@@ -320,7 +322,7 @@ function Callback() {
     if (!matchingRedirect(entry.callback) || !entry.callback.code || !entry.callback.attempt) { setMessage('This sign-in link is missing its original attempt. Start sign-in again from Browser.'); return; }
     clearRedirectAttempt();
     try {
-      const result = acceptAuth(await productionApi.request<AuthSession>(`/auth/attempts/${segment(entry.callback.attempt)}/exchange`, 'POST', { state: entry.callback.nonce, code: entry.callback.code }, null), 'browser', undefined, 'carbon');
+      const result = acceptAuth(await productionApi.request<AuthSession>(`/auth/attempts/${segment(entry.callback.attempt)}/exchange`, 'POST', { state: entry.callback.nonce, code: entry.callback.code }, null), undefined, 'carbon');
       productionApi.setSession(result); clearRedirectAttempt(); location.replace('/');
     } catch (error) { setMessage(`${publicError(error)} Start sign-in again from Browser.`); }
   };

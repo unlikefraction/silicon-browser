@@ -31,13 +31,12 @@ pub struct Runtime {
 }
 impl Runtime {
     pub fn new(home: &Path, state: &State) -> io::Result<Self> {
-        let org = state.org_id.as_deref().ok_or_else(|| io::Error::other("no organization selected"))?;
         let credential =
             if State::has_environment_access_token() { state.token() } else { state.credential_generation.clone() }
                 .ok_or_else(|| io::Error::other("no local authentication binding"))?;
         let runtime = home.join("runtime");
         state::secure_home(&runtime, true)?;
-        let directory = runtime.join(hash(&[org, &credential]));
+        let directory = runtime.join(hash(&[&state.backend_url, &credential]));
         state::secure_home(&directory, true)?;
         Ok(Self { directory })
     }
@@ -53,8 +52,7 @@ impl Runtime {
         RunRequest { session_id: session.into(), command: command.into(), flags: flags.into() }.validate()?;
         controller_arguments(command, flags)?;
         let connection = self.connection(client, session)?;
-        let namespace =
-            LocalController::namespace(client.base_url(), client.org_id().unwrap(), &connection.principal_id, session);
+        let namespace = LocalController::namespace(client.base_url(), &connection.principal_id, session);
         let lock = state::open_lock_file(&self.directory.join(format!("{namespace}.lock")))?;
         lock.lock_exclusive()?;
         let config = self.directory.join("controller.json");
@@ -246,8 +244,6 @@ mod tests {
             silicon_browser::Auth::new("oat_current").unwrap(),
             std::sync::Arc::new(ConnectionTransport(canonical.clone())),
         )
-        .unwrap()
-        .org("tos")
         .unwrap();
         let runtime = Runtime { directory };
         let file = runtime.directory.join(format!("connection-{}.json", hash(&["session"])));

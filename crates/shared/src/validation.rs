@@ -38,14 +38,18 @@ pub fn actor_id(value: &str, field: &'static str) -> Result<crate::IdentityKind,
     Err(ValidationError::Invalid { field, reason: "expected c:<carbon-handle> (3–30 characters) or si:<silicon-handle> (3–30 characters), using lowercase letters, digits, _ or -; migrate old selectors or sign in again".into() })
 }
 
-/// Permanent Silicon Accounts UUID. UUIDs are case-sensitive base62 strings.
+/// Permanent Silicon Accounts UUIDv4 in canonical lowercase hyphenated form.
 pub fn account_id(value: &str, field: &'static str) -> Result<(), ValidationError> {
-    if (3..=128).contains(&value.len()) && value.bytes().all(|byte| byte.is_ascii_alphanumeric()) {
+    if uuid::Uuid::parse_str(value).is_ok_and(|id| {
+        id.get_version_num() == 4
+            && id.get_variant() == uuid::Variant::RFC4122
+            && id.hyphenated().to_string() == value
+    }) {
         return Ok(());
     }
     Err(ValidationError::Invalid {
         field,
-        reason: "expected a permanent Silicon Accounts UUID (3–128 case-sensitive letters or digits)".into(),
+        reason: "expected a canonical lowercase Silicon Accounts UUIDv4".into(),
     })
 }
 
@@ -131,11 +135,11 @@ pub(crate) fn purpose(value: &str) -> Result<(), ValidationError> {
 
 #[cfg(test)]
 #[test]
-fn accounts_identifiers_are_case_sensitive_and_tokens_are_separate_families() {
-    for id in ["AbC", "aBc123", "000"] {
+fn accounts_identifiers_are_canonical_uuidv4_and_tokens_are_separate_families() {
+    for id in ["0080c488-a9e9-4c22-aa91-1c7a639f1d7b", "4143123f-b494-481c-adbf-c14b14cfccc0"] {
         assert!(account_id(id, "id").is_ok());
     }
-    for id in ["ab", "c:alice", "Ab-c", "abc\n"] {
+    for id in ["OtQ", "AbC", "000", "c:alice", "0080C488-A9E9-4C22-AA91-1C7A639F1D7B", "0080c488a9e94c22aa911c7a639f1d7b", "0080c488-a9e9-1c22-aa91-1c7a639f1d7b", "0080c488-a9e9-4c22-0a91-1c7a639f1d7b"] {
         assert!(account_id(id, "id").is_err());
     }
     assert!(accounts_access_token("header.payload.signature"));

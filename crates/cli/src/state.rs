@@ -22,8 +22,6 @@ pub struct State {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub token_expires_at: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub org_id: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub identity_id: Option<String>,
     /// A local login generation changes on setup, but survives ordinary refresh rotation.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -67,7 +65,6 @@ impl State {
             state.refresh_token = None;
             state.token_expires_at = None;
             state.identity_id = None;
-            state.org_id = None;
             state.credential_generation = None;
             state.services.clear();
         }
@@ -134,6 +131,16 @@ impl State {
         self.access_token = Some(access);
         self.refresh_token = refresh;
         self.token_expires_at = expires_at;
+    }
+
+    pub fn clear_login(&mut self) {
+        self.access_token = None;
+        self.refresh_token = None;
+        self.token_expires_at = None;
+        self.identity_id = None;
+        self.credential_generation = None;
+        self.services.clear();
+        self.last_session_id = None;
     }
 
     pub fn consume_refresh_token(&mut self) {
@@ -206,7 +213,6 @@ impl std::fmt::Debug for State {
             .field("access_token", &self.access_token.as_ref().map(|_| "[REDACTED]"))
             .field("refresh_token", &self.refresh_token.as_ref().map(|_| "[REDACTED]"))
             .field("token_expires_at", &self.token_expires_at)
-            .field("org_id", &self.org_id)
             .field("identity_id", &self.identity_id)
             .field("services", &self.services)
             .field("last_session_id", &self.last_session_id)
@@ -562,7 +568,6 @@ mod tests {
         let home = directory.path().join("sb");
         let mut state = State { backend_url: "http://127.0.0.1:8080".into(), ..State::default() };
         state.set_tokens("jwt.secret.signature".into(), Some("sar_secret".into()), None);
-        state.org_id = Some("tos".into());
         State::update(&home, |saved| *saved = state.clone()).unwrap();
         let loaded = State::load(&home).unwrap();
         assert_eq!(loaded.stored_token(), Some("jwt.secret.signature"));
@@ -650,10 +655,10 @@ mod tests {
 
         let directory = tempfile::tempdir().unwrap();
         let home = directory.path().join("sb");
-        State::update(&home, |state| state.org_id = Some("safe-org".into())).unwrap();
         let victim = directory.path().join("victim");
         fs::write(&victim, b"do not change").unwrap();
 
+        State::update(&home, |_| {}).unwrap();
         fs::remove_file(home.join(STATE_FILE)).unwrap();
         symlink(&victim, home.join(STATE_FILE)).unwrap();
         assert!(State::load(&home).is_err());

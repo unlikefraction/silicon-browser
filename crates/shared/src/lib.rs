@@ -20,7 +20,6 @@ pub use model::*;
 pub use validation::{Validate, ValidationError, account_id, accounts_access_token, actor_id, app_id};
 
 pub type IdentityId = String;
-pub type OrgId = String;
 pub type ProfileId = String;
 pub type SessionId = String;
 pub type RecordingId = String;

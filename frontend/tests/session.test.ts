@@ -5,7 +5,7 @@ import { BrowserSession } from '../src/session';
 import type { AuthSession } from '../src/types';
 
 const origin = 'https://backend.browser.teamofsilicons.com';
-const initial: AuthSession = { access_token: 'eyJheader.eyJpayload.original', refresh_token: 'sar_original', expires_at: '2020-01-01T00:00:00Z', identity: { id: 'Ab1', name: 'Owner', kind: 'carbon' }, org: { id: 'browser', name: 'Browser' } };
+const initial: AuthSession = { access_token: 'eyJheader.eyJpayload.original', refresh_token: 'sar_original', expires_at: '2020-01-01T00:00:00Z', identity: { id: 'Ab1', name: 'Owner', kind: 'carbon' } };
 const renewed: AuthSession = { ...initial, access_token: 'eyJheader.eyJpayload.renewed', refresh_token: 'sar_renewed', expires_at: '2099-01-01T00:00:00Z' };
 function fixture() {
   const values = new Map<string, string>();
@@ -165,7 +165,7 @@ test('explicit sign-out in another tab prevents a pending refresh from restoring
 test('a tab closing mid-refresh cannot cause another tab to resend its spent token', async () => {
   const { saved, storage, lock, values } = fixture(); saved.save(initial);
   const state = JSON.parse(values.get(saved.storageKey)!);
-  state.refreshing = { 'Ab1/browser': initial.refresh_token };
+  state.refreshing = { Ab1: initial.refresh_token };
   values.set(saved.storageKey, JSON.stringify(state));
   const other = new BrowserSession(origin, () => storage, lock);
   let requests = 0;
@@ -179,12 +179,13 @@ test('existing tab login migrates once and explicit sign-out prevents stale reim
   const legacy = new Map<string, string>();
   const key = `silicon-browser:session:v3:${origin}`;
   const oldStorage = { getItem: (key: string) => legacy.get(key) ?? null, removeItem: (key: string) => { legacy.delete(key); } } as Storage;
-  legacy.set(key, JSON.stringify({ active: 'Ab1/browser', sessions: [initial] }));
+  const oldSession = { ...initial, org: { id: 'browser', name: 'Browser' } };
+  legacy.set(key, JSON.stringify({ active: 'Ab1/browser', sessions: [oldSession] }));
   const migrated = new BrowserSession(origin, () => storage, lock, () => oldStorage);
   assert.deepEqual(migrated.load(), initial);
   assert.equal(legacy.has(key), false);
   migrated.forget(initial);
-  legacy.set(key, JSON.stringify({ active: 'Ab1/browser', sessions: [initial] }));
+  legacy.set(key, JSON.stringify({ active: 'Ab1/browser', sessions: [oldSession] }));
   assert.equal(new BrowserSession(origin, () => storage, lock, () => oldStorage).load(), null);
 });
 
@@ -217,8 +218,20 @@ test('selecting the same saved account during rotation does not erase its one-us
   let finish!: (session: AuthSession) => void;
   const pending = saved.refresh(initial, () => new Promise(resolve => { finish = resolve; }));
   saved.save(initial);
-  assert.equal(JSON.parse(values.get(saved.storageKey)!).refreshing['Ab1/browser'], initial.refresh_token);
+  assert.equal(JSON.parse(values.get(saved.storageKey)!).refreshing.Ab1, initial.refresh_token);
   finish(renewed);
   await pending;
   assert.deepEqual(saved.load(), renewed);
+});
+
+test('shared saved logins migrate to account UUIDs without losing a pending one-use renewal', async () => {
+  const { saved, values } = fixture();
+  const legacy = { ...initial, org: { id: 'browser', name: 'Browser' } };
+  values.set(saved.storageKey, JSON.stringify({ active: 'Ab1/browser', sessions: [legacy], refreshing: { 'Ab1/browser': initial.refresh_token } }));
+  assert.deepEqual(saved.load(), initial);
+  assert.deepEqual(JSON.parse(values.get(saved.storageKey)!), { active: 'Ab1', sessions: [initial], refreshing: { Ab1: initial.refresh_token } });
+  let requests = 0;
+  await assert.rejects(saved.refresh(initial, async () => { requests++; return renewed; }), /interrupted/);
+  assert.equal(requests, 0);
+  assert.equal(saved.load(), null);
 });

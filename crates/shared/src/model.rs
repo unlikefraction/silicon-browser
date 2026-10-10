@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 use url::Url;
 
 use crate::validation::{bounded, collection_len, identifier, purpose, required};
-use crate::{AccessList, ApiError, IdentityId, OrgId, ProfileId, SessionId, Validate, ValidationError, actor_id};
+use crate::{AccessList, ApiError, IdentityId, ProfileId, SessionId, Validate, ValidationError, actor_id};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -43,23 +43,8 @@ impl Identity {
 
 impl Validate for Identity {
     fn validate(&self) -> Result<(), ValidationError> {
-        if crate::account_id(&self.id, "identity.id").is_ok() {
-            return Ok(());
-        }
-        if actor_id(&self.id, "identity.id")? != self.kind {
-            return Err(ValidationError::Invalid {
-                field: "identity.kind",
-                reason: "must match the complete actor ID namespace".into(),
-            });
-        }
-        Ok(())
+        crate::account_id(&self.id, "identity.id")
     }
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct Org {
-    pub id: OrgId,
-    pub name: String,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -73,9 +58,6 @@ pub struct AccountsInfo {
 pub struct AuthExchangeRequest {
     #[serde(alias = "token")]
     pub short_lived_token: String,
-    /// Browser workspace. Silicon Accounts does not provide organization membership.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub org_id: Option<OrgId>,
 }
 
 impl fmt::Debug for AuthExchangeRequest {
@@ -83,7 +65,6 @@ impl fmt::Debug for AuthExchangeRequest {
         formatter
             .debug_struct("AuthExchangeRequest")
             .field("short_lived_token", &"[REDACTED]")
-            .field("org_id", &self.org_id)
             .finish()
     }
 }
@@ -91,9 +72,6 @@ impl fmt::Debug for AuthExchangeRequest {
 impl Validate for AuthExchangeRequest {
     fn validate(&self) -> Result<(), ValidationError> {
         opaque_auth_token(&self.short_lived_token, "slt_", "short_lived_token")?;
-        if let Some(org) = &self.org_id {
-            identifier(org, "org_id")?;
-        }
         Ok(())
     }
 }
@@ -102,8 +80,6 @@ impl Validate for AuthExchangeRequest {
 #[serde(deny_unknown_fields)]
 pub struct AuthRefreshRequest {
     pub refresh_token: String,
-    /// Refresh tokens are opaque; the selected organization must remain explicit.
-    pub org_id: OrgId,
 }
 
 impl fmt::Debug for AuthRefreshRequest {
@@ -111,7 +87,6 @@ impl fmt::Debug for AuthRefreshRequest {
         formatter
             .debug_struct("AuthRefreshRequest")
             .field("refresh_token", &"[REDACTED]")
-            .field("org_id", &self.org_id)
             .finish()
     }
 }
@@ -119,7 +94,6 @@ impl fmt::Debug for AuthRefreshRequest {
 impl Validate for AuthRefreshRequest {
     fn validate(&self) -> Result<(), ValidationError> {
         opaque_auth_token(&self.refresh_token, "sar_", "refresh_token")?;
-        identifier(&self.org_id, "org_id")?;
         Ok(())
     }
 }
@@ -131,7 +105,6 @@ pub struct AuthSession {
     pub refresh_token: String,
     pub expires_at: DateTime<Utc>,
     pub identity: Identity,
-    pub org: Org,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub services: Vec<String>,
 }
@@ -146,7 +119,6 @@ impl fmt::Debug for AuthSession {
             .field("refresh_token", &"[REDACTED]")
             .field("expires_at", &self.expires_at)
             .field("identity", &self.identity)
-            .field("org", &self.org)
             .field("services", &self.services)
             .finish()
     }
@@ -162,7 +134,6 @@ impl Validate for AuthSession {
         }
         opaque_auth_token(&self.refresh_token, "sar_", "refresh_token")?;
         self.identity.validate()?;
-        identifier(&self.org.id, "org.id")?;
         for service in &self.services {
             identifier(service, "services")?;
         }
@@ -1009,8 +980,8 @@ mod model_tests {
     /// Test group: every client-supplied JSON object rejects misspelled or future fields explicitly.
     #[test]
     fn request_payloads_reject_unknown_fields() {
-        rejects_unknown_field::<AuthExchangeRequest>(json!({"short_lived_token": "slt_value", "org_id": "tos"}));
-        rejects_unknown_field::<AuthRefreshRequest>(json!({"refresh_token": "sar_value", "org_id": "tos"}));
+        rejects_unknown_field::<AuthExchangeRequest>(json!({"short_lived_token": "slt_value"}));
+        rejects_unknown_field::<AuthRefreshRequest>(json!({"refresh_token": "sar_value"}));
         rejects_unknown_field::<ProfileCreate>(json!({"name": "primary", "location": "in", "access": []}));
         rejects_unknown_field::<ProfileUpdate>(json!({"name": "renamed"}));
         rejects_unknown_field::<ProfileEnd>(json!({"note": "done"}));
@@ -1110,20 +1081,15 @@ mod model_tests {
     /// Test group: Accounts secrets never appear in Debug output and token families validate.
     #[test]
     fn auth_tokens_are_redacted_and_typed() {
-        let exchange = AuthExchangeRequest { short_lived_token: "slt_single_use".into(), org_id: Some("tos".into()) };
+        let exchange = AuthExchangeRequest { short_lived_token: "slt_single_use".into() };
         assert!(exchange.validate().is_ok());
         assert_eq!(
             serde_json::to_value(&exchange).unwrap(),
-            json!({"short_lived_token": "slt_single_use", "org_id": "tos"})
+            json!({"short_lived_token": "slt_single_use"})
         );
         assert!(!format!("{exchange:?}").contains("slt_single_use"));
         assert!(
-            AuthExchangeRequest { short_lived_token: "slt_single_use".into(), org_id: Some(String::new()) }
-                .validate()
-                .is_err()
-        );
-        assert!(
-            AuthExchangeRequest { short_lived_token: "jwt.wrong_family.signature".into(), org_id: Some("tos".into()) }
+            AuthExchangeRequest { short_lived_token: "jwt.wrong_family.signature".into() }
                 .validate()
                 .is_err()
         );
@@ -1134,11 +1100,11 @@ mod model_tests {
             .is_ok()
         );
 
-        let request = AuthRefreshRequest { refresh_token: "sar_secret".into(), org_id: "tos".into() };
+        let request = AuthRefreshRequest { refresh_token: "sar_secret".into() };
         assert!(request.validate().is_ok());
         assert!(!format!("{request:?}").contains("sar_secret"));
 
-        let bad = AuthRefreshRequest { refresh_token: "jwt.wrong-family.signature".into(), org_id: "tos".into() };
+        let bad = AuthRefreshRequest { refresh_token: "jwt.wrong-family.signature".into() };
         assert!(bad.validate().is_err());
 
         let mut session = AuthSession {
@@ -1146,20 +1112,20 @@ mod model_tests {
             refresh_token: "sar_refresh".into(),
             expires_at: Utc.timestamp_opt(1_800_000_000, 0).unwrap(),
             identity: Identity {
-                id: "si:silicon-1".into(),
+                id: "0080c488-a9e9-4c22-aa91-1c7a639f1d7b".into(),
                 name: "Silicon".into(),
                 kind: IdentityKind::Silicon,
                 tags: vec![],
                 verified_aliases: Vec::new(),
             },
-            org: Org { id: "tos".into(), name: "TOS".into() },
             services: vec!["session".into()],
         };
         assert!(session.validate().is_ok());
         session.identity.kind = IdentityKind::Carbon;
-        assert!(session.validate().is_err());
-        session.identity.id = "c:alice0".into();
         assert!(session.validate().is_ok());
+        session.identity.id = "c:alice0".into();
+        assert!(session.validate().is_err());
+        session.identity.id = "0080c488-a9e9-4c22-aa91-1c7a639f1d7b".into();
         session.access_token = "jwt.bad.signature\nheader".into();
         assert!(session.validate().is_err());
     }

@@ -7,15 +7,16 @@ export function publicError(value: unknown): string {
   const message = value instanceof Error ? value.message : 'Something went wrong. Please try again.';
   return message.replace(/browser[ -]?use|tiny[ -]?fish/gi, 'browser service');
 }
-export function acceptAuth(value: AuthSession, org?: string, identity?: string, kind?: AuthSession['identity']['kind']): AuthSession {
+export function acceptAuth(value: AuthSession, identity?: string, kind?: AuthSession['identity']['kind']): AuthSession {
   if (!/^[-A-Za-z0-9_]+\.[-A-Za-z0-9_]+\.[-A-Za-z0-9_]+$/.test(value?.access_token || '') || value.access_token.length > 16384 ||
       !/^sar_[A-Za-z0-9_-]{1,16380}$/.test(value?.refresh_token || '') ||
-      value.org?.id !== 'browser' || (org !== undefined && value.org.id !== org) || !validIdentity(value.identity) || (identity && value.identity.id !== identity) || (kind && value.identity.kind !== kind) ||
+      !validIdentity(value.identity) || (identity && value.identity.id !== identity) || (kind && value.identity.kind !== kind) ||
       !Number.isFinite(Date.parse(value.expires_at))) throw new Error('Sign-in did not match your Browser account. Please sign in again.');
-  return value;
+  const { access_token, refresh_token, expires_at, identity: account, services } = value;
+  return { access_token, refresh_token, expires_at, identity: account, ...(services === undefined ? {} : { services }) };
 }
 function validIdentity(value: AuthSession['identity']): boolean {
-  return typeof value?.name === 'string' && typeof value.id === 'string' && /^[a-zA-Z0-9]{3,128}$/.test(value.id) && ['carbon', 'silicon'].includes(value.kind);
+  return typeof value?.name === 'string' && typeof value.id === 'string' && (/^[a-f\d]{8}(?:-[a-f\d]{4}){3}-[a-f\d]{12}$/.test(value.id) || /^[a-zA-Z0-9]{3,128}$/.test(value.id)) && ['carbon', 'silicon'].includes(value.kind);
 }
 export class BrowserApi {
   private session: AuthSession | null = null;
@@ -34,7 +35,7 @@ export class BrowserApi {
     if (this.closed) throw new ApiError('This workspace has been closed.');
     const endpoint = `${this.origin}/api/v1${path}`;
     const headers: Record<string, string> = { Accept: 'application/json' };
-    if (session) { headers.Authorization = `Bearer ${session.access_token}`; headers['X-Org-Id'] = session.org.id; }
+    if (session) headers.Authorization = `Bearer ${session.access_token}`;
     if (idempotencyKey) headers['Idempotency-Key'] = idempotencyKey;
     if (body !== undefined) headers['Content-Type'] = 'application/json';
     let response: Response;
@@ -56,16 +57,16 @@ export class BrowserApi {
     if (!this.refreshing) {
       const exchange = async (latest: AuthSession) => {
         if (this.session !== session || generation !== this.generation) throw new ApiError('Sign-in changed during renewal.');
-        const result = await this.request<AuthSession>('/auth/refresh', 'POST', { refresh_token: latest.refresh_token, org_id: latest.org.id }, null);
+        const result = await this.request<AuthSession>('/auth/refresh', 'POST', { refresh_token: latest.refresh_token }, null);
         if (!this.renew && (this.session !== session || generation !== this.generation)) throw new ApiError('Sign-in changed during renewal.');
-        return acceptAuth(result, session.org.id, session.identity.id);
+        return acceptAuth(result, session.identity.id, session.identity.kind);
       };
       // Shared browser storage coordinates rotation across every open tab.
       if (!this.renew) this.persist?.(null, session);
       const operation = (this.renew ? this.renew(session, exchange) : exchange(session))
         .then(result => {
           if (this.session !== session || generation !== this.generation) throw new ApiError('Sign-in changed during renewal.');
-          const renewed = acceptAuth(result, session.org.id, session.identity.id);
+          const renewed = acceptAuth(result, session.identity.id, session.identity.kind);
           if (!this.renew) this.persist?.(renewed, session);
           this.session = renewed;
         }).catch(error => {

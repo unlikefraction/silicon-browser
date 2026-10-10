@@ -1,7 +1,7 @@
 import { acceptAuth } from './api';
 import type { AuthSession } from './types';
 
-export const contextKey = (session: AuthSession) => `${session.identity.id}/${session.org.id}`;
+export const contextKey = (session: AuthSession) => session.identity.id;
 interface SavedContexts { active: string | null; sessions: AuthSession[]; refreshing?: Record<string, string> }
 type SessionLock = (name: string, task: () => Promise<AuthSession>) => Promise<AuthSession>;
 const empty = (): SavedContexts => ({ active: null, sessions: [] });
@@ -23,9 +23,14 @@ export class BrowserSession {
   private parse(raw: string): SavedContexts {
     const value = JSON.parse(raw) as SavedContexts;
     if (!Array.isArray(value?.sessions) || (value.active !== null && typeof value.active !== 'string')) throw new Error('Invalid saved contexts');
-    for (const session of value.sessions) acceptAuth(session);
     if (value.refreshing !== undefined && (!value.refreshing || typeof value.refreshing !== 'object' || Array.isArray(value.refreshing) || Object.values(value.refreshing).some(token => typeof token !== 'string'))) throw new Error('Invalid pending renewal');
-    return value;
+    const normalizeKey = (key: string | null) => key?.endsWith('/browser') ? key.slice(0, -8) : key;
+    const sessions = value.sessions.map(session => {
+      const legacy = session as AuthSession & { org?: { id: string } };
+      if (legacy.org !== undefined && legacy.org?.id !== 'browser') throw new Error('Invalid legacy workspace');
+      return acceptAuth(session);
+    });
+    return { active: normalizeKey(value.active), sessions, ...(value.refreshing ? { refreshing: Object.fromEntries(Object.entries(value.refreshing).map(([key, token]) => [normalizeKey(key), token])) } : {}) };
   }
   private clearLegacy() { try { this.legacyStorage().removeItem(this.legacyKey); } catch { /* Tab storage can be unavailable. */ } }
   private read(): SavedContexts {
@@ -33,7 +38,11 @@ export class BrowserSession {
       const raw = this.storage().getItem(this.storageKey);
       if (raw !== null) {
         this.clearLegacy();
-        try { return this.parse(raw); } catch { this.write(empty()); return empty(); }
+        try {
+          const value = this.parse(raw);
+          if (JSON.stringify(value) !== raw) this.write(value);
+          return value;
+        } catch { this.write(empty()); return empty(); }
       }
       let legacy: string | null = null;
       try { legacy = this.legacyStorage().getItem(this.legacyKey); } catch { /* No legacy tab storage. */ }
@@ -91,7 +100,7 @@ export class BrowserSession {
       value.refreshing[key] = latest.refresh_token;
       this.write(value);
       try {
-        const renewed = acceptAuth(await renew(latest), latest.org.id, latest.identity.id, latest.identity.kind);
+        const renewed = acceptAuth(await renew(latest), latest.identity.id, latest.identity.kind);
         const current = this.read();
         const stored = current.sessions.find(item => contextKey(item) === key);
         if (stored?.refresh_token !== latest.refresh_token || current.refreshing?.[key] !== latest.refresh_token) throw new Error('Sign-in changed during renewal.');
