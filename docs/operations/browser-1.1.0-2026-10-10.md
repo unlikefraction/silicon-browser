@@ -7,7 +7,8 @@ Date: October 10, 2026.
 - Website: https://browser.teamofsilicons.com
 - API: https://backend.browser.teamofsilicons.com
 - Accounts app: `browser`, owned by Silicon `si:tos`.
-- Production frontend deployment: `dpl_GTzNGdZ6VC1WPNqhzDaJXRmtdB7P`.
+- Initial production frontend deployment: `dpl_GTzNGdZ6VC1WPNqhzDaJXRmtdB7P`.
+- Automatic main deployment verified: `dpl_HRdfzhthcjUjeprxmWucQiYJuAZY` at source `f6552bdd6455c72e12c0a92b4e58a2e078b839c0`.
 - Backend release: `20261010-09ae21e79194bbf5`.
 - Backend SHA-256: `202569f100c4e39c225a29d0ddf8ec820b663a4ef947c23c67e3d733943f54be`.
 
@@ -88,3 +89,20 @@ was verified anonymously afterward.
 
 The Rust crates `silicon-browser-shared`, `silicon-browser` and
 `silicon-browser-cli` were published to crates.io at `1.1.0` in dependency order.
+
+The [GitHub release](https://github.com/unlikefraction/silicon-browser/releases/tag/managed-v1.1.0)
+is public at tag `managed-v1.1.0`, targeting `f6552bdd6455c72e12c0a92b4e58a2e078b839c0`.
+All twelve uploaded assets match their local SHA-256 values, including the
+standalone archives, complete Apps archive, checksums and provenance.
+
+[npm silicon-browser](https://www.npmjs.com/package/silicon-browser/v/1.1.0)
+was published at `1.1.0`, and the public `latest` tag resolves to this version.
+The downloaded archive matches the prepared package byte for byte:
+`963e62cac32a492b8a68ff3e0fe378bdc7d8ac23f4b2eea45a5d01a673f71b60`.
+A fresh temporary npm installation passed version, help, Accounts discovery and
+signed-out status checks with an isolated configuration directory.
+
+The [main CI run](https://github.com/unlikefraction/silicon-browser/actions/runs/38036428593)
+passed after the release branch was merged and pushed normally. Canonical
+production documentation was verified against the committed source after
+Vercel's automatic main deployment.
