@@ -26,10 +26,7 @@ async fn fixture(kind: IdentityKind, bind: bool, unfinished: bool) -> (Store, Id
         .await
         .unwrap();
     if bind {
-        store
-            .bind_session_delivery_owner("org", &session.id, PRINCIPAL, MEMBERSHIP, "storage-org", "c:provider")
-            .await
-            .unwrap();
+        store.bind_session_delivery_owner("org", &session.id, PRINCIPAL, MEMBERSHIP, "org", "owner").await.unwrap();
     }
     store
         .activate_session(
@@ -81,7 +78,7 @@ fn receipt(claim: &RecordingDeliveryClaim) -> BriefcaseEntry {
     };
     BriefcaseEntry {
         id: Uuid::now_v7(),
-        org_id: claim.destination_org.clone().unwrap(),
+        org_id: claim.org_id.clone(),
         entry_type: "file".into(),
         path: format!("private/owner/browser/{name}"),
         name,
@@ -113,8 +110,8 @@ async fn delivery_claims_are_exclusive_and_reclaimed_leases_reject_stale_receipt
         store.claim_recording_deliveries(later, later + ChronoDuration::seconds(60), 2).await.unwrap().pop().unwrap();
     assert_ne!(old.lease_id, newer.lease_id);
     assert_eq!(old.upload_operation_id, newer.upload_operation_id);
-    assert_eq!(newer.destination_org.as_deref(), Some("storage-org"));
-    assert_eq!(newer.destination_actor.as_deref(), Some("c:provider"));
+    assert_eq!(newer.body_sha256, Some(digest()));
+    assert_eq!(newer.size_bytes, Some(20));
     assert_eq!(newer.attempt, 2);
     assert!(!store.recording_delivery_is_current(old, later).await.unwrap());
     assert!(!store.complete_recording_delivery(old, &receipt(old), &secrets(), later).await.unwrap());
@@ -162,7 +159,7 @@ async fn carbon_has_only_video_and_owner_bindings_are_persisted_without_historic
         assert_eq!(claim.membership_id.as_deref(), bound.then_some(MEMBERSHIP));
         assert!(
             store
-                .bind_session_delivery_owner("org", &session, "replacement", "replacement", "changed", "changed")
+                .bind_session_delivery_owner("org", &session, "replacement", "replacement", "org", "owner")
                 .await
                 .is_err()
         );
@@ -405,10 +402,84 @@ async fn public_identity_projection_never_rewrites_a_verified_partial_receipt_pa
 }
 
 #[tokio::test]
-async fn iam5_migration_quarantines_all_unknown_legacy_writes_including_failed_retries() {
+async fn selected_provider_destination_is_pinned_before_upload_and_receipt_stays_origin_owned() {
+    let (store, owner, session, _) = fixture(IdentityKind::Carbon, true, false).await;
+    // The selected destination is saved before starting the paid session.
+    sqlx::query("UPDATE sessions SET delivery_destination_org='selected-org',delivery_destination_actor='si:selected' WHERE id=?")
+        .bind(&session).execute(&store.pool).await.unwrap();
+    let now = Utc::now();
+    let claims = store.claim_recording_deliveries(now, now + ChronoDuration::seconds(60), 2).await.unwrap();
+    let claim = &claims[0];
+    assert_eq!(claim.destination_org.as_deref(), Some("selected-org"));
+    assert_eq!(claim.destination_actor.as_deref(), Some("si:selected"));
+    assert!(
+        store
+            .bind_session_delivery_owner("org", &session, PRINCIPAL, MEMBERSHIP, "other-org", "si:other")
+            .await
+            .is_err()
+    );
+    begin(&store, claim, now).await;
+    assert!(store.complete_recording_delivery(claim, &receipt(claim), &secrets(), now).await.is_err());
+    let mut selected = receipt(claim);
+    selected.org_id = "selected-org".into();
+    selected.path = format!("apps/browser/private/si:selected/{}", selected.name);
+    assert!(store.complete_recording_delivery(claim, &selected, &secrets(), now).await.unwrap());
+    let recording = store.recording("org", &owner, &session, &secrets()).await.unwrap();
+    assert_eq!(recording.status, RecordingStatus::Available);
+    assert!(store.recording("selected-org", &owner, &session, &secrets()).await.is_err());
+}
+
+#[tokio::test]
+async fn obo_migration_retires_old_authority_without_replacing_receipts_or_job_ownership() {
+    let pool = sqlx::sqlite::SqlitePoolOptions::new().max_connections(1).connect("sqlite::memory:").await.unwrap();
+    for migration in [
+        include_str!("../../migrations/0001_initial.sql"),
+        include_str!("../../migrations/0002_delivery_credentials.sql"),
+        include_str!("../../migrations/0003_recording_delivery.sql"),
+        include_str!("../../migrations/0004_delivery_principal_ownership.sql"),
+        include_str!("../../migrations/0005_client_command_reports.sql"),
+        include_str!("../../migrations/0006_iam_webhook_receipts.sql"),
+        include_str!("../../migrations/0007_testing_environments.sql"),
+        include_str!("../../migrations/0008_canonical_delivery_replay.sql"),
+        include_str!("../../migrations/0009_public_identifiers.sql"),
+    ] {
+        sqlx::raw_sql(migration).execute(&pool).await.unwrap();
+    }
+    for (id, state, operation) in [
+        ("ready", "active", None),
+        ("pending", "pending", Some("exchange")),
+        ("refreshing", "refreshing", Some("refresh")),
+    ] {
+        sqlx::query("INSERT INTO delivery_credentials(id,org_id,actor_id,principal_id,membership_id,actor_kind,enabled,state,operation,enrollment_digest,encrypted_payload,lease_owner,lease_until,created_at,updated_at) VALUES(?,'org',?,?,?,'silicon',1,?,?,?,'encrypted-old-family','worker',9999999999,1,1)")
+            .bind(id).bind(id).bind(id).bind(id).bind(state).bind(operation).bind(id).execute(&pool).await.unwrap();
+    }
+    sqlx::raw_sql("INSERT INTO sessions(id,org_id,started_by,started_by_kind,name,description,started_at,expires_at,delivery_principal_id,delivery_membership_id) VALUES('session','org','si:owner','silicon','Existing recording','Migration fixture','2026-01-01','2026-01-02','principal','membership'); INSERT INTO recording_artifacts(session_id,kind,state,next_attempt_at,entry_id,artifact_path,receipt_url_enc) VALUES('session','video','complete','2026-01-02','verified-entry','existing/path','encrypted-receipt');")
+        .execute(&pool).await.unwrap();
+    sqlx::raw_sql(include_str!("../../migrations/0010_recording_obo_consent.sql")).execute(&pool).await.unwrap();
+    let retired: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM delivery_credentials WHERE enabled=0 AND state='revoking' AND operation='revoke' AND mutation_key=id AND lease_owner IS NULL AND lease_until=0 AND encrypted_payload='encrypted-old-family'")
+        .fetch_one(&pool).await.unwrap();
+    assert_eq!(retired, 3);
+    let grants: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM recording_obo_grants").fetch_one(&pool).await.unwrap();
+    assert_eq!(grants, 0);
+    let receipt: (String, String, String, String, String) = sqlx::query_as("SELECT s.delivery_principal_id,s.delivery_membership_id,a.state,a.entry_id,a.receipt_url_enc FROM sessions s JOIN recording_artifacts a ON a.session_id=s.id")
+        .fetch_one(&pool).await.unwrap();
+    assert_eq!(
+        receipt,
+        (
+            "principal".into(),
+            "membership".into(),
+            "complete".into(),
+            "verified-entry".into(),
+            "encrypted-receipt".into()
+        )
+    );
+}
+
+#[tokio::test]
+async fn recovery_migration_holds_unknown_legacy_writes_and_preserves_selected_destinations() {
     let pool = sqlx::sqlite::SqlitePoolOptions::new().max_connections(1).connect("sqlite::memory:").await.unwrap();
     let migrations = sqlx::migrate!("./migrations");
-    for migration in migrations.iter().filter(|m| m.version < 10) {
+    for migration in migrations.iter().filter(|m| m.version < 12) {
         sqlx::raw_sql(migration.sql.clone()).execute(&pool).await.unwrap();
     }
     for (id, state, bound) in [
@@ -419,6 +490,7 @@ async fn iam5_migration_quarantines_all_unknown_legacy_writes_including_failed_r
         ("complete", "complete", true),
         ("unstarted", "pending", false),
         ("hidden", "working", true),
+        ("selected", "working", true),
     ] {
         sqlx::query("INSERT INTO sessions(id,org_id,started_by,started_by_kind,name,description,status,started_at,expires_at) VALUES(?,'org','si:owner','silicon','Test','Migration fixture','ended','2026-10-01','2026-10-02')")
             .bind(id).execute(&pool).await.unwrap();
@@ -428,17 +500,39 @@ async fn iam5_migration_quarantines_all_unknown_legacy_writes_including_failed_r
             .execute(&pool)
             .await
             .unwrap();
-        sqlx::query("INSERT INTO recording_artifacts(session_id,kind,state,next_attempt_at,body_sha256,last_error) VALUES(?,'video',?,'2026-10-02',?,'briefcase_upload_unconfirmed')")
-            .bind(id).bind(state).bind(bound.then(digest)).execute(&pool).await.unwrap();
+        sqlx::query("INSERT INTO recording_artifacts(session_id,kind,state,next_attempt_at,body_sha256,last_error,storage_org_id,storage_actor_id) VALUES(?,'video',?,'2026-10-02',?,'briefcase_upload_unconfirmed',?,?)")
+            .bind(id).bind(state).bind(bound.then(digest))
+            .bind((id=="selected").then_some("selected-org"))
+            .bind((id=="selected").then_some("si:selected")).execute(&pool).await.unwrap();
     }
-    sqlx::raw_sql(include_str!("../../migrations/0010_iam5_delivery.sql")).execute(&pool).await.unwrap();
+    sqlx::raw_sql(include_str!("../../migrations/0012_recording_upload_recovery.sql")).execute(&pool).await.unwrap();
     let held: Vec<String> = sqlx::query_scalar("SELECT session_id FROM recording_artifacts WHERE state='failed' AND last_error='legacy_upload_reconciliation_required' ORDER BY session_id")
         .fetch_all(&pool).await.unwrap();
     assert_eq!(held, ["failed", "hidden", "pending", "uploading", "working"]);
     let hidden: String =
         sqlx::query_scalar("SELECT status FROM recordings WHERE session_id='hidden'").fetch_one(&pool).await.unwrap();
     assert_eq!(hidden, "trashed");
-    let untouched: Vec<(String,String)> = sqlx::query_as("SELECT session_id,state FROM recording_artifacts WHERE session_id IN ('complete','unstarted') ORDER BY session_id")
+    let untouched: Vec<(String,String)> = sqlx::query_as("SELECT session_id,state FROM recording_artifacts WHERE session_id IN ('complete','selected','unstarted') ORDER BY session_id")
         .fetch_all(&pool).await.unwrap();
-    assert_eq!(untouched, [("complete".into(), "complete".into()), ("unstarted".into(), "pending".into())]);
+    assert_eq!(
+        untouched,
+        [
+            ("complete".into(), "complete".into()),
+            ("selected".into(), "working".into()),
+            ("unstarted".into(), "pending".into())
+        ]
+    );
+    let selected: (String, String) =
+        sqlx::query_as("SELECT delivery_destination_org,delivery_destination_actor FROM sessions WHERE id='selected'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(selected, ("selected-org".into(), "si:selected".into()));
+    let guessed: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM sessions WHERE id <> 'selected' AND delivery_destination_org IS NOT NULL",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(guessed, 0);
 }

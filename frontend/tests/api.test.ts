@@ -77,3 +77,21 @@ test('late responses cannot become results in a different account', async () => 
   await assert.rejects(pending, /Sign-in changed/);
   assert.equal(api.currentSession()?.identity.id, 'Xy2');
 });
+
+test('switching accounts during a replay rejects the previous account response', async () => {
+  let finish!: (value: Response) => void, started!: () => void;
+  const begun = new Promise<void>(resolve => { started = resolve; });
+  const api = client(async (url, options) => {
+    if (url.endsWith('/auth/refresh')) return response(session('eyJheader.eyJpayload.renewed'));
+    if ((options.headers as Record<string, string>).Authorization === 'Bearer eyJheader.eyJpayload.initial') return response({}, 401, { 'x-sb-auth-rejected': '1' });
+    started();
+    return new Promise(resolve => { finish = resolve; });
+  });
+  const pending = api.call('/profiles');
+  await begun;
+  const next = { ...session('eyJheader.eyJpayload.other'), identity: { id: 'Xy2', name: 'si:worker', kind: 'silicon' as const } };
+  api.setSession(next);
+  finish(response([{ id: 'previous_account_profile' }]));
+  await assert.rejects(pending, /Sign-in changed/);
+  assert.deepEqual(api.currentSession(), next);
+});

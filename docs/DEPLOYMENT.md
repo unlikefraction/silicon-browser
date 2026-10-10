@@ -68,7 +68,7 @@ For local checks:
 
 ```sh
 SB_ORIGIN=http://127.0.0.1:8092 PORT=8091 cargo run -p silicon-browser-backend
-SB_PUBLIC_BACKEND_URL=http://127.0.0.1:8091 npm run build --prefix frontend
+SB_PUBLIC_BACKEND_URL=http://127.0.0.1:8091 pnpm --dir frontend build
 node frontend/dev.mjs
 ```
 

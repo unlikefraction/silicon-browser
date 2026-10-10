@@ -1,4 +1,6 @@
 -- Accounts auth state is separate from preserved IAM records and delivery receipts.
+ALTER TABLE recording_artifacts ADD COLUMN upload_operation_id TEXT;
+
 CREATE TABLE accounts_login_attempts (
  id TEXT PRIMARY KEY,
  state_hash TEXT NOT NULL,

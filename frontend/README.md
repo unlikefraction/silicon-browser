@@ -27,22 +27,22 @@ Profiles, sessions, live handoff, command logs, recordings, and usage remain ava
 Use Node 24:
 
 ```sh
-npm ci --prefix frontend
-npm test --prefix frontend
-npm run build --prefix frontend
+pnpm --dir frontend install --frozen-lockfile
+pnpm --dir frontend test
+pnpm --dir frontend run build
 ```
 
-Set the Vercel Root Directory to `frontend`, Framework Preset to Vite, and Node to `24.x`. `vercel.json` supplies the build, output directory, security headers, and static callback/live-route rewrites. The API is called directly, without cookies or redirect following. Hashed assets are cached immutably; HTML is never cached.
+The package manager is pinned to pnpm 12.5.1 in `package.json`. Set the Vercel Root Directory to `frontend`, Framework Preset to Vite, and Node to `24.x`. `vercel.json` supplies pinned pnpm install/build commands, the output directory, security headers, and static callback/live-route rewrites. Keep `ENABLE_EXPERIMENTAL_COREPACK=1` enabled in the Vercel project. The API is called directly, without cookies or redirect following. Hashed assets are cached immutably; HTML is never cached.
 
 `SB_PUBLIC_BACKEND_URL` is the only frontend configuration. It defaults to `https://backend.browser.teamofsilicons.com` and may be set to `http://127.0.0.1:8091` for local development. Visitor URLs cannot change it. Keep app secrets and provider credentials on the backend.
 
 For a local backend with `SB_ORIGIN=http://127.0.0.1:8092`:
 
 ```sh
-SB_PUBLIC_BACKEND_URL=http://127.0.0.1:8091 npm run build --prefix frontend
+SB_PUBLIC_BACKEND_URL=http://127.0.0.1:8091 pnpm --dir frontend run build
 node frontend/dev.mjs
 ```
 
-The static preview binds loopback on 8092 and serves the production headers/routes. For HMR, use `SB_PUBLIC_BACKEND_URL=http://127.0.0.1:8091 npm run dev --prefix frontend`. Rebuild without the override before deployment.
+The static preview binds loopback on 8092 and serves the production headers/routes. For HMR, use `SB_PUBLIC_BACKEND_URL=http://127.0.0.1:8091 pnpm --dir frontend run dev`. Rebuild without the override before deployment.
 
 The `/docs/` page is static HTML. `publish-docs.mjs` also copies the repository Markdown guides under `/docs/*.md`; build from a checkout containing those sources.

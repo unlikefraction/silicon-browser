@@ -9,8 +9,12 @@ test('build backend configuration rejects visitor-controlled or credential-beari
 });
 test('Vercel routes login and live handoffs to the static app and never proxies APIs', async () => {
   const config = JSON.parse(await readFile(new URL('../vercel.json', import.meta.url), 'utf8'));
-  assert.equal(config.framework,'vite'); assert.equal(config.buildCommand,'npm run build'); assert.equal(config.outputDirectory,'dist');
+  const { packageManager } = JSON.parse(await readFile(new URL('../package.json', import.meta.url), 'utf8'));
+  assert.equal(config.framework,'vite'); assert.equal(config.outputDirectory,'dist');
+  assert.equal(config.buildCommand, `npx --yes ${packageManager} run build`);
+  assert.equal(config.installCommand, `npx --yes ${packageManager} install --frozen-lockfile`);
   assert(config.rewrites.some((route:{source:string})=>route.source==='/auth/callback'));
+  assert(!config.rewrites.some((route:{source:string})=>route.source.includes('/auth/obo/')));
   assert(config.rewrites.some((route:{source:string})=>route.source==='/sessions/:id/live'));
   assert(config.rewrites.some((route:{source:string;destination:string})=>route.source==='/docs' && route.destination==='/docs/index.html'));
   assert(!config.rewrites.some((route:{source:string})=>route.source.includes('api')));
@@ -31,5 +35,5 @@ test('static preview serves login/live deep links, immutable assets and never pr
   const asset=await fetch(origin+'/assets/app-123.js');assert.equal(asset.status,200);assert.equal(asset.headers.get('cache-control'),'public, max-age=31536000, immutable');
   for(const route of ['/docs','/docs/']) { const response=await fetch(origin+route);assert.equal(response.status,200);assert.equal(await response.text(),'<main>Documentation</main>');assert.equal(response.headers.get('cache-control'),'no-store'); }
   const guide=await fetch(origin+'/docs/CLI.md');assert.equal(guide.status,200);assert.equal(guide.headers.get('content-type'),'text/markdown; charset=utf-8');assert.equal(await guide.text(),'# CLI guide');
-  for(const route of ['/api/v1/me','/.env','/assets/secret.txt','/assets/%2e%2e/.env','/docs/.env','/docs/%2e%2e/.env']) assert.equal((await fetch(origin+route)).status,404);
+  for(const route of ['/api/v1/me','/auth/obo/callback','/.env','/assets/secret.txt','/assets/%2e%2e/.env','/docs/.env','/docs/%2e%2e/.env']) assert.equal((await fetch(origin+route)).status,404);
 });

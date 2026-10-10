@@ -99,8 +99,8 @@ your exact local frontend origin and its `/auth/callback` URI.
 
 ```sh
 cargo run -p silicon-browser-backend
-npm ci --prefix frontend
-npm run build --prefix frontend
+pnpm --dir frontend install --frozen-lockfile
+pnpm --dir frontend build
 node frontend/dev.mjs
 ```
 
@@ -123,8 +123,8 @@ cargo fmt --all -- --check
 cargo test --workspace --all-targets
 cargo clippy --workspace --all-targets -- -D warnings
 cargo doc --workspace --no-deps
-npm test --prefix frontend
-npm run build --prefix frontend
+pnpm --dir frontend test
+pnpm --dir frontend build
 python3 scripts/test_apps_package.py
 python3 scripts/test_installer.py
 ```

@@ -1,16 +1,25 @@
 use super::*;
 #[tokio::test]
-async fn legacy_database_is_rejected_before_any_schema_mutation() {
+async fn legacy_authority_tables_are_rejected_before_any_schema_mutation() {
     let dir = tempfile::tempdir().unwrap();
-    let path = dir.path().join("legacy.db");
-    let database_url = format!("sqlite://{}?mode=rwc", path.display());
-    let pool = SqlitePoolOptions::new().max_connections(1).connect(&database_url).await.unwrap();
-    sqlx::query("CREATE TABLE identity_projection (principal_id TEXT)").execute(&pool).await.unwrap();
-    sqlx::query("INSERT INTO identity_projection VALUES ('legacy-owner')").execute(&pool).await.unwrap();
-    pool.close().await;
-    let original = std::fs::read(&path).unwrap();
-    assert!(Store::preflight_accounts_database(&database_url).await.unwrap_err().to_string().contains("IAM-owned"));
-    assert_eq!(std::fs::read(&path).unwrap(), original);
+    for (index, schema) in [
+        "CREATE TABLE identity_projection (principal_id TEXT); INSERT INTO identity_projection VALUES ('legacy-owner');",
+        "CREATE TABLE login_attempts (id TEXT); INSERT INTO login_attempts VALUES ('old-login');",
+        "CREATE TABLE recording_obo_authorizations (id TEXT); INSERT INTO recording_obo_authorizations VALUES ('old-authorization');",
+        "CREATE TABLE recording_obo_grants (id TEXT); INSERT INTO recording_obo_grants VALUES ('old-grant');",
+        "CREATE TABLE delivery_obo (id TEXT); INSERT INTO delivery_obo VALUES ('old-grant');",
+        "CREATE TABLE testing_environments (id TEXT); INSERT INTO testing_environments VALUES ('old-world');",
+        "CREATE TABLE public_identifier_schema (id TEXT); INSERT INTO public_identifier_schema VALUES ('old-schema');",
+    ].into_iter().enumerate() {
+        let path = dir.path().join(format!("legacy-{index}.db"));
+        let database_url = format!("sqlite://{}?mode=rwc", path.display());
+        let pool = SqlitePoolOptions::new().max_connections(1).connect(&database_url).await.unwrap();
+        sqlx::raw_sql(schema).execute(&pool).await.unwrap();
+        pool.close().await;
+        let original = std::fs::read(&path).unwrap();
+        assert!(Store::preflight_accounts_database(&database_url).await.unwrap_err().to_string().contains("IAM-owned"));
+        assert_eq!(std::fs::read(&path).unwrap(), original);
+    }
 }
 #[tokio::test]
 async fn native_recording_links_require_visibility_and_safe_provider_urls() {

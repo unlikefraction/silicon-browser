@@ -208,15 +208,23 @@ async fn check_accounts_ownership(pool: &SqlitePool) -> StoreResult<()> {
         ("delivery_credentials", "SELECT EXISTS(SELECT 1 FROM delivery_credentials)"),
         ("iam_webhook_receipts", "SELECT EXISTS(SELECT 1 FROM iam_webhook_receipts)"),
         ("iam_login_attempts", "SELECT EXISTS(SELECT 1 FROM iam_login_attempts)"),
+        ("login_attempts", "SELECT EXISTS(SELECT 1 FROM login_attempts)"),
+        ("recording_obo_authorizations", "SELECT EXISTS(SELECT 1 FROM recording_obo_authorizations)"),
+        ("recording_obo_grants", "SELECT EXISTS(SELECT 1 FROM recording_obo_grants)"),
+        ("delivery_obo", "SELECT EXISTS(SELECT 1 FROM delivery_obo)"),
+        ("testing_environments", "SELECT EXISTS(SELECT 1 FROM testing_environments)"),
+        ("public_identifier_schema", "SELECT EXISTS(SELECT 1 FROM public_identifier_schema)"),
     ] {
         if tables.iter().any(|name| name == table) {
             let exists: bool = sqlx::query_scalar(query).fetch_one(pool).await?;
             legacy |= exists;
         }
     }
-    for (table, query) in
-        [("profiles", "SELECT org_id,owner_id FROM profiles"), ("sessions", "SELECT org_id,started_by FROM sessions")]
-    {
+    for (table, query) in [
+        ("profiles", "SELECT org_id,owner_id FROM profiles"),
+        ("sessions", "SELECT org_id,started_by FROM sessions"),
+        ("discovery_log", "SELECT org_id,actor_id FROM discovery_log"),
+    ] {
         if tables.iter().any(|name| name == table) {
             let actors: Vec<(String, String)> = sqlx::query_as(query).fetch_all(pool).await?;
             legacy |= actors.iter().any(|(workspace, id)| {

@@ -2,7 +2,7 @@ use async_trait::async_trait;
 
 use super::error::{ProviderError, ProviderResult};
 
-/// A short-lived grant authorising Briefcase work as the session initiator.
+/// An opaque reusable OBO access token for one approved Briefcase root.
 ///
 /// It intentionally has no accessor returning `&str`; only a concrete OBO adapter should be
 /// given access to the inner value in this module.
@@ -12,13 +12,18 @@ pub struct OnBehalfOfGrant(String);
 impl OnBehalfOfGrant {
     pub fn new(value: impl Into<String>) -> ProviderResult<Self> {
         let value = value.into();
-        if value.trim().is_empty() || value.contains(['\r', '\n']) {
+        if value.len() <= 4
+            || value.len() > 8192
+            || !value.bytes().all(|byte| byte.is_ascii_graphic())
+            || value.starts_with("obo_")
+            || value.starts_with("ort_")
+        {
             return Err(ProviderError::InvalidInput("invalid OBO grant".into()));
         }
         Ok(Self(value))
     }
 
-    /// Available to the eventual Briefcase adapter, but not exposed outside this crate.
+    /// Available to the Briefcase adapter, but not exposed outside this crate.
     pub(crate) fn expose(&self) -> &str {
         &self.0
     }

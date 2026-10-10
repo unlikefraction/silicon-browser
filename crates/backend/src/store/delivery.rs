@@ -108,13 +108,26 @@ impl Store {
         let mut claims = Vec::with_capacity(rows.len());
         for row in rows {
             let session_id: String = row.try_get("session_id")?;
-            // Generate once inside the bounded claim transaction, before any network work.
+            let session = sqlx::query("SELECT org_id, started_by, provider_session_id, delivery_principal_id, delivery_membership_id, delivery_destination_org, delivery_destination_actor FROM sessions WHERE id = ?")
+                .bind(&session_id).fetch_one(&mut *tx).await?;
+            // Preserve the operation identity used by released clients when adopting an old job.
             let upload_operation_id = match row.try_get::<Option<&str>, _>("upload_operation_id")? {
                 Some(id) => {
                     Uuid::parse_str(id).map_err(|_| corrupt("recording artifact", "invalid upload operation"))?
                 }
                 None => {
-                    let id = Uuid::new_v4();
+                    use sha2::Digest as _;
+                    let digest = sha2::Sha256::digest(
+                        format!(
+                            "browser-recording/{}/{}/{}",
+                            session.try_get::<&str, _>("org_id")?,
+                            session_id,
+                            row.try_get::<&str, _>("kind")?
+                        )
+                        .as_bytes(),
+                    );
+                    let id = Uuid::from_slice(&digest[..16])
+                        .map_err(|_| corrupt("recording artifact", "invalid upload operation"))?;
                     sqlx::query("UPDATE recording_artifacts SET upload_operation_id=? WHERE session_id=? AND kind=?")
                         .bind(id.to_string())
                         .bind(&session_id)
@@ -124,8 +137,6 @@ impl Store {
                     id
                 }
             };
-            let session = sqlx::query("SELECT org_id, started_by, provider_session_id, delivery_principal_id, delivery_membership_id, delivery_destination_org, delivery_destination_actor FROM sessions WHERE id = ?")
-                .bind(&session_id).fetch_one(&mut *tx).await?;
             claims.push(RecordingDeliveryClaim {
                 session_id,
                 org_id: session.try_get("org_id")?,
