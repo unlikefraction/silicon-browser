@@ -99,3 +99,13 @@ and previous executable/frontend, and restore Accounts/Apps from their matching
 backups. Do not run the old backend on a migrated store or restore only one
 participant. Preserve failed candidate state for diagnosis; never overwrite the
 old IAM store or delete the original backup to make a retry succeed.
+
+## Production verification — 2026-10-10
+
+The coordinated three-account immutable map (SHA256 `1fcac37a3e8a3dda27c80c7ef08ea7fd57bcc68f089b9cdb8ef885f0a18bcb1a`) was dry-run/applied/replayed after stopping the Browser writer and uploading a final private backup. All five retained ciphertexts verified; replay changed zero rows. The one session, two participants, two commands, one recording, two reports and two outbox rows were retained. Only declared account references and command ciphertext whose AAD contains the old actor changed. The original IAM `browser.db` was outside the consumer and was left in place.
+
+The optimized ARM64 backend from `3188095a4465c7ad0918b2e72f6408e561a4e223` is selected at `/opt/silicon-browser/releases/20261010-uuid-3188095`. The API and backup timer reopened after Accounts and Apps completed their matching cutovers. Health, SQLite integrity and foreign keys pass; anonymous resource access is refused. The final pre-cutover backup is `s3://silicon-browser-production-234951665042-us-east-1/uuid-cutover-backups/20261010T135407Z/`.
+
+The same-domain website now serves the tested Vite output from `/opt/silicon-browser/web-releases/3188095` through an added nginx frontend vhost on the existing host. The previous Vercel team was inaccessible to the available token, so no duplicate Vercel project was created. Before DNS switched, trusted TLS and exact index/callback/JS/CSS/icon bytes were verified using `--resolve`; after the switch, browser automation verified the public page without JavaScript errors. The original API nginx block is byte-preserved. Certificate renewal is configured and tested with HTTP webroot `/var/www/certbot`.
+
+The six native CLI1.1.1 targets passed workflow38056729978. Updated CLI publication remains required because the old client rejects canonical UUID connection principals. A genuine post-cutover owner sign-in is still needed for the live retained-resource journey; no account is impersonated or enrolled as a substitute. Operator evidence is under `.migration/live/browser-uuid`, with the public screenshot `.migration/live/browser-production-home.png`.
