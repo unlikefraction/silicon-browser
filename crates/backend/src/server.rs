@@ -687,7 +687,10 @@ impl FromRequestParts<AppState> for Bearer {
     }
 }
 
-async fn resolve_identity(_state: &AppState, principal: &PrincipalIdentity) -> Result<Identity, ApiFailure> {
+async fn resolve_identity(state: &AppState, principal: &PrincipalIdentity) -> Result<Identity, ApiFailure> {
+    if state.store.account_subject_retired(&principal.principal_id).await? {
+        return Err(ApiFailure::unauthenticated());
+    }
     // Display handles never become owners or ACL aliases.
     Ok(Identity {
         id: principal.principal_id.clone(),
@@ -801,6 +804,17 @@ async fn get_profile(
     Ok(success(state.store.profile(&scope.org_id, &scope.identity, &profile_id).await.map_err(ApiFailure::from)?))
 }
 
+async fn resolve_account_selector(state: &AppState, selector: &str) -> Result<String, ApiFailure> {
+    let id = state.identity.resolve_account_id(selector).await?;
+    if state.store.account_subject_retired(&id).await? {
+        return Err(ApiFailure::field(
+            "account",
+            "This account ID was retired. Resolve its current handle or sign in again.",
+        ));
+    }
+    Ok(id)
+}
+
 async fn resolve_access(
     state: &AppState,
     access: &silicon_browser_shared::AccessList,
@@ -814,7 +828,7 @@ async fn resolve_access(
                 "Accounts has no membership tags; share with @c:handle, @si:handle or @account-uuid",
             )
         })?;
-        resolved.push(format!("@{}", state.identity.resolve_account_id(selector).await?));
+        resolved.push(format!("@{}", resolve_account_selector(state, selector).await?));
     }
     silicon_browser_shared::AccessList::new(resolved).map_err(ApiFailure::validation)
 }
@@ -987,7 +1001,7 @@ async fn list_sessions(
     if let Some(filter) = &mut filter {
         for predicate in &mut filter.predicates {
             if let SessionPredicate::For(selector) = predicate {
-                *selector = state.identity.resolve_account_id(selector).await?;
+                *selector = resolve_account_selector(&state, selector).await?;
             }
         }
     }
@@ -1333,7 +1347,7 @@ async fn list_recordings(
     if let Some(filter) = &mut filter {
         for predicate in &mut filter.predicates {
             if let RecordingPredicate::For(selector) = predicate {
-                *selector = state.identity.resolve_account_id(selector).await?;
+                *selector = resolve_account_selector(&state, selector).await?;
             }
         }
     }
@@ -1396,7 +1410,7 @@ async fn list_usage(
     if let Some(filter) = &mut filter {
         for predicate in &mut filter.predicates {
             if let UsagePredicate::For(selector) = predicate {
-                *selector = state.identity.resolve_account_id(selector).await?;
+                *selector = resolve_account_selector(&state, selector).await?;
             }
         }
     }
@@ -3009,6 +3023,28 @@ mod tests {
             request(&fixture.app, "POST", "/api/v1/auth/refresh", None, Some(refresh)).await.0,
             StatusCode::CONFLICT
         );
+    }
+
+    #[tokio::test]
+    async fn uuid_cutover_rejects_stale_authentication_and_acl_selectors() {
+        let fixture = fixture().await;
+        let fresh = "bc0f6684-df51-4d9f-b945-bbdf88e599ad";
+        fixture.identity.allow_identity("old-token", principal("Ab1", IdentityKind::Silicon, false));
+        fixture.identity.allow_identity("fresh-token", principal(fresh, IdentityKind::Silicon, false));
+        sqlx::query("INSERT INTO account_uuid_cutover(singleton,map_sha256,migrated_at) VALUES(1,'hash','now')")
+            .execute(fixture.store.pool())
+            .await
+            .unwrap();
+        let (status, headers, _) =
+            request(&fixture.app, "GET", "/api/v1/sessions", Some(("old-token", "org-1")), None).await;
+        assert_eq!(status, StatusCode::UNAUTHORIZED);
+        assert_eq!(headers.get("x-sb-auth-rejected").unwrap(), "1");
+        assert_eq!(
+            request(&fixture.app, "GET", "/api/v1/sessions", Some(("fresh-token", "org-1")), None).await.0,
+            StatusCode::OK
+        );
+        assert!(resolve_account_selector(&fixture.state, "Ab1").await.is_err());
+        assert_eq!(resolve_account_selector(&fixture.state, fresh).await.unwrap(), fresh);
     }
 
     #[tokio::test]

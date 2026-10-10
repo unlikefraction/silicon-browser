@@ -15,7 +15,9 @@ export function acceptAuth(value: AuthSession, org?: string, identity?: string, 
   return value;
 }
 function validIdentity(value: AuthSession['identity']): boolean {
-  return typeof value?.name === 'string' && typeof value.id === 'string' && /^[a-zA-Z0-9]{3,128}$/.test(value.id) && ['carbon', 'silicon'].includes(value.kind);
+  return typeof value?.name === 'string' && typeof value.id === 'string' &&
+    (/^[a-zA-Z0-9]{3,128}$/.test(value.id) || /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/.test(value.id)) &&
+    ['carbon', 'silicon'].includes(value.kind);
 }
 export class BrowserApi {
   private session: AuthSession | null = null;

@@ -95,3 +95,14 @@ test('switching accounts during a replay rejects the previous account response',
   await assert.rejects(pending, /Sign-in changed/);
   assert.deepEqual(api.currentSession(), next);
 });
+
+test('canonical UUID account identities survive sign-in while malformed spellings fail closed', () => {
+  const id = 'bc0f6684-df51-4d9f-b945-bbdf88e599ad';
+  const auth = { ...session(), identity: { ...session().identity, id } };
+  assert.equal(acceptAuth(auth).identity.id, id);
+  assert.equal(acceptAuth(auth, 'browser', id).identity.id, id);
+  for (const malformed of [id.toUpperCase(), '00000000-0000-0000-0000-000000000000', id.replace('-b945-', '-7945-'), `${id}\n`]) {
+    assert.throws(() => acceptAuth({ ...auth, identity: { ...auth.identity, id: malformed } }));
+  }
+  assert.throws(() => acceptAuth(auth, 'browser', 'Ab1'));
+});

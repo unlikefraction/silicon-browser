@@ -22,6 +22,7 @@ use uuid::Uuid;
 use crate::crypto::SecretBox;
 use crate::decimal::decimal_to_millionths;
 
+pub mod account_uuids;
 mod command_reports;
 mod delivery;
 mod public_identifiers;
@@ -199,9 +200,9 @@ struct UsageWriteTestHook {
     resume: std::sync::Arc<tokio::sync::Notify>,
 }
 
-async fn check_accounts_ownership(pool: &SqlitePool) -> StoreResult<()> {
+async fn check_accounts_ownership(connection: &mut sqlx::SqliteConnection) -> StoreResult<()> {
     let tables: Vec<String> =
-        sqlx::query_scalar("SELECT name FROM sqlite_master WHERE type='table'").fetch_all(pool).await?;
+        sqlx::query_scalar("SELECT name FROM sqlite_master WHERE type='table'").fetch_all(&mut *connection).await?;
     let mut legacy = false;
     for (table, query) in [
         ("identity_projection", "SELECT EXISTS(SELECT 1 FROM identity_projection)"),
@@ -216,7 +217,7 @@ async fn check_accounts_ownership(pool: &SqlitePool) -> StoreResult<()> {
         ("public_identifier_schema", "SELECT EXISTS(SELECT 1 FROM public_identifier_schema)"),
     ] {
         if tables.iter().any(|name| name == table) {
-            let exists: bool = sqlx::query_scalar(query).fetch_one(pool).await?;
+            let exists: bool = sqlx::query_scalar(query).fetch_one(&mut *connection).await?;
             legacy |= exists;
         }
     }
@@ -226,7 +227,7 @@ async fn check_accounts_ownership(pool: &SqlitePool) -> StoreResult<()> {
         ("discovery_log", "SELECT org_id,actor_id FROM discovery_log"),
     ] {
         if tables.iter().any(|name| name == table) {
-            let actors: Vec<(String, String)> = sqlx::query_as(query).fetch_all(pool).await?;
+            let actors: Vec<(String, String)> = sqlx::query_as(query).fetch_all(&mut *connection).await?;
             legacy |= actors.iter().any(|(workspace, id)| {
                 workspace != "browser" || silicon_browser_shared::account_id(id, "stored account").is_err()
             });
@@ -249,14 +250,14 @@ impl Store {
             .max_connections(1)
             .connect_with(options.read_only(true).create_if_missing(false))
             .await?;
-        let result = check_accounts_ownership(&pool).await;
+        let result = check_accounts_ownership(&mut *pool.acquire().await?).await;
         pool.close().await;
         result
     }
 
     /// Accounts UUIDs cannot be inferred from old IAM handles.
     pub async fn ensure_accounts_database(&self) -> StoreResult<()> {
-        check_accounts_ownership(&self.pool).await
+        check_accounts_ownership(&mut *self.pool.acquire().await?).await
     }
 
     pub(crate) fn pool(&self) -> &SqlitePool {
