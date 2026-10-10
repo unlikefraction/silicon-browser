@@ -32,9 +32,12 @@ with tempfile.TemporaryDirectory(prefix=a.app+'-catalog-proof-') as tmp:
  assert commands[0]['stdout'].strip()==a.app+' '+version and commands[1]['stdout'].strip()
  assert json.loads(commands[2]['stdout'])['app_id']==a.app
  assert json.loads(commands[3]['stdout'])['authenticated'] is False
+ default_apis=[]
  state_files=[str(p.relative_to(home)) for p in home.rglob('*') if p.is_file()]
  # Browser creates its locked API-origin partition even while signed out. No existing login was supplied.
  for state_path in home.rglob('*.json'):
   state=json.loads(state_path.read_text());assert not state.get('access_token') and not state.get('refresh_token')
- result={'schema_version':1,'app_id':a.app,'version':commands[0]['stdout'].strip(),'package_version':version,'target':a.target,'source_revision':a.source_revision,'candidate_run':a.candidate_run,'archive_sha256':hashlib.sha256(a.archive.read_bytes()).hexdigest(),'binary_sha256':hashlib.sha256(raw).hexdigest(),'runner_os':platform.system(),'runner_machine':platform.machine(),'native':True,'commands':commands,'initial_home_empty':True,'signed_out_state_files':state_files,'source_commit':a.source_revision,'verifier_commit':os.environ.get('GITHUB_SHA'),'archive':a.archive.name,'sha256':hashlib.sha256(a.archive.read_bytes()).hexdigest(),'size':a.archive.stat().st_size,'runtime':{'system':platform.system(),'machine':platform.machine(),'native':True},'command_results':[{'argv':x['args'],'exit_code':x['exit_code'],'stdout':x['stdout'],'stderr':x['stderr']} for x in commands]}
+  if state_path.name=='state.json':default_apis.append(state['backend_url'])
+ assert default_apis==['https://backend.browser.teamofsilicons.com']
+ result={'default_api_url':default_apis[0],'schema_version':1,'app_id':a.app,'version':commands[0]['stdout'].strip(),'package_version':version,'target':a.target,'source_revision':a.source_revision,'candidate_run':a.candidate_run,'archive_sha256':hashlib.sha256(a.archive.read_bytes()).hexdigest(),'binary_sha256':hashlib.sha256(raw).hexdigest(),'runner_os':platform.system(),'runner_machine':platform.machine(),'native':True,'commands':commands,'initial_home_empty':True,'signed_out_state_files':state_files,'source_commit':a.source_revision,'verifier_commit':os.environ.get('GITHUB_SHA'),'archive':a.archive.name,'sha256':hashlib.sha256(a.archive.read_bytes()).hexdigest(),'size':a.archive.stat().st_size,'runtime':{'system':platform.system(),'machine':platform.machine(),'native':True},'command_results':[{'argv':x['args'],'exit_code':x['exit_code'],'stdout':x['stdout'],'stderr':x['stderr']} for x in commands]}
  a.output.parent.mkdir(parents=True,exist_ok=True);a.output.write_text(json.dumps(result,indent=2)+'\n');print(json.dumps({k:v for k,v in result.items() if k!='commands'}))
