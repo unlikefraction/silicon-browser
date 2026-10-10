@@ -38,7 +38,7 @@ Configure Browser's Silicon Accounts redirect URI as
 `https://browser.teamofsilicons.com/auth/callback` and allow the frontend origin.
 Carbon login uses server-owned PKCE, state and a one-use callback claim. Silicon
 login uses an application-bound `slt_` token. The server introspects Accounts
-JWTs live, checks audience and membership, and uses the permanent base62 UUID
+JWTs live, checks audience and membership, and uses the permanent 128-bit UUID
 for ownership. Accounts has no organizations or tags; Browser maintains one
 application workspace and explicit sharing.
 
@@ -83,3 +83,5 @@ Do not release a CLI against an API still running the old auth contract.
 Keep secrets, backups and operational data outside packages. Run an actual
 restore check and a provider session smoke test before production cutover.
 Automatic Briefcase OBO delivery is retired; see [recording status](BRIEFCASE_INTEGRATION.md).
+
+For the coordinated existing-Accounts UUID upgrade, use [the offline cutover runbook](ACCOUNT_UUID_CUTOVER.md). It does not adopt the preserved IAM database.

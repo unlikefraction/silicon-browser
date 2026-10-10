@@ -26,8 +26,12 @@ async fn main() {
 }
 
 async fn run() -> Result<(), String> {
-    if std::env::args().len() != 1 {
-        return Err("usage: silicon-browser-backend; IAM migration commands are retired. Preserve the old database and configure a fresh Accounts database.".into());
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    if args.first().is_some_and(|arg| arg == "--migrate-account-uuids") {
+        return migrate_account_uuids(&args).await;
+    }
+    if !args.is_empty() {
+        return Err("usage: silicon-browser-backend [--migrate-account-uuids MAP.csv [--apply --writers-stopped]]; IAM adoption is not supported.".into());
     }
     let config = Config::from_env()?;
     Store::preflight_accounts_database(&config.database_url).await.map_err(|error| error.to_string())?;
@@ -106,4 +110,25 @@ async fn shutdown_signal() {
         () = control_c => {},
         () = terminate => {},
     }
+}
+
+/// This offline path needs no Accounts/provider network access or credentials.
+async fn migrate_account_uuids(args: &[String]) -> Result<(), String> {
+    let apply = args.len() == 4 && args[2] == "--apply" && args[3] == "--writers-stopped";
+    if args.len() != 2 && !apply {
+        return Err("usage: silicon-browser-backend --migrate-account-uuids MAP.csv [--apply --writers-stopped]; use deploy/migrate_account_uuids.py for the guarded backup/apply/replay procedure".into());
+    }
+    let database = std::env::var("SB_DATABASE_URL")
+        .map_err(|_| "SB_DATABASE_URL must explicitly name the existing Accounts database")?;
+    let key =
+        std::env::var("SB_ENCRYPTION_KEY").map_err(|_| "SB_ENCRYPTION_KEY is required to authenticate command logs")?;
+    let mut decoded = [0_u8; 32];
+    hex::decode_to_slice(key, &mut decoded).map_err(|_| "SB_ENCRYPTION_KEY must be 64 hexadecimal characters")?;
+    let csv = std::fs::read(&args[1]).map_err(|error| format!("cannot read mapping: {error}"))?;
+    let report =
+        silicon_browser_backend::store::account_uuids::migrate(&database, &csv, &SecretBox::new(&decoded), apply)
+            .await
+            .map_err(|error| error.to_string())?;
+    println!("{}", serde_json::to_string(&report).map_err(|error| error.to_string())?);
+    Ok(())
 }

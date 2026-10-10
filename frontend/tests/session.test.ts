@@ -222,3 +222,12 @@ test('selecting the same saved account during rotation does not erase its one-us
   await pending;
   assert.deepEqual(saved.load(), renewed);
 });
+
+test('a fresh canonical UUID login survives storage reload without aliasing old authority', () => {
+  const { saved, storage, lock } = fixture();
+  const canonical = { ...renewed, identity: { ...renewed.identity, id: 'bc0f6684-df51-4d9f-b945-bbdf88e599ad' } };
+  saved.save(canonical);
+  const reloaded = new BrowserSession(origin, () => storage, lock);
+  assert.deepEqual(reloaded.load(), canonical);
+  assert.equal(reloaded.all().some(item => item.identity.id === 'Ab1'), false);
+});

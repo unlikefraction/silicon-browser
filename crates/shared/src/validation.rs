@@ -38,15 +38,23 @@ pub fn actor_id(value: &str, field: &'static str) -> Result<crate::IdentityKind,
     Err(ValidationError::Invalid { field, reason: "expected c:<carbon-handle> (3–30 characters) or si:<silicon-handle> (3–30 characters), using lowercase letters, digits, _ or -; migrate old selectors or sign in again".into() })
 }
 
-/// Permanent Silicon Accounts UUID. UUIDs are case-sensitive base62 strings.
+/// Permanent Silicon Accounts UUID; legacy base62 values remain accepted until cutover.
 pub fn account_id(value: &str, field: &'static str) -> Result<(), ValidationError> {
-    if (3..=128).contains(&value.len()) && value.bytes().all(|byte| byte.is_ascii_alphanumeric()) {
+    if canonical_account_uuid(value)
+        || ((3..=128).contains(&value.len()) && value.bytes().all(|byte| byte.is_ascii_alphanumeric()))
+    {
         return Ok(());
     }
     Err(ValidationError::Invalid {
         field,
-        reason: "expected a permanent Silicon Accounts UUID (3–128 case-sensitive letters or digits)".into(),
+        reason: "expected a canonical lowercase Silicon Accounts UUID or a legacy base62 account ID".into(),
     })
+}
+
+pub fn canonical_account_uuid(value: &str) -> bool {
+    value.len() == 36
+        && uuid::Uuid::parse_str(value)
+            .is_ok_and(|id| id.hyphenated().to_string() == value && id.get_variant() == uuid::Variant::RFC4122)
 }
 
 /// Access-token shape only. The backend verifies live authority with Accounts.
@@ -141,5 +149,16 @@ fn accounts_identifiers_are_case_sensitive_and_tokens_are_separate_families() {
     assert!(accounts_access_token("header.payload.signature"));
     for token in ["oat_legacy", "slt_secret", "sar_secret", "a.b", "a..b", "a.b.c\n"] {
         assert!(!accounts_access_token(token));
+    }
+}
+
+#[cfg(test)]
+#[test]
+fn account_uuid_accepts_canonical_hyphens_without_normalizing_authority() {
+    let id = "bc0f6684-df51-4d9f-b945-bbdf88e599ad";
+    assert!(account_id(id, "id").is_ok());
+    assert!(crate::AccessList::new([format!("@{id}")]).unwrap().validate().is_ok());
+    for bad in [id.to_uppercase(), "00000000-0000-0000-0000-000000000000".into(), id.replace("-b945-", "-7945-")] {
+        assert!(account_id(&bad, "id").is_err());
     }
 }
