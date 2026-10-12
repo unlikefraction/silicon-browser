@@ -74,9 +74,9 @@ The API release is `20261012-2cbf9988075bea15`. Its ARM64 binary SHA-256 is
 The backend workflow artifact ZIP SHA-256 is
 `d5c2137190ed55d328aab90fd4aec60a347394b7f1752dc361cc783b09aabd0b`.
 
-Before deployment, writers were stopped and the existing Accounts database was
-snapshotted. The prior runtime, API, frontend and service configuration were
-retained for recovery. The verified database snapshot was 294,912 bytes with
+Before deployment, the existing Accounts database was snapshotted consistently
+with SQLite’s online backup API while writers remained running. The prior
+runtime, API, frontend and service configuration were retained for recovery. The verified database snapshot was 294,912 bytes with
 SHA-256 `9a5b2be1ec3995f6b140cce55d8ff90407ed81e21117f05bc4dc8738d0618663`.
 A freshly downloaded encrypted cloud backup passed restore checks. The
 post-deployment snapshot had the same size and hash, confirming unchanged
