@@ -1,5 +1,9 @@
 # Existing Accounts UUID cutover
 
+The production cutover below was completed on October 10, 2026. Browser 3.0.0
+retains historical database rows for recovery, but removes command reporting,
+command-log APIs and exports. New CLI versions discard queued legacy reports.
+
 This procedure upgrades Browser's **existing Accounts database** from legacy
 base62 account IDs to the authoritative Accounts UUIDv4 export. It does not
 import or relabel IAM identities. Keep the old IAM database and key untouched.
@@ -65,8 +69,8 @@ and verifies replay. It does not restart a service. Keep writers stopped until
 Accounts, Apps and Browser have all consumed the same final export. Switch the
 backend executable and deploy the matching frontend under the coordinated
 release, then restart Browser and its backup timer. Verify old JWTs receive
-401, fresh Accounts sign-in succeeds, and existing sessions, recordings and
-command logs remain accessible to their mapped owners. UUIDs are never aliases
+401, fresh Accounts sign-in succeeds, and existing sessions and recordings
+remain accessible to their mapped owners. UUIDs are never aliases
 for authenticating old subjects. Existing CDP/live capabilities expire under
 the browser provider's session lifecycle; the migration does not end browsers.
 
@@ -90,8 +94,8 @@ the browser provider's session lifecycle; the migration does not end browsers.
   Late webhooks only invalidate authentication cache and cannot restore owners.
 - CLI and frontend credentials must sign in again after Accounts revokes their
   old token families. Never rewrite JWT subjects. New CLI login generations
-  separate connection caches and pending command reports; existing local files
-  remain retained. Browser localStorage contexts are keyed by immutable UUID.
+  separate connection caches. Browser 3.0.0 discards legacy command reports
+  without sending them. Browser localStorage contexts are keyed by immutable UUID.
 
 Rollback is coordinated across all three services, before reopening writers.
 Stop Browser, restore the pre-cutover SQLite backup and matching encryption key

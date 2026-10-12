@@ -31,7 +31,7 @@ def main():
     ))
     args = parser.parse_args()
     controller, cli = str(args.controller.resolve()), str(args.cli.resolve())
-    reports = []
+    api_requests = []
     payload = bytes(range(256)) * 4097
     text = b"LOCAL_UPLOAD_BYTES_not_a_remote_path\n"
 
@@ -57,6 +57,8 @@ def main():
                     pass
 
                 def do_GET(self):
+                    if self.path.startswith("/api/"):
+                        api_requests.append(("GET", self.path))
                     if self.path == "/fixture":
                         self.respond(b"<!doctype html><title>File transfer fixture</title>", "text/html")
                     elif self.path == "/fixture/file.bin":
@@ -64,7 +66,7 @@ def main():
                             self.send_error(403)
                         else:
                             self.respond(payload, "application/octet-stream")
-                    elif self.path.endswith("/connection"):
+                    elif self.path == "/api/v1/sessions/local-transfer/connection":
                         self.respond_json({
                             "session_id": "local-transfer", "principal_id": "11111111-1111-4111-8111-111111111111",
                             "cdp_url": cdp, "expires_at": "2099-01-01T00:00:00Z",
@@ -73,10 +75,8 @@ def main():
                         self.send_error(404)
 
                 def do_POST(self):
-                    report = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
-                    assert self.path.endswith("/commands")
-                    reports.append(report)
-                    self.respond_json({"command_id": report["command_id"], "sequence": len(reports)})
+                    api_requests.append(("POST", self.path))
+                    self.send_error(410)
 
                 def respond_json(self, value):
                     self.respond(json.dumps({"data": value}).encode(), "application/json")
@@ -173,9 +173,10 @@ def main():
             run("wait", ["--download", str(sentinel)], expected=1)
             assert sentinel.read_bytes() == b"sentinel"
             assert not list((root / "downloads").glob(".sb-download-*.part"))
-            assert all("stdout" not in report and "stderr" not in report for report in reports)
-            assert all("LOCAL_UPLOAD_BYTES" not in json.dumps(report) for report in reports)
-            assert sum(report["command"] == "upload" for report in reports) == 3
+            assert api_requests
+            assert all(request == ("GET", "/api/v1/sessions/local-transfer/connection")
+                       for request in api_requests), api_requests
+            assert not list(root.rglob("report-*.json"))
             print(json.dumps({"hidden_input": "passed", "snapshot_ref_multiple_files": "passed",
                               "binary_sha256": "passed", "preexisting_capture_handler": "passed",
                               "missing_file_preserves_selection": "passed",
@@ -183,7 +184,7 @@ def main():
                               "unsupported_download_preserves_sentinel": "passed",
                               "download_does_not_trigger_button": "passed",
                               "concurrent_transfers_restore_page_methods": "passed",
-                              "command_metadata_only": "passed", "binary_bytes": len(payload)}))
+                              "no_command_telemetry": "passed", "binary_bytes": len(payload)}))
         finally:
             # Stop only the daemon created by this isolated fixture namespace.
             namespaces = set()
