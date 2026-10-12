@@ -131,10 +131,6 @@ pub(crate) fn identifier(value: &str, field: &'static str) -> Result<(), Validat
     Ok(())
 }
 
-pub(crate) fn purpose(value: &str) -> Result<(), ValidationError> {
-    bounded(value, "purpose", 2_000)
-}
-
 #[cfg(test)]
 #[test]
 fn accounts_identifiers_are_canonical_uuidv4_and_tokens_are_separate_families() {

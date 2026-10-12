@@ -17,14 +17,14 @@ use axum::http::{HeaderMap, HeaderName, HeaderValue, Method, StatusCode};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use axum::{Json, Router};
-use chrono::{DateTime, NaiveDate, TimeDelta, Utc};
+use chrono::{DateTime, TimeDelta, Utc};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
 use silicon_browser_shared::{
-    AccountsInfo, ApiError, ApiErrorEnvelope, AuthExchangeRequest, AuthRefreshRequest, AuthSession, CommandReport,
-    Envelope, FetchRequest, FetchResponse, FieldError, Identity, LiveRedeemRequest, ProfileCreate, ProfileEnd,
-    ProfileUpdate, ProxyLocation, RecordingFilter, SearchRequest, SearchResponse, Session, SessionConnection,
-    SessionCreate, SessionEnd, SessionFilter, SessionStatus, UsageFilter, UsagePredicate, Validate,
+    AccountsInfo, ApiError, ApiErrorEnvelope, AuthExchangeRequest, AuthRefreshRequest, AuthSession, Envelope,
+    FetchRequest, FetchResponse, FieldError, Identity, LiveRedeemRequest, ProfileCreate, ProfileEnd, ProfileUpdate,
+    ProxyLocation, RecordingFilter, SearchRequest, SearchResponse, Session, SessionConnection, SessionCreate,
+    SessionEnd, SessionFilter, SessionStatus, UsageFilter, UsagePredicate, Validate,
 };
 use tokio::sync::Mutex;
 use url::Url;
@@ -576,7 +576,6 @@ fn api_middleware(router: Router, origin: HeaderValue) -> Router {
                     HeaderName::from_static("x-request-id"),
                 ]),
         )
-        .layer(tower_http::trace::TraceLayer::new_for_http())
         .layer(tower_http::sensitive_headers::SetSensitiveRequestHeadersLayer::new([AUTHORIZATION]))
 }
 
@@ -599,8 +598,8 @@ pub fn router(state: AppState) -> Router {
         .route("/api/v1/sessions/{session_id}/end", post(end_session))
         .route("/api/v1/sessions/{session_id}/live", post(live_session))
         .route("/api/v1/sessions/{session_id}/live/redeem", post(redeem_live_session))
-        .route("/api/v1/sessions/{session_id}/logs", get(session_logs))
-        .route("/api/v1/sessions/{session_id}/commands", post(report_command))
+        .route("/api/v1/sessions/{session_id}/logs", get(retired_command_history))
+        .route("/api/v1/sessions/{session_id}/commands", post(retired_command_history))
         .route("/api/v1/sessions/{session_id}/connection", get(session_connection))
         .route("/api/v1/recordings", get(list_recordings))
         .route("/api/v1/recordings/{session_id}", get(get_recording))
@@ -1268,29 +1267,6 @@ async fn redeem_live_session(
     Ok(response)
 }
 
-async fn session_logs(
-    State(state): State<AppState>,
-    scope: Scope,
-    Path(session_id): Path<String>,
-    query: Result<Query<LogsQuery>, QueryRejection>,
-) -> Result<impl IntoResponse, ApiFailure> {
-    let query = query_payload(query)?;
-    let date = query
-        .date
-        .as_deref()
-        .map(|date| NaiveDate::parse_from_str(date, "%Y-%m-%d"))
-        .transpose()
-        .map_err(|_| ApiFailure::field("date", "expected YYYY-MM-DD"))?
-        .or_else(|| Some(Utc::now().date_naive()));
-    Ok(success(
-        state
-            .store
-            .session_logs(&scope.org_id, &scope.identity, &session_id, date, &state.secrets)
-            .await
-            .map_err(ApiFailure::from)?,
-    ))
-}
-
 async fn session_connection(
     State(state): State<AppState>,
     scope: Scope,
@@ -1310,27 +1286,15 @@ async fn session_connection(
     Ok(response)
 }
 
-async fn report_command(
-    State(state): State<AppState>,
-    scope: Scope,
-    Path(session_id): Path<String>,
-    payload: Result<Json<CommandReport>, JsonRejection>,
-) -> Result<impl IntoResponse, ApiFailure> {
-    let report = json_payload(payload)?;
-    report.validate().map_err(ApiFailure::validation)?;
-    let receipt = state
-        .store
-        .report_command(
-            &scope.org_id,
-            &scope.identity,
-            &scope.principal.principal_id.to_string(),
-            &session_id,
-            &report,
-            &state.secrets,
-            Utc::now(),
-        )
-        .await?;
-    Ok(success(receipt))
+// No body extractor: legacy command payloads are never read, parsed, or retained.
+async fn retired_command_history() -> impl IntoResponse {
+    (
+        StatusCode::GONE,
+        Json(ApiErrorEnvelope::new(
+            "command_history_removed",
+            "Command reporting and history have been removed. Update silicon-browser.",
+        )),
+    )
 }
 
 async fn list_recordings(
@@ -1424,20 +1388,7 @@ async fn search(
     let request = json_payload(payload)?;
     request.validate().map_err(ApiFailure::validation)?;
     let pool = state.search.as_ref().ok_or_else(ApiFailure::discovery_unavailable)?;
-    let result: SearchResponse =
-        pool.search_for(&actor_key(&scope), request.clone()).await.map_err(ApiFailure::from)?;
-    state
-        .store
-        .record_discovery(
-            &scope.org_id,
-            &scope.identity.id,
-            "search",
-            &request.purpose,
-            result.results.len(),
-            Utc::now(),
-        )
-        .await
-        .map_err(ApiFailure::from)?;
+    let result: SearchResponse = pool.search_for(&actor_key(&scope), request).await.map_err(ApiFailure::from)?;
     Ok(success(result))
 }
 
@@ -1449,12 +1400,7 @@ async fn fetch(
     let request = json_payload(payload)?;
     request.validate().map_err(ApiFailure::validation)?;
     let pool = state.search.as_ref().ok_or_else(ApiFailure::discovery_unavailable)?;
-    let result: FetchResponse = pool.fetch_for(&actor_key(&scope), request.clone()).await.map_err(ApiFailure::from)?;
-    state
-        .store
-        .record_discovery(&scope.org_id, &scope.identity.id, "fetch", &request.purpose, result.items.len(), Utc::now())
-        .await
-        .map_err(ApiFailure::from)?;
+    let result: FetchResponse = pool.fetch_for(&actor_key(&scope), request).await.map_err(ApiFailure::from)?;
     Ok(success(result))
 }
 
@@ -1467,12 +1413,6 @@ struct Health {
 #[serde(deny_unknown_fields)]
 struct FilterQuery {
     filter: Option<String>,
-}
-
-#[derive(Default, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct LogsQuery {
-    date: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -2126,11 +2066,6 @@ impl From<IdentityError> for ApiFailure {
 impl From<StoreError> for ApiFailure {
     fn from(error: StoreError) -> Self {
         match error {
-            StoreError::ReportConflict { code: "report_window_closed" } => Self::conflict(
-                "report_window_closed",
-                "command archive has started and cannot include additional reports",
-            ),
-            StoreError::ReportConflict { code } => Self::conflict(code, "command report conflicts with stored history"),
             StoreError::Invalid(message) => Self::bad_request("invalid_request", message),
             StoreError::NotFound { kind, .. } => {
                 Self::new(StatusCode::NOT_FOUND, "not_found", format!("{kind} was not found"))
@@ -4044,19 +3979,6 @@ mod tests {
         assert_eq!(active_usage.cost.browser.micros, 1_000_000);
         assert_eq!(active_usage.cost.proxy_unclassified.micros, 200_000);
 
-        let report = serde_json::json!({"command_id":Uuid::now_v7(), "command":"open https://example.test",
-            "flags":["--json", "value with spaces"], "started_at":Utc::now(), "finished_at":Utc::now(),
-            "exit_code":0,"truncated":false});
-        let (status, _, _) =
-            request(&fixture.app, "POST", &format!("/api/v1/sessions/{}/commands", session.id), auth, Some(report))
-                .await;
-        assert_eq!(status, StatusCode::OK);
-
-        let (status, _, body) =
-            request(&fixture.app, "GET", &format!("/api/v1/sessions/{}/logs", session.id), auth, None).await;
-        assert_eq!(status, StatusCode::OK);
-        assert!(data(&body)[0]["command"].as_str().unwrap().contains("'value with spaces'"));
-
         let (status, _, body) =
             request(&fixture.app, "POST", &format!("/api/v1/sessions/{}/live", session.id), auth, Some(Value::Null))
                 .await;
@@ -4148,11 +4070,23 @@ mod tests {
             "POST",
             "/api/v1/search",
             Some(("oat_owner", "browser")),
-            Some(json!({"query":"browser testing","purpose":"contract test","type":"web","page":0})),
+            Some(json!({"query":"browser testing","type":"web","page":0})),
         )
         .await;
         assert_eq!(status, StatusCode::OK, "{}", String::from_utf8_lossy(&body));
         assert_eq!(data(&body)["results"][0]["title"], "browser testing");
+        let (status, _, _) = request(
+            &fixture.app,
+            "POST",
+            "/api/v1/fetch",
+            Some(("oat_owner", "browser")),
+            Some(json!({"urls":["https://example.test"]})),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        let audit_rows: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM discovery_log").fetch_one(fixture.store.pool()).await.unwrap();
+        assert_eq!(audit_rows, 0, "search and fetch do not retain caller activity");
     }
 
     #[tokio::test]

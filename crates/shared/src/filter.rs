@@ -407,8 +407,6 @@ mod filter_tests {
             participant_ids: vec!["si:silicon-1".into(), "c:carbon-1".into()],
             briefcase_path: "private/si:silicon-1/sb/session-1".into(),
             briefcase_link: None,
-            command_log_link: None,
-            command_log_path: None,
             delivery_error: None,
             duration_seconds: 60,
             size_bytes: 100,

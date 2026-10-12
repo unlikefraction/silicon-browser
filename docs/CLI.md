@@ -2,7 +2,7 @@
 
 `browser` uses Silicon Accounts and is distributed through Silicon Apps. Install
 on supported Linux targets with `silicon-apps install browser`. macOS and Linux
-can also use `npm install -g silicon-browser@2.0.0`. Apps owns
+can also use `npm install -g silicon-browser@3.0.0`. Apps owns
 updates; Browser does not run a second updater.
 
 ## Discovery and sign-in
@@ -74,7 +74,7 @@ organization flag or selection.
 Each profile has at most one active session. Profile sessions accept 15m, 30m,
 45m, 60m, 120m or 240m; incognito defaults to 15m.
 
-## Local actions and logs
+## Local actions
 
 ```sh
 browser run SESSION_ID "open https://example.com"
@@ -83,8 +83,6 @@ browser run SESSION_ID "click @e1"
 browser run SESSION_ID "fill @e2 'hello world'"
 browser run SESSION_ID "screenshot ./page.png"
 browser run SESSION_ID "upload input[type=file] ./document.pdf"
-browser session logs SESSION_ID
-browser session sync SESSION_ID
 ```
 
 `browser run --help` prints the pinned controller's supported commands. Setup
@@ -97,9 +95,9 @@ same-origin HTTP links and blob/data links; script/button/POST downloads,
 cross-origin frames and `wait --download` fail explicitly. End sessions with
 `browser session end`.
 
-Command output streams locally. Command reports contain command text/flags,
-timestamps, exit code and a stable UUID; browser output is excluded. A failed
-metadata report is queued and can be retried without repeating the action.
+Commands and output stay local to the controller connection. Browser does not
+collect, queue or send command telemetry. Legacy queued reports are never
+uploaded. The `session logs` and `session sync` commands have been removed.
 
 ## Recordings, usage and discovery
 
@@ -110,8 +108,8 @@ browser recording rm SESSION_ID
 browser usage limits
 browser usage ls
 browser usage show SESSION_ID
-browser search "query" --purpose "Find sources"
-browser fetch https://example.com,https://example.org --purpose "Extract claims"
+browser search "query"
+browser fetch https://example.com,https://example.org
 ```
 
 Recording and usage filters support AND-separated pipelines; inspect each

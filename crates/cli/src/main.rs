@@ -22,8 +22,8 @@ Profiles keep one identity and one fixed proxy location. Incognito sessions have
 
 const DISCOVERY_HELP: &str = r#"Search & fetch — use this for read-heavy work. It needs no profile or session.
 
-  browser search "{query}" --purpose "..."
-  browser fetch https://one.example,https://two.example --purpose "..."
+  browser search "{query}"
+  browser fetch https://one.example,https://two.example
   browser search --help
   browser fetch --help
 
@@ -194,14 +194,6 @@ enum SessionCommand {
     Show { session_id: String },
     /// Return a Silicon Browser link for a running session.
     Live { session_id: String },
-    /// Show replayable browser commands for one day.
-    Logs {
-        session_id: String,
-        #[arg(long)]
-        date: Option<String>,
-    },
-    /// Retry locally queued command logs without repeating browser actions.
-    Sync { session_id: String },
     /// Stop and store a session.
     End {
         session_id: String,
@@ -252,9 +244,6 @@ enum UsageCommand {
 #[derive(Args, Debug)]
 struct SearchArgs {
     query: String,
-    /// Audit intent recorded by Silicon Browser; it is not an upstream reranking instruction.
-    #[arg(long)]
-    purpose: String,
     /// Search currently supports only `web`; `news` and `research` are rejected.
     #[arg(long = "type", value_enum, default_value = "web")]
     search_type: SearchTypeArg,
@@ -307,9 +296,6 @@ struct FetchArgs {
     /// URLs as separate arguments, comma-separated, or `[url,url]`.
     #[arg(required = true)]
     urls: Vec<String>,
-    /// Audit intent recorded by Silicon Browser; it is not an upstream extraction instruction.
-    #[arg(long)]
-    purpose: String,
     #[arg(long, value_enum, default_value = "markdown")]
     format: FetchFormatArg,
     #[arg(long)]
@@ -353,7 +339,7 @@ fn main() -> ExitCode {
         return code;
     }
     let cli = Cli::parse_from(parse_arguments(&raw));
-    match execute(cli, &raw[1..]) {
+    match execute(cli) {
         Ok(()) => ExitCode::SUCCESS,
         Err(error) => {
             eprintln!("browser: {error}");
@@ -417,7 +403,7 @@ fn special_help(raw: &[String]) -> Option<ExitCode> {
     }
 }
 
-fn execute(cli: Cli, arguments: &[String]) -> Result<(), Box<dyn std::error::Error>> {
+fn execute(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
     if let Some(command) = &cli.command
         && print_service_verbs(command, cli.json)?
     {
@@ -524,21 +510,8 @@ fn execute(cli: Cli, arguments: &[String]) -> Result<(), Box<dyn std::error::Err
         return Ok(());
     };
 
-    state.remember(arguments);
-    let previous_session_id = state.last_session_id.clone();
-    let result = client(&state).and_then(|client| dispatch(&client, command, cli.json, &mut state, &home));
-    let new_session_id =
-        if state.last_session_id != previous_session_id { state.last_session_id.clone() } else { None };
-    let saved = State::record_activity(
-        &home,
-        state.last_command.clone().unwrap_or_else(|| "[unknown command]".into()),
-        new_session_id,
-    );
-    result?;
-    if let Err(error) = saved {
-        eprintln!("warning: local activity history could not be saved: {error}");
-    }
-    Ok(())
+    let client = client(&state)?;
+    dispatch(&client, command, cli.json, &state, &home)
 }
 
 fn report_bug(title: &str, details: &str, pr: Option<&str>, json: bool) -> Result<(), Box<dyn std::error::Error>> {
@@ -659,7 +632,7 @@ fn print_service_verbs(command: &Command, json: bool) -> Result<bool, serde_json
     let verbs: Option<&[&str]> = match command {
         Command::Profile(Service { command: None }) => Some(&["ls", "show", "new", "set", "end"]),
         Command::Proxy(Service { command: None }) => Some(&["ls"]),
-        Command::Session(Service { command: None }) => Some(&["new", "ls", "show", "live", "logs", "sync", "end"]),
+        Command::Session(Service { command: None }) => Some(&["new", "ls", "show", "live", "end"]),
         Command::Recording(Service { command: None }) => Some(&["ls", "show", "rm"]),
         Command::Usage(Service { command: None }) => Some(&["ls", "show"]),
         _ => None,
@@ -874,7 +847,7 @@ fn dispatch(
     client: &Client,
     command: Command,
     json: bool,
-    state: &mut State,
+    state: &State,
     home: &std::path::Path,
 ) -> Result<(), Box<dyn std::error::Error>> {
     match command {
@@ -917,7 +890,6 @@ fn dispatch(
         Command::Search(args) => {
             let request = SearchRequest {
                 query: args.query,
-                purpose: args.purpose,
                 search_type: args.search_type.into(),
                 include_domains: normalize_list(args.include_domains),
                 exclude_domains: normalize_list(args.exclude_domains),
@@ -939,7 +911,6 @@ fn dispatch(
         Command::Fetch(args) => {
             let request = FetchRequest {
                 urls: parse_urls(args.urls)?,
-                purpose: args.purpose,
                 format: args.format.into(),
                 links: args.links,
                 image_links: args.image_links,
@@ -1009,11 +980,11 @@ fn session(
     client: &Client,
     command: Option<SessionCommand>,
     json: bool,
-    state: &mut State,
+    state: &State,
     home: &std::path::Path,
 ) -> Result<(), Box<dyn std::error::Error>> {
     match command {
-        None => println!("verbs: new, ls, show, live, logs, sync, end"),
+        None => println!("verbs: new, ls, show, live, end"),
         Some(SessionCommand::New { profile_id, incognito, name, description, ttl }) => {
             let ttl = match (incognito, ttl) {
                 (true, None) => SessionTtl::Minutes15,
@@ -1022,7 +993,6 @@ fn session(
             };
             let request = SessionCreate { profile_id, incognito, name, description, ttl };
             let made = client.create_session(&request)?;
-            state.last_session_id = Some(made.id.clone());
             output(&made, json, |session| println!("{}", session.id))?;
         }
         Some(SessionCommand::Ls { filter }) => output(&client.sessions(filter.as_deref())?, json, |sessions| {
@@ -1034,26 +1004,8 @@ fn session(
         Some(SessionCommand::Live { session_id }) => {
             output(&client.live(&session_id)?, json, |live| println!("{}", live.url))?
         }
-        Some(SessionCommand::Logs { session_id, date }) => {
-            output(&client.session_logs(&session_id, date.as_deref())?, json, |logs| {
-                for log in logs {
-                    println!("{}", replay_command(&session_id, &log.command));
-                }
-            })?
-        }
-        Some(SessionCommand::Sync { session_id }) => {
-            let sent = runtime::Runtime::new(home, state)?.sync(client, Some(&session_id), 128)?;
-            output(&serde_json::json!({"reports_delivered":sent}), json, |_| {
-                println!("delivered {sent} command logs")
-            })?;
-        }
         Some(SessionCommand::End { session_id, note }) => {
             let runtime = runtime::Runtime::new(home, state)?;
-            if runtime.sync(client, Some(&session_id), 128).is_err() {
-                eprintln!(
-                    "warning: some command logs remain queued locally; ending the session may close their upload window"
-                );
-            }
             let ended = client.end_session(&session_id, &SessionEnd { note })?;
             runtime.forget_connection(&session_id)?;
             output(&ended, json, print_session)?;
@@ -1311,13 +1263,6 @@ fn print_session(session: &Session) {
     println!("cost: {} {}", money_total(&session.usage.cost), session.usage.cost.total.currency);
 }
 
-fn replay_command(session_id: &str, command: &str) -> String {
-    fn quote(value: &str) -> String {
-        format!("'{}'", value.replace('\'', "'\"'\"'"))
-    }
-    format!("browser run {} {}", quote(session_id), quote(command))
-}
-
 fn print_recording(recording: &Recording) {
     println!("session: {}", recording.session_id);
     println!("profile: {}", recording.profile_id.as_deref().unwrap_or("incognito"));
@@ -1335,9 +1280,6 @@ fn print_recording(recording: &Recording) {
             RecordingStatus::Failed => "delivery failed",
         })
     );
-    if let Some(link) = &recording.command_log_link {
-        println!("command log: {link}");
-    }
     if let Some(error) = &recording.delivery_error {
         println!("delivery error: {error}");
     }
@@ -1606,7 +1548,6 @@ mod tests {
             vec!["browser", "session", "new", "p1", "--name", "n", "--description", "d", "--ttl", "30m"],
             vec!["browser", "session", "new", "--incognito", "--name", "n", "--description", "d"],
             vec!["browser", "session", "live", "s1"],
-            vec!["browser", "session", "logs", "s1", "--date", "04-09-2026"],
             vec![
                 "browser",
                 "recording",
@@ -1616,8 +1557,8 @@ mod tests {
             ],
             vec!["browser", "recording", "rm", "s1"],
             vec!["browser", "usage", "show", "s1"],
-            vec!["browser", "search", "query", "--purpose", "reason"],
-            vec!["browser", "fetch", "https://example.com", "--purpose", "reason"],
+            vec!["browser", "search", "query"],
+            vec!["browser", "fetch", "https://example.com"],
             vec!["browser", "report-bug", "--title", "broken", "--details", "steps and output", "--pr", "owner/repo#1"],
             vec!["browser", "run", "s1", "fill @e1 'hello world'", "--json"],
         ] {
@@ -1703,7 +1644,6 @@ mod tests {
         .unwrap();
         let mut runtime = State::load(&home).unwrap();
         runtime.backend_url = "https://once.example".into();
-        State::record_activity(&home, "profile ls".into(), None).unwrap();
         let persisted = State::load(&home).unwrap();
         assert_eq!(runtime.backend_url, "https://once.example");
         assert_eq!(persisted.backend_url, "https://stored.example");
@@ -1786,7 +1726,7 @@ mod tests {
     fn service_verbs_do_not_need_authentication() {
         let cli = Cli::try_parse_from(["browser", "session"]).unwrap();
         assert!(print_service_verbs(cli.command.as_ref().unwrap(), false).unwrap());
-        let cli = Cli::try_parse_from(["browser", "search", "q", "--purpose", "p"]).unwrap();
+        let cli = Cli::try_parse_from(["browser", "search", "q"]).unwrap();
         assert!(!print_service_verbs(cli.command.as_ref().unwrap(), false).unwrap());
     }
 }

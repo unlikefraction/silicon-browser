@@ -29,10 +29,6 @@ pub struct State {
     /// Services advertised by the backend when this credential was exchanged or refreshed.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub services: Vec<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub last_session_id: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub last_command: Option<String>,
 }
 
 impl State {
@@ -140,7 +136,6 @@ impl State {
         self.identity_id = None;
         self.credential_generation = None;
         self.services.clear();
-        self.last_session_id = None;
     }
 
     pub fn consume_refresh_token(&mut self) {
@@ -150,58 +145,6 @@ impl State {
     pub fn has_environment_access_token() -> bool {
         std::env::var("SB_AUTHTOKEN")
             .is_ok_and(|value| !value.trim().is_empty() && silicon_browser::shared::accounts_access_token(&value))
-    }
-
-    /// Merge activity into the newest state without touching credentials or selected defaults.
-    pub fn record_activity(home: &Path, last_command: String, new_session_id: Option<String>) -> io::Result<Self> {
-        Self::update(home, |latest| {
-            latest.last_command = Some(last_command);
-            if let Some(session_id) = new_session_id {
-                latest.last_session_id = Some(session_id);
-            }
-        })
-    }
-
-    /// Remember structure but never values commonly used to enter credentials or headers.
-    pub fn remember(&mut self, arguments: &[String]) {
-        if let Some(run_index) = arguments.iter().position(|argument| argument == "run") {
-            self.last_command = Some(
-                arguments
-                    .get(run_index + 1)
-                    .map_or_else(|| "run".into(), |session| format!("run {session} [REDACTED]")),
-            );
-            return;
-        }
-        let mut redact_next = false;
-        let sanitized = arguments
-            .iter()
-            .map(|argument| {
-                if redact_next {
-                    redact_next = false;
-                    return "[REDACTED]".to_owned();
-                }
-                let lower = argument.to_ascii_lowercase();
-                if ["--token", "--password", "--password-stdin", "--headers", "--credentials", "--backend"]
-                    .iter()
-                    .any(|secret| lower == *secret)
-                {
-                    redact_next = true;
-                    return argument.clone();
-                }
-                if lower.starts_with("--token=")
-                    || lower.starts_with("--password=")
-                    || lower.starts_with("--headers=")
-                    || lower.starts_with("--backend=")
-                {
-                    return format!(
-                        "{}=[REDACTED]",
-                        argument.split_once('=').map_or(argument.as_str(), |(key, _)| key)
-                    );
-                }
-                argument.clone()
-            })
-            .collect::<Vec<_>>();
-        self.last_command = Some(sanitized.join(" "));
     }
 }
 
@@ -215,8 +158,6 @@ impl std::fmt::Debug for State {
             .field("token_expires_at", &self.token_expires_at)
             .field("identity_id", &self.identity_id)
             .field("services", &self.services)
-            .field("last_session_id", &self.last_session_id)
-            .field("last_command", &self.last_command)
             .finish()
     }
 }
@@ -229,7 +170,7 @@ pub fn default_home() -> PathBuf {
         .unwrap_or_else(|| PathBuf::from(".silicon-browser"))
 }
 
-/// Partition credentials, refresh locks, and activity by the normalized API base URL.
+/// Partition credentials and refresh locks by the normalized API base URL.
 /// Legacy credentials are copied once, only into their own issuer's partition. The legacy
 /// file is retained for rollback; an existing partition always wins, including a signed-out one.
 pub fn home_for_backend(root: &Path, backend: &str) -> io::Result<PathBuf> {
@@ -596,6 +537,8 @@ mod tests {
         let path = home.join(STATE_FILE);
         let mut legacy: serde_json::Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
         legacy["org_id"] = serde_json::json!("browser");
+        legacy["last_command"] = serde_json::json!("private activity");
+        legacy["last_session_id"] = serde_json::json!("session-old");
         fs::write(&path, serde_json::to_vec(&legacy).unwrap()).unwrap();
         let loaded = State::update(&home, |_| {}).unwrap();
         assert_eq!(loaded.stored_token(), Some("jwt.persisted.signature"));
@@ -603,56 +546,8 @@ mod tests {
         assert_eq!(loaded.credential_generation.as_deref(), Some("existing-login"));
         let saved: serde_json::Value = serde_json::from_slice(&fs::read(path).unwrap()).unwrap();
         assert!(saved.get("org_id").is_none());
-    }
-
-    /// Test group: last-command state cannot become an accidental credential store.
-    #[test]
-    fn obvious_secret_arguments_are_redacted() {
-        let mut state = State::default();
-        state.remember(&["run".into(), "s1".into(), "fill @e1 hello".into(), "--token=secret".into()]);
-        let remembered = state.last_command.unwrap();
-        assert!(remembered.contains("[REDACTED]"));
-        assert!(!remembered.contains("secret"));
-    }
-
-    /// Test group: activity writes merge with credentials rotated by another process.
-    #[test]
-    fn activity_does_not_clobber_concurrently_refreshed_credentials() {
-        let directory = tempfile::tempdir().unwrap();
-        let home = directory.path().join("sb");
-        State::update(&home, |state| {
-            state.set_tokens("jwt.old.signature".into(), Some("sar_old".into()), Some("2026-09-04T00:00:00Z".into()));
-            state.last_session_id = Some("session-old".into());
-        })
-        .unwrap();
-
-        let mut stale = State::load(&home).unwrap();
-        stale.remember(&["profile".into(), "ls".into()]);
-        State::update(&home, |state| {
-            state.set_tokens("jwt.new.signature".into(), Some("sar_new".into()), Some("2026-09-04T01:00:00Z".into()));
-        })
-        .unwrap();
-        State::record_activity(&home, stale.last_command.unwrap(), None).unwrap();
-
-        let merged = State::load(&home).unwrap();
-        assert_eq!(merged.stored_token(), Some("jwt.new.signature"));
-        assert_eq!(merged.refresh_token(), Some("sar_new"));
-        assert_eq!(merged.last_session_id.as_deref(), Some("session-old"));
-        assert_eq!(merged.last_command.as_deref(), Some("profile ls"));
-    }
-
-    /// Test group: a top-level override before `run` cannot make the remembered command retain
-    /// browser command content or an endpoint that may contain credentials.
-    #[test]
-    fn run_redaction_handles_top_level_options() {
-        let mut state = State::default();
-        state.remember(&[
-            "--backend=https://user:secret@example.test".into(),
-            "run".into(),
-            "s1".into(),
-            "fill @e1 very-secret-value".into(),
-        ]);
-        assert_eq!(state.last_command.as_deref(), Some("run s1 [REDACTED]"));
+        assert!(saved.get("last_command").is_none());
+        assert!(saved.get("last_session_id").is_none());
     }
 
     /// Test group: no state operation follows an attacker-controlled SB_HOME symlink.

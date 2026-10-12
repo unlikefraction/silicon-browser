@@ -95,7 +95,7 @@ impl LocalController {
             stderr: String::new(),
         };
         emit(&RunEvent::Finished { result: result.clone() });
-        Ok(LocalExecution { result, truncated: false })
+        Ok(LocalExecution { result })
     }
 }
 

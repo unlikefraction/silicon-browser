@@ -8,11 +8,11 @@ import './components/silicon-ui/foundation.css';
 import './styles.css';
 import { SiliconButton } from './silicon-button';
 import brandMark from './assets/mark.svg';
-import { BrowserApi, acceptAuth, publicError, safeHttps, segment, shellQuote, dateForApi } from './api';
+import { BrowserApi, acceptAuth, publicError, safeHttps, segment } from './api';
 import { readEntry, completeCallback, signInPopup, matchingRedirect, clearRedirectAttempt, type LoginAttempt } from './auth';
 import { recordingStatusMessage } from './recordings';
 import { BrowserSession, contextKey } from './session';
-import type { AuthSession, Profile, Session, Recording, Usage, UsageLimits, Location, SessionLog } from './types';
+import type { AuthSession, Profile, Session, Recording, Usage, UsageLimits, Location } from './types';
 
 const entry = readEntry(new URL(location.href));
 // Remove one-use credentials and live grants before rendering, login, or API requests.
@@ -28,7 +28,7 @@ const bytes = (value: number) => value >= 1e9 ? `${(value / 1e9).toFixed(2)} GB`
 const splitAccess = (value: string) => value.split(',').map(item => item.trim()).filter(Boolean);
 const tabs = ['sessions', 'profiles', 'recordings', 'usage', 'settings'] as const;
 type Tab = typeof tabs[number];
-type View = Tab | 'new-session' | 'new-profile' | 'edit-profile' | 'detail' | 'live' | 'logs';
+type View = Tab | 'new-session' | 'new-profile' | 'edit-profile' | 'detail' | 'live';
 
 function ExternalLink(props: { href?: string; children: JSX.Element }) {
   const href = () => safeHttps(props.href);
@@ -58,14 +58,12 @@ function App() {
   const [session, setSession] = createSignal<Session>();
   const [profile, setProfile] = createSignal<Profile>();
   const [liveUrl, setLiveUrl] = createSignal('');
-  const [logs, setLogs] = createSignal<SessionLog[]>([]);
-  const [logDate, setLogDate] = createSignal(new Date().toISOString().slice(0, 10));
   const [filter, setFilter] = createSignal('');
   let revision = 0;
   let viewerFrame: HTMLIFrameElement | undefined;
   let pendingLive = entry.pending;
   let recordingRefreshes = 0;
-  const activeTab = () => ['detail', 'live', 'logs', 'new-session'].includes(view()) ? 'sessions' : ['new-profile', 'edit-profile'].includes(view()) ? 'profiles' : view();
+  const activeTab = () => ['detail', 'live', 'new-session'].includes(view()) ? 'sessions' : ['new-profile', 'edit-profile'].includes(view()) ? 'profiles' : view();
   async function perform(task: () => Promise<unknown>) {
     if (busy()) return;
     setBusy(true); setNotice('');
@@ -146,7 +144,7 @@ function App() {
   async function attachAccounts() { setAddingContext(true); }
   function clearWorkspace() {
     ++revision; setLiveUrl(''); setSession(undefined); setProfile(undefined); pendingLive = null;
-    setNotice(''); setLoading(false); setSessions([]); setProfiles([]); setRecordings([]); setUsage([]); setTotal(undefined); setLimits(undefined); setLogs([]);
+    setNotice(''); setLoading(false); setSessions([]); setProfiles([]); setRecordings([]); setUsage([]); setTotal(undefined); setLimits(undefined);
     setLocations([]); setView('sessions'); setFilter('');
     history.replaceState(null, '', '/');
   }
@@ -213,11 +211,6 @@ function App() {
       if (ticket === revision) { setSession(current); setLiveUrl(url); }
     } finally { if (ticket === revision) setLoading(false); }
   }
-  async function loadLogs() {
-    const current = session(); if (!current) return;
-    const result = await api.call<SessionLog[]>(`/sessions/${segment(current.id)}/logs?date=${dateForApi(logDate())}`);
-    setLogs(result); setView('logs');
-  }
   function submit(event: SubmitEvent, task: (data: FormData) => Promise<unknown>) {
     event.preventDefault(); const data = new FormData(event.currentTarget as HTMLFormElement); void perform(() => task(data));
   }
@@ -283,12 +276,11 @@ function App() {
           </Show>
           <Show when={view() === 'detail' && session()}>{_current => <>
             <div class="page-heading"><div><span class="eyebrow">SESSION</span><h1>{session()!.name}</h1><p class="muted">{session()!.description}</p></div><Badge state={session()!.status}/></div>
-            <div class="panel"><dl class="detail-grid"><dt>Session ID</dt><dd class="mono">{session()!.id}</dd><dt>Started</dt><dd>{date(session()!.started_at)}</dd><dt>Ends by</dt><dd>{date(session()!.expires_at)}</dd><dt>Usage</dt><dd>{cost(session()!.usage)}</dd><dt>Participants</dt><dd>{[session()!.initiator_id, ...(session()!.participant_ids || [])].filter((value, index, list) => list.indexOf(value) === index).join(', ')}</dd></dl><div class="actions"><Show when={session()!.status === 'active'}>{button('Open live browser', () => openLive(session()!.id), true)}</Show>{button('Refresh', () => detail(session()!.id))}{button('Command logs', loadLogs)}</div></div>
+            <div class="panel"><dl class="detail-grid"><dt>Session ID</dt><dd class="mono">{session()!.id}</dd><dt>Started</dt><dd>{date(session()!.started_at)}</dd><dt>Ends by</dt><dd>{date(session()!.expires_at)}</dd><dt>Usage</dt><dd>{cost(session()!.usage)}</dd><dt>Participants</dt><dd>{[session()!.initiator_id, ...(session()!.participant_ids || [])].filter((value, index, list) => list.indexOf(value) === index).join(', ')}</dd></dl><div class="actions"><Show when={session()!.status === 'active'}>{button('Open live browser', () => openLive(session()!.id), true)}</Show>{button('Refresh', () => detail(session()!.id))}</div></div>
             <div class="panel subtle"><h2>Continue in your terminal</h2><p class="muted">Use the same session from the Browser CLI.</p><pre>browser run {session()!.id} snapshot</pre></div>
             <Show when={session()!.status === 'active'}><form class="panel form-panel" onSubmit={event => submit(event, async data => { await api.call(`/sessions/${segment(session()!.id)}/end`, 'POST', { note: data.get('note') }); await detail(session()!.id); })}><h2>End session</h2><label>Closing note<textarea name="note" required maxlength={4000} placeholder="What did you finish?"/></label><SiliconButton variant="danger" disabled={busy()}>End session</SiliconButton></form></Show>
           </>}</Show>
           <Show when={view() === 'live'}><div class="page-heading"><div><h1>{session()?.name || 'Live browser'}</h1><p class="muted">Work in this browser together. The original session time limit still applies.</p></div><div class="actions"><Show when={document.fullscreenEnabled && liveUrl()}>{button('Fullscreen', async () => { if (viewerFrame) await viewerFrame.requestFullscreen(); })}</Show><Show when={session()}>{button('Session details', () => detail(session()!.id))}</Show></div></div><Show when={liveUrl()} fallback={<Empty>The live browser is unavailable. Refresh the session to check its status.</Empty>}><iframe ref={element => { viewerFrame = element; }} title="Live browser session" src={liveUrl()} referrerPolicy="no-referrer" sandbox="allow-scripts allow-same-origin allow-forms allow-popups" allow="clipboard-read; clipboard-write; fullscreen"/></Show></Show>
-          <Show when={view() === 'logs'}><div class="page-heading"><div><h1>Command logs</h1><p class="muted">Commands reported by the CLI. Dates use UTC.</p></div>{button('Session details', () => detail(session()!.id))}</div><form class="toolbar" onSubmit={event => submit(event, loadLogs)}><label>Date<input type="date" required value={logDate()} onInput={event => setLogDate(event.currentTarget.value)}/></label><SiliconButton disabled={busy()}>Load logs</SiliconButton></form><pre>{logs().map(item => `browser run ${shellQuote(session()!.id)} ${shellQuote(item.command)}`).join('\n') || 'No commands for this date.'}</pre></Show>
           <Show when={view() === 'recordings'}>
             <div class="page-heading"><div><span class="eyebrow">YOUR ARCHIVE</span><h1>Recordings</h1><p class="muted">Revisit available session replays from your browser provider.</p></div>{button('Refresh', () => navigate('recordings'))}</div>
             <Show when={recordings().length} fallback={<Empty><h2>Nothing recorded yet</h2><p>Available session recordings appear here.</p></Empty>}><div class="cards"><For each={recordings()}>{item => {
@@ -299,7 +291,7 @@ function App() {
                 <p class="fine">{date(item.created_at)} · {Math.round(item.duration_seconds / 60)} min · {item.size_bytes ? bytes(item.size_bytes) : 'Size unavailable'}</p>
                 <Show when={statusMessage()}><p class="hint" role="status">{statusMessage()}</p></Show>
                 <div class="actions">
-                  <ExternalLink href={item.briefcase_link}>Open recording</ExternalLink><ExternalLink href={item.command_log_link}>Command log</ExternalLink>
+                  <ExternalLink href={item.briefcase_link}>Open recording</ExternalLink>
                   {button('Hide', async () => { await api.call(`/recordings/${segment(item.session_id)}/trash`, 'POST'); await refreshRecordings(); })}
                 </div>
                 <p class="fine">Hiding removes this listing from Browser.</p>

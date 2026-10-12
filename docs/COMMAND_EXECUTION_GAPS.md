@@ -1,4 +1,8 @@
-# Local command execution — 2026-09-06
+# Local command execution — historical review, 2026-09-06
+
+> Superseded in Browser 3.0.0: command telemetry, queues, report delivery and
+> command-log export have been removed. Legacy report/log endpoints return
+> `410 Gone`. The sections below record the previous behavior.
 
 The September 5 review found an incorrect execution architecture: `browser run` sent commands to AWS, where a controller process executed them. That implementation has been removed. These were Browser implementation problems, not upstream IAM, Briefcase, or browser-provider bugs.
 

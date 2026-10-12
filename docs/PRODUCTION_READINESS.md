@@ -1,6 +1,6 @@
 # Production readiness
 
-Browser 2.0.0 uses Silicon Accounts and Silicon Apps. The public API, Rust
+Browser 3.0.0 uses Silicon Accounts and Silicon Apps. The public API, Rust
 client, CLI and website expose no organization selection. Permanent canonical
 Accounts UUIDv4s identify owners and grants. Credentials persist locally;
 refresh rotation is serialized and an uncertain exchange requires fresh login.
@@ -40,7 +40,7 @@ Before switching production, verify a restorable SQLite backup with the stable
 encryption key. Verify the candidate API and exact frontend bytes, HTTPS,
 callback registration and signed webhook configuration. With an explicitly
 authorized real account, test an allowed provider session, direct local action,
-metadata report and confirmed session end. Check cross-account denial without
+absence of command-report requests and confirmed session end. Check cross-account denial without
 granting access as a substitute for owner verification.
 
 Native distribution requires matching version/architecture receipts for all
@@ -53,9 +53,9 @@ being published. A running process or health response alone is insufficient.
 
 Issued CDP/live URLs are provider capabilities. API revocation or a webhook
 prevents later API authorization but cannot retract an existing provider URL;
-ending the remote session does. Command reports are cooperative metadata and
-cannot prove all direct browser activity. Failed report delivery is retried
-without repeating the action.
+ending the remote session does. Browser does not collect or transmit command
+telemetry. Legacy command-report and log routes return `410 Gone`. Resource
+usage remains available for billing and service limits.
 
 Production currently uses one API process and local SQLite WAL storage.
 Additional hosts require coordinated storage, authorization-cache invalidation

@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { BrowserApi, acceptAuth, dateForApi, publicError, safeHttps, shellQuote } from '../src/api';
+import { BrowserApi, acceptAuth, publicError, safeHttps } from '../src/api';
 import type { AuthSession } from '../src/types';
 const session = (access = 'eyJheader.eyJpayload.initial'): AuthSession => ({ access_token: access, refresh_token: 'sar_refresh', expires_at: new Date(Date.now() + 900000).toISOString(), identity: { id: '11111111-1111-4111-8111-111111111111', name: 'Tester', kind: 'carbon' } });
 const response = (data: unknown, status = 200, headers: Record<string, string> = {}) => new Response(JSON.stringify(status === 200 ? {data} : {error: {message: 'Unauthorized'}}), {status, headers});
@@ -41,10 +41,6 @@ test('viewer links reject script, plaintext and embedded credentials', () => {
   for (const value of ['javascript:alert(1)', 'http://example.com', 'https://user:secret@example.com', 'not a url']) assert.equal(safeHttps(value), null);
   assert.equal(safeHttps('https://viewer.example/session?a=b'), 'https://viewer.example/session?a=b');
   assert.equal(safeHttps('https://browser.teamofsilicons.com/session', 'https://browser.teamofsilicons.com'), null);
-});
-test('command export quotes shell literals and validates real calendar dates', () => {
-  assert.equal(shellQuote("a'b $HOME"), "'a'\"'\"'b $HOME'"); assert.equal(dateForApi('2026-09-06'), '2026-09-06');
-  for (const value of ['2026-02-30', '06-09-2026', '2026-9-6', 'bad']) assert.throws(()=>dateForApi(value));
 });
 test('provider names do not leak through displayed service errors', () => { assert.equal(publicError(new Error('Browser Use timed out; TinyFish unavailable')), 'browser service timed out; browser service unavailable'); });
 test('default fetch preserves the native browser global receiver', async () => {

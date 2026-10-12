@@ -84,31 +84,48 @@ impl StubResponse {
 struct StubServer {
     base_url: String,
     worker: thread::JoinHandle<Vec<CapturedRequest>>,
+    stop: std::sync::mpsc::Sender<()>,
 }
 
 impl StubServer {
     fn start(responses: Vec<StubResponse>) -> Self {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let base_url = format!("http://{}", listener.local_addr().unwrap());
+        let (stop, stopped) = std::sync::mpsc::channel();
         let worker = thread::spawn(move || {
             let mut requests = Vec::with_capacity(responses.len());
-            for mut response in responses {
+            for response in responses {
                 let (mut stream, _) = listener.accept().expect("CLI must connect to the local stub");
                 let request = read_request(&mut stream);
-                if response.body == b"REPORT_RECEIPT" {
-                    response.body =
-                        serde_json::to_vec(&json!({"data":{"command_id":request.json()["command_id"],"sequence":1}}))
-                            .unwrap();
-                }
                 requests.push(request);
                 write_response(&mut stream, response);
             }
+            listener.set_nonblocking(true).unwrap();
+            while stopped.try_recv().is_err() {
+                match listener.accept() {
+                    Ok((mut stream, _)) => {
+                        requests.push(read_request(&mut stream));
+                        write_response(
+                            &mut stream,
+                            StubResponse::json(
+                                503,
+                                json!({"error":{"code":"unexpected_request","message":"unexpected request"}}),
+                            ),
+                        );
+                    }
+                    Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                        thread::sleep(Duration::from_millis(5))
+                    }
+                    Err(error) => panic!("local HTTP stub could not accept a request: {error}"),
+                }
+            }
             requests
         });
-        Self { base_url, worker }
+        Self { base_url, worker, stop }
     }
 
     fn finish(self) -> Vec<CapturedRequest> {
+        self.stop.send(()).unwrap();
         self.worker.join().expect("local HTTP stub must finish cleanly")
     }
 }
@@ -312,14 +329,6 @@ fn connection_response() -> StubResponse {
         json!({"data":{"session_id":"session-1","principal_id":"11111111-1111-4111-8111-111111111119","cdp_url":"wss://direct.example/secret-cdp","expires_at":"2099-01-01T00:00:00Z"}}),
     )
 }
-fn report_response() -> StubResponse {
-    StubResponse {
-        status: 200,
-        content_type: "application/json",
-        auth_rejected: false,
-        body: b"REPORT_RECEIPT".to_vec(),
-    }
-}
 fn partition_state(home: &Path, backend: &str) -> std::path::PathBuf {
     use sha2::{Digest, Sha256};
     let normalized = silicon_browser::normalize_backend_url(backend).unwrap();
@@ -327,9 +336,9 @@ fn partition_state(home: &Path, backend: &str) -> std::path::PathBuf {
 }
 #[cfg(unix)]
 #[test]
-fn run_executes_locally_and_sends_only_completed_telemetry() {
+fn run_executes_locally_without_sending_telemetry_or_saving_command_history() {
     use std::os::unix::fs::PermissionsExt;
-    let server = StubServer::start(vec![connection_response(), report_response(), report_response()]);
+    let server = StubServer::start(vec![connection_response()]);
     let root = tempfile::tempdir().unwrap();
     let home = root.path().join("state");
     let runner = root.path().join("controller");
@@ -344,21 +353,23 @@ fn run_executes_locally_and_sends_only_completed_telemetry() {
             .stdout(predicate::str::contains("local output"))
             .stderr("browser: browser command exited with 23\n");
     }
+    let state_file = partition_state(&home, &server.base_url);
+    let state: Value = serde_json::from_slice(&fs::read(&state_file).unwrap()).unwrap();
+    assert!(state.get("last_command").is_none());
+    assert!(state.get("last_session_id").is_none());
+    let runtime = fs::read_dir(state_file.parent().unwrap().join("runtime")).unwrap().next().unwrap().unwrap().path();
+    assert!(
+        fs::read_dir(runtime).unwrap().all(|entry| !entry
+            .unwrap()
+            .file_name()
+            .to_string_lossy()
+            .starts_with("report-"))
+    );
     let requests = server.finish();
-    assert_eq!(requests.len(), 3);
+    assert_eq!(requests.len(), 1);
     assert_eq!(requests[0].method, "GET");
     assert_eq!(requests[0].path, "/api/v1/sessions/session-1/connection");
     assert!(requests[0].body.is_empty());
-    for request in &requests[1..] {
-        assert_eq!(request.method, "POST");
-        assert_eq!(request.path, "/api/v1/sessions/session-1/commands");
-        assert_eq!(request.json()["command"], "screenshot './my capture.png'");
-        assert_eq!(request.json()["exit_code"], 23);
-        assert!(request.json().get("stdout").is_none());
-        assert!(request.json().get("stderr").is_none());
-        assert!(!String::from_utf8_lossy(&request.body).contains("secret-cdp"));
-    }
-    assert_ne!(requests[1].json()["command_id"], requests[2].json()["command_id"]);
 }
 
 #[test]
@@ -366,10 +377,7 @@ fn search_uses_the_account_directly_without_discovery() {
     let server =
         StubServer::start(vec![StubResponse::json(200, json!({"data": {"results": [], "page": 0, "queued_ms": 0}}))]);
     let root = tempfile::tempdir().unwrap();
-    isolated_sb(&root.path().join("state"), &server.base_url)
-        .args(["search", "query", "--purpose", "contract test"])
-        .assert()
-        .success();
+    isolated_sb(&root.path().join("state"), &server.base_url).args(["search", "query"]).assert().success();
     let requests = server.finish();
     assert_eq!(requests.len(), 1);
     assert_eq!(requests[0].path, "/api/v1/search");
@@ -570,32 +578,15 @@ fn run_help_falls_back_offline_and_still_succeeds() {
 }
 
 #[test]
-fn session_logs_emit_shell_replayable_commands_and_keep_json_metadata() {
+fn telemetry_commands_are_removed_before_any_network_access() {
     let home = tempfile::tempdir().unwrap();
-    let command = "fill @e1 'hello; $(false)'";
-    let logs = json!([{"sequence":1,"at":"2026-09-05T00:00:00Z","actor_id":"11111111-1111-4111-8111-111111111110","command":command,"exit_code":0}]);
-    let server = StubServer::start(vec![
-        StubResponse::json(200, json!({"data":logs.clone()})),
-        StubResponse::json(200, json!({"data":logs})),
-    ]);
-    let output = isolated_sb(&home.path().join("state"), &server.base_url)
-        .args(["session", "logs", "session-one", "--date", "05-09-2026"])
-        .assert()
-        .success()
-        .get_output()
-        .stdout
-        .clone();
-    let script =
-        format!("browser() {{ printf '%s\\n' \"$#\" \"$1\" \"$2\" \"$3\"; }}\n{}", String::from_utf8(output).unwrap());
-    let replay = Command::new("sh").args(["-c", &script]).output().unwrap();
-    assert!(replay.status.success());
-    assert_eq!(String::from_utf8(replay.stdout).unwrap(), format!("3\nrun\nsession-one\n{command}\n"));
-    isolated_sb(&home.path().join("state"), &server.base_url)
-        .args(["--json", "session", "logs", "session-one", "--date", "05-09-2026"])
-        .assert()
-        .success()
-        .stdout(predicate::str::contains("\"sequence\": 1"));
-    assert_eq!(server.finish().len(), 2);
+    for verb in ["logs", "sync"] {
+        isolated_sb(&home.path().join("state"), "http://127.0.0.1:1")
+            .args(["session", verb, "session-one"])
+            .assert()
+            .code(2)
+            .stderr(predicate::str::contains(format!("unrecognized subcommand '{verb}'")));
+    }
 }
 
 #[test]
@@ -642,7 +633,7 @@ fn failed_recording_does_not_claim_pending_delivery() {
             "session_id":"s1","incognito":true,"session_name":"Failed recording","session_description":"test",
             "owner_id":"11111111-1111-4111-8111-111111111110","briefcase_path":"private/actor/apps/browser/file.mp4",
             "duration_seconds":1,"size_bytes":0,"status":"failed","created_at":"2026-09-05T00:00:00Z",
-        "delivery_error":"authorization_required","command_log_link":"https://briefcase.example/files/log-1"
+        "delivery_error":"authorization_required"
         }}),
     )]);
     isolated_sb(&root.path().join("state"), &server.base_url)
@@ -651,7 +642,6 @@ fn failed_recording_does_not_claim_pending_delivery() {
         .success()
         .stdout(predicate::str::contains("delivery failed"))
         .stdout(predicate::str::contains("delivery error: authorization_required"))
-        .stdout(predicate::str::contains("command log: https://briefcase.example/files/log-1"))
         .stdout(predicate::str::contains("pending OBO storage").not());
     assert_eq!(server.finish().len(), 1);
 }
@@ -802,9 +792,9 @@ fn one_cli_invocation_reuses_its_own_recovery_for_later_metadata_requests() {
 
 #[cfg(unix)]
 #[test]
-fn failed_telemetry_is_retried_without_repeating_the_browser_action() {
+fn queued_telemetry_from_previous_releases_is_discarded_without_delivery() {
     use std::os::unix::fs::PermissionsExt;
-    let server = StubServer::start(vec![connection_response(), rejected_response(false), report_response()]);
+    let server = StubServer::start(vec![connection_response()]);
     let root = tempfile::tempdir().unwrap();
     let home = root.path().join("state");
     let runner = root.path().join("controller");
@@ -812,23 +802,53 @@ fn failed_telemetry_is_retried_without_repeating_the_browser_action() {
     fs::write(&runner, "#!/bin/sh\nprintf 'action\\n' >> \"$TEST_ACTION_COUNT\"\nprintf 'completed locally'\n")
         .unwrap();
     fs::set_permissions(&runner, fs::Permissions::from_mode(0o700)).unwrap();
-    isolated_sb(&home, &server.base_url)
-        .env("SB_CONTROLLER_BIN", &runner)
-        .env("TEST_ACTION_COUNT", &calls)
-        .args(["run", "session-1", "snapshot"])
-        .assert()
-        .success()
-        .stdout("completed locally")
-        .stderr(predicate::str::contains("command logs are queued locally"));
-    isolated_sb(&home, &server.base_url)
-        .args(["session", "sync", "session-1"])
-        .assert()
-        .success()
-        .stdout("delivered 1 command logs\n");
+    for run in 0..2 {
+        isolated_sb(&home, &server.base_url)
+            .env("SB_CONTROLLER_BIN", &runner)
+            .env("TEST_ACTION_COUNT", &calls)
+            .args(["run", "session-1", "snapshot"])
+            .assert()
+            .success()
+            .stdout("completed locally")
+            .stderr("");
+        let runtime = partition_state(&home, &server.base_url).parent().unwrap().join("runtime");
+        let directory = fs::read_dir(&runtime).unwrap().next().unwrap().unwrap().path();
+        if run == 0 {
+            let report = directory.join("report-pending.json");
+            fs::write(
+                &report,
+                serde_json::to_vec(&json!({
+                    "session_id": "session-1",
+                    "report": {
+                        "command_id": "0198faf8-d608-7306-a9a0-4be9ad68dd1f",
+                        "command": "fill @e1 private-arguments", "flags": [],
+                        "started_at": "2026-09-05T00:00:00Z", "finished_at": "2026-09-05T00:00:01Z",
+                        "exit_code": 0, "truncated": false
+                    }
+                }))
+                .unwrap(),
+            )
+            .unwrap();
+            fs::set_permissions(&report, fs::Permissions::from_mode(0o600)).unwrap();
+            let old_login = runtime.join("previous-login");
+            fs::create_dir(&old_login).unwrap();
+            fs::set_permissions(&old_login, fs::Permissions::from_mode(0o700)).unwrap();
+            fs::write(old_login.join("report-pending.json"), b"older login command").unwrap();
+            fs::write(old_login.join("connection-preserved.json"), b"keep connection cache").unwrap();
+        } else {
+            for directory in fs::read_dir(&runtime).unwrap() {
+                assert!(!directory.unwrap().path().join("report-pending.json").exists());
+            }
+            assert_eq!(
+                fs::read(runtime.join("previous-login/connection-preserved.json")).unwrap(),
+                b"keep connection cache"
+            );
+        }
+    }
     let requests = server.finish();
-    assert_eq!(requests.len(), 3);
-    assert_eq!(requests[1].body, requests[2].body);
-    assert_eq!(fs::read_to_string(calls).unwrap(), "action\n");
+    assert_eq!(requests.len(), 1);
+    assert_eq!(requests[0].path, "/api/v1/sessions/session-1/connection");
+    assert_eq!(fs::read_to_string(calls).unwrap(), "action\naction\n");
 }
 
 #[cfg(unix)]

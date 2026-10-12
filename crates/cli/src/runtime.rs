@@ -1,4 +1,4 @@
-//! Caller-owned connection cache and durable cooperative telemetry. No browser action is retried.
+//! Caller-owned connection cache for local browser actions.
 use crate::state::{self, State};
 use chrono::{DateTime, Utc};
 use fs2::FileExt;
@@ -20,11 +20,6 @@ struct CachedConnection {
     fetched_at: DateTime<Utc>,
     connection: SessionConnection,
 }
-#[derive(Serialize, Deserialize)]
-struct PendingReport {
-    session_id: String,
-    report: CommandReport,
-}
 
 pub struct Runtime {
     directory: PathBuf,
@@ -36,7 +31,7 @@ impl Runtime {
                 .ok_or_else(|| io::Error::other("no local authentication binding"))?;
         let runtime = home.join("runtime");
         state::secure_home(&runtime, true)?;
-        // Preserve the existing on-disk command spool when upgrading an Accounts login.
+        discard_legacy_reports(&runtime)?;
         let directory = runtime.join(hash(&["browser", &credential]));
         state::secure_home(&directory, true)?;
         Ok(Self { directory })
@@ -49,7 +44,7 @@ impl Runtime {
         flags: &[String],
         mut emit: impl FnMut(&RunEvent),
     ) -> Result<LocalExecution, Box<dyn std::error::Error>> {
-        // Reject invalid input and an unwritable spool before doing anything in the browser.
+        // Reject invalid input before doing anything in the browser.
         RunRequest { session_id: session.into(), command: command.into(), flags: flags.into() }.validate()?;
         controller_arguments(command, flags)?;
         let connection = self.connection(client, session)?;
@@ -62,22 +57,6 @@ impl Runtime {
         let config = fs::canonicalize(config)?;
         let binary = controller_binary();
         let result = LocalController::new(binary).run(&connection, &namespace, &config, command, flags, &mut emit)?;
-        let report = result.command_report(command, flags);
-        let pending = PendingReport { session_id: session.into(), report };
-        let saved = write_json(&self.directory.join(format!("report-{}.json", pending.report.command_id)), &pending);
-        // Releasing execution before network telemetry lets the next local action proceed.
-        let _ = FileExt::unlock(&lock);
-        if saved.is_err() {
-            emit(&RunEvent::Warning {
-                message: "the browser action finished, but its command log could not be saved locally".into(),
-            });
-        } else if self.sync(client, Some(session), 8).is_err() {
-            emit(&RunEvent::Warning {
-                message: format!(
-                    "command logs are queued locally; `browser session sync {session}` retries delivery without repeating browser actions"
-                ),
-            });
-        }
         Ok(result)
     }
     fn connection(&self, client: &Client, session: &str) -> Result<SessionConnection, Box<dyn std::error::Error>> {
@@ -99,49 +78,6 @@ impl Runtime {
         write_json(&file, &CachedConnection { fetched_at: Utc::now(), connection: connection.clone() })?;
         Ok(connection)
     }
-    /// Deliver stored telemetry only. Success never means that an action was executed again.
-    pub fn sync(
-        &self,
-        client: &Client,
-        session: Option<&str>,
-        limit: usize,
-    ) -> Result<usize, Box<dyn std::error::Error>> {
-        let lock = state::open_lock_file(&self.directory.join("reports.lock"))?;
-        // Another local invocation owns delivery; leave its work undisturbed.
-        if let Err(error) = lock.try_lock_exclusive() {
-            if error.kind() == io::ErrorKind::WouldBlock {
-                return Ok(0);
-            }
-            return Err(error.into());
-        }
-        let mut paths = fs::read_dir(&self.directory)?
-            .filter_map(Result::ok)
-            .map(|entry| entry.path())
-            .filter(|path| {
-                path.file_name().is_some_and(|name| {
-                    name.to_string_lossy().starts_with("report-") && name.to_string_lossy().ends_with(".json")
-                })
-            })
-            .collect::<Vec<_>>();
-        paths.sort();
-        let mut sent = 0;
-        for path in paths {
-            let Some(pending) = read_json::<PendingReport>(&path)? else {
-                continue;
-            };
-            if session.is_some_and(|session| session != pending.session_id) {
-                continue;
-            }
-            client.report_command(&pending.session_id, &pending.report)?;
-            fs::remove_file(path)?;
-            sent += 1;
-            if sent >= limit {
-                break;
-            }
-        }
-        state::sync_directory(&self.directory)?;
-        Ok(sent)
-    }
     pub fn forget_connection(&self, session: &str) -> io::Result<()> {
         let path = self.directory.join(format!("connection-{}.json", hash(&[session])));
         match fs::remove_file(path) {
@@ -150,6 +86,32 @@ impl Runtime {
             Err(error) => Err(error),
         }
     }
+}
+// Older releases queued command reports here. Discard them without opening their contents.
+fn discard_legacy_reports(runtime: &Path) -> io::Result<()> {
+    for entry in fs::read_dir(runtime)? {
+        let entry = entry?;
+        if !entry.file_type()?.is_dir() {
+            continue;
+        }
+        let directory = entry.path();
+        state::secure_home(&directory, false)?;
+        for entry in fs::read_dir(&directory)? {
+            let entry = entry?;
+            let name = entry.file_name();
+            let name = name.to_string_lossy();
+            if name == "reports.lock"
+                || name.starts_with("report-") && (name.ends_with(".json") || name.ends_with(".tmp"))
+            {
+                match fs::remove_file(entry.path()) {
+                    Ok(()) => {}
+                    Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+                    Err(error) => return Err(error),
+                }
+            }
+        }
+    }
+    Ok(())
 }
 fn hash(values: &[&str]) -> String {
     let mut digest = Sha256::new();
@@ -215,7 +177,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn upgrading_a_login_preserves_queued_command_reports() {
+    fn upgrading_discards_queued_command_reports() {
         let root = tempfile::tempdir().unwrap();
         let home = root.path().join("state");
         let state = State::update(&home, |state| {
@@ -227,13 +189,22 @@ mod tests {
         state::secure_home(&previous_directory, true).unwrap();
         let report = previous_directory.join("report-pending.json");
         fs::write(&report, b"previous version report").unwrap();
+        let connection = previous_directory.join("connection-existing.json");
+        fs::write(&connection, b"cached connection").unwrap();
+        let unrelated = root.path().join("unrelated");
+        fs::create_dir(&unrelated).unwrap();
+        fs::write(unrelated.join("report-private.json"), b"unrelated file").unwrap();
+        #[cfg(unix)]
+        std::os::unix::fs::symlink(&unrelated, home.join("runtime/linked-directory")).unwrap();
         let runtime = Runtime::new(&home, &state).unwrap();
         assert_eq!(runtime.directory, previous_directory);
-        assert_eq!(fs::read(report).unwrap(), b"previous version report");
+        assert!(!report.exists());
+        assert_eq!(fs::read(connection).unwrap(), b"cached connection");
+        assert_eq!(fs::read(unrelated.join("report-private.json")).unwrap(), b"unrelated file");
     }
 
     #[test]
-    fn stale_connection_identity_is_refetched_without_touching_the_report_spool() {
+    fn stale_connection_identity_is_refetched() {
         struct ConnectionTransport(SessionConnection);
         impl silicon_browser::Transport for ConnectionTransport {
             fn send(
@@ -250,8 +221,6 @@ mod tests {
         let root = tempfile::tempdir().unwrap();
         let directory = root.path().join("runtime");
         state::secure_home(&directory, true).unwrap();
-        let report = directory.join("report-pending.json");
-        fs::write(&report, b"exact original command report bytes").unwrap();
         let canonical = SessionConnection {
             session_id: "session".into(),
             principal_id: "11111111-1111-4111-8111-111111111115".into(),
@@ -271,7 +240,6 @@ mod tests {
             legacy.principal_id = old.into();
             write_json(&file, &CachedConnection { fetched_at: Utc::now(), connection: legacy }).unwrap();
             assert_eq!(runtime.connection(&client, "session").unwrap(), canonical);
-            assert_eq!(fs::read(&report).unwrap(), b"exact original command report bytes");
         }
     }
 

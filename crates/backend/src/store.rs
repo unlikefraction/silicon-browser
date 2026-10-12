@@ -8,11 +8,11 @@ use std::collections::HashMap;
 use std::str::FromStr;
 use std::time::Duration;
 
-use chrono::{DateTime, Duration as ChronoDuration, NaiveDate, Utc};
+use chrono::{DateTime, Duration as ChronoDuration, Utc};
 use silicon_browser_shared::{
     AccessList, Identity, IdentityKind, LiveLink, Money, Profile, ProfileCreate, ProfileEnd, ProfileStatus,
     ProfileUpdate, ProxyLocation, Recording, RecordingFilter, RecordingStatus, Session, SessionCreate, SessionEnd,
-    SessionLog, SessionStatus, SessionTtl, Usage, UsageCost, UsageFilter, UsageTotal, Validate,
+    SessionStatus, SessionTtl, Usage, UsageCost, UsageFilter, UsageTotal, Validate,
 };
 use sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions, SqliteRow};
 use sqlx::{Row, SqlitePool};
@@ -23,14 +23,12 @@ use crate::crypto::SecretBox;
 use crate::decimal::decimal_to_millionths;
 
 pub mod account_uuids;
-mod command_reports;
-mod delivery;
+mod connection;
 // Retired IAM migration source is retained in store/public_identifiers*.rs, outside the compiled API.
 #[cfg(test)]
 mod accounts_tests;
 #[cfg(test)]
-mod delivery_tests;
-pub use delivery::{RecordingArtifactKind, RecordingDeliveryClaim};
+mod migration_tests;
 
 pub type StoreResult<T> = Result<T, StoreError>;
 
@@ -45,8 +43,6 @@ pub enum StoreError {
     Database(#[from] sqlx::Error),
     #[error("database migration failed: {0}")]
     Migration(#[from] sqlx::migrate::MigrateError),
-    #[error("command report rejected: {code}")]
-    ReportConflict { code: &'static str },
     #[error("invalid input: {0}")]
     Invalid(String),
     #[error("{kind} {id} was not found")]
@@ -172,7 +168,7 @@ pub struct UsageSample {
     pub browser_millis: u64,
     pub proxy_bytes_in: Option<u64>,
     pub proxy_bytes_out: Option<u64>,
-    /// Aggregate provider telemetry for which no ingress/egress split exists.
+    /// Aggregate provider usage for which no ingress/egress split exists.
     pub proxy_bytes_unclassified: Option<u64>,
     /// Decimal currency units. Provider precision beyond millionths is rounded
     /// half-up when exposed through the public integer-micros model.
@@ -2090,18 +2086,6 @@ mod tests {
         Utc.with_ymd_and_hms(2026, 8, day, hour, 0, 0).unwrap()
     }
 
-    fn report(command: &str, exit_code: i32) -> silicon_browser_shared::CommandReport {
-        silicon_browser_shared::CommandReport {
-            command_id: Uuid::now_v7(),
-            command: command.into(),
-            flags: vec![],
-            started_at: at(2, 10),
-            finished_at: at(2, 10),
-            exit_code,
-            truncated: false,
-        }
-    }
-
     fn identity(id: &str, kind: IdentityKind, tags: &[&str]) -> Identity {
         Identity {
             id: id.into(),
@@ -2170,18 +2154,12 @@ mod tests {
             .await
             .unwrap();
         let profile_session = active_session(&store, &fallback, &profile.id, "projection-command").await;
-        store
-            .report_command(
-                "org-1",
-                &fallback,
-                principal_id,
-                &profile_session.id,
-                &report("snapshot -i", 0),
-                &secrets(),
-                at(2, 10),
-            )
-            .await
+        let cipher = secrets()
+            .seal_for(&command_secret_context("org-1", &profile_session.id, 1, principal_id), "snapshot -i")
             .unwrap();
+        sqlx::query("INSERT INTO commands(session_id,sequence,actor_id,command_enc,started_at,ended_at,exit_code) VALUES(?,1,?,?,?, ?,0)")
+            .bind(&profile_session.id).bind(principal_id).bind(cipher)
+            .bind(timestamp(at(2,10))).bind(timestamp(at(2,10))).execute(&store.pool).await.unwrap();
 
         let projected = store
             .remember_identity_projection(
@@ -2217,8 +2195,15 @@ mod tests {
         let recording = store.recording("org-1", &projected, &session.id, &secrets()).await.unwrap();
         assert_eq!(recording.owner_id, "silicon-1");
         assert!(recording.briefcase_path.is_empty());
+        let command: String = sqlx::query_scalar("SELECT command_enc FROM commands WHERE session_id = ?")
+            .bind(&profile_session.id)
+            .fetch_one(&store.pool)
+            .await
+            .unwrap();
         assert_eq!(
-            store.session_logs("org-1", &projected, &profile_session.id, None, &secrets()).await.unwrap()[0].command,
+            secrets()
+                .open_for(&command_secret_context("org-1", &profile_session.id, 1, "silicon-1"), &command)
+                .unwrap(),
             "snapshot -i"
         );
 
@@ -2239,7 +2224,11 @@ mod tests {
         assert_eq!(store.profile("org-1", &rotated, &profile.id).await.unwrap().owner_id, "silicon-2");
         assert_eq!(store.session("org-1", &rotated, &session.id).await.unwrap().initiator_id, "silicon-2");
         assert_eq!(
-            store.session_logs("org-1", &rotated, &profile_session.id, None, &secrets()).await.unwrap()[0].actor_id,
+            sqlx::query_scalar::<_, String>("SELECT actor_id FROM commands WHERE session_id = ?")
+                .bind(&profile_session.id)
+                .fetch_one(&store.pool)
+                .await
+                .unwrap(),
             "silicon-2"
         );
     }
@@ -2606,66 +2595,6 @@ mod tests {
         assert_eq!(claim.attempt, 1);
     }
 
-    /// Test group: silicon command logs are encrypted, sequenced, participant-aware, and replayed in order.
-    #[tokio::test]
-    async fn command_logs_are_ordered_and_encrypted() {
-        let store = Store::in_memory().await.unwrap();
-        let owner = silicon("si:owner-1");
-        let profile = create_profile(&store, &owner, &["@si:runner-1"], "commands").await;
-        let session = active_session(&store, &owner, &profile.id, "commands").await;
-        let box_ = secrets();
-        let runner = silicon("si:runner-1");
-        let one = store
-            .report_command(
-                "org-1",
-                &runner,
-                "runner-principal",
-                &session.id,
-                &report("open https://secret.test", 0),
-                &box_,
-                at(2, 10),
-            )
-            .await
-            .unwrap();
-        let two = store
-            .report_command(
-                "org-1",
-                &runner,
-                "runner-principal",
-                &session.id,
-                &report("snapshot -i", 2),
-                &box_,
-                at(2, 10),
-            )
-            .await
-            .unwrap();
-        assert_eq!(one.sequence, Some(1));
-        assert_eq!(two.sequence, Some(2));
-
-        let encrypted: Vec<String> = sqlx::query_scalar("SELECT command_enc FROM commands ORDER BY sequence")
-            .fetch_all(&store.pool)
-            .await
-            .unwrap();
-        assert!(encrypted.iter().all(|value| !value.contains("secret.test") && !value.contains("snapshot")));
-        let logs = store.session_logs("org-1", &owner, &session.id, Some(at(2, 10).date_naive()), &box_).await.unwrap();
-        assert_eq!(logs.iter().map(|entry| entry.sequence).collect::<Vec<_>>(), [1, 2]);
-        assert_eq!(logs[0].command, "open https://secret.test");
-        assert_eq!(logs[1].exit_code, Some(2));
-        let participants = store.session("org-1", &owner, &session.id).await.unwrap().participant_ids;
-        assert!(participants.contains(&"si:runner-1".into()));
-
-        sqlx::query("UPDATE commands SET command_enc = CASE sequence WHEN 1 THEN ? WHEN 2 THEN ? END")
-            .bind(&encrypted[1])
-            .bind(&encrypted[0])
-            .execute(&store.pool)
-            .await
-            .unwrap();
-        assert!(matches!(
-            store.session_logs("org-1", &owner, &session.id, None, &box_).await,
-            Err(StoreError::Crypto(_))
-        ));
-    }
-
     /// Test group: direct connection renewal requires the current profile ACL.
     #[tokio::test]
     async fn connection_renewal_rechecks_current_profile_access() {
@@ -2694,29 +2623,6 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(count, 0);
-    }
-
-    /// Test group: carbon-initiated sessions execute without retaining replayable commands.
-    #[tokio::test]
-    async fn carbon_sessions_do_not_persist_command_logs() {
-        let store = Store::in_memory().await.unwrap();
-        let owner = identity("carbon-1", IdentityKind::Carbon, &[]);
-        let profile = create_profile(&store, &owner, &[], "carbon-log").await;
-        let session = active_session(&store, &owner, &profile.id, "carbon-log").await;
-        let ticket = store
-            .report_command(
-                "org-1",
-                &owner,
-                "carbon-principal",
-                &session.id,
-                &report("open https://example.com", 0),
-                &secrets(),
-                at(2, 10),
-            )
-            .await
-            .unwrap();
-        assert_eq!(ticket.sequence, None);
-        assert!(store.session_logs("org-1", &owner, &session.id, None, &secrets()).await.unwrap().is_empty());
     }
 
     /// Test group: recording discovery uses source-session metadata, includes
@@ -3064,54 +2970,6 @@ mod tests {
 }
 
 impl Store {
-    pub async fn session_logs(
-        &self,
-        org_id: &str,
-        viewer: &Identity,
-        session_id: &str,
-        date: Option<NaiveDate>,
-        secrets: &SecretBox,
-    ) -> StoreResult<Vec<SessionLog>> {
-        let session = self.session(org_id, viewer, session_id).await?;
-        let started_by_kind: String =
-            sqlx::query_scalar("SELECT started_by_kind FROM sessions WHERE org_id = ? AND id = ?")
-                .bind(org_id)
-                .bind(session_id)
-                .fetch_one(&self.pool)
-                .await?;
-        if started_by_kind == "carbon" {
-            return Ok(Vec::new());
-        }
-        let rows = sqlx::query(
-            "SELECT sequence, actor_id, command_enc, started_at, exit_code \
-             FROM commands WHERE session_id = ? ORDER BY sequence",
-        )
-        .bind(session_id)
-        .fetch_all(&self.pool)
-        .await?;
-        let mut entries = Vec::new();
-        for row in rows {
-            let at = parse_timestamp(row.try_get("started_at")?, "command.started_at")?;
-            if date.is_some_and(|date| at.date_naive() != date) {
-                continue;
-            }
-            let sequence: i64 = row.try_get("sequence")?;
-            let encrypted: String = row.try_get("command_enc")?;
-            let actor_id: String = row.try_get("actor_id")?;
-            entries.push(SessionLog {
-                sequence: nonnegative(sequence, "command.sequence")?,
-                at,
-                actor_id: actor_id.clone(),
-                command: secrets
-                    .open_for(&command_secret_context(org_id, session_id, sequence, &actor_id), &encrypted)
-                    .map_err(StoreError::Crypto)?,
-                exit_code: row.try_get("exit_code")?,
-            });
-        }
-        debug_assert_eq!(session.id, session_id);
-        Ok(entries)
-    }
-
     /// Keep an ended visual recording pending while its provider URL is still
     /// being materialized. The outbox payload contains only local identifiers;
     /// signed provider URLs are never written there in plaintext.
@@ -3618,29 +3476,10 @@ impl Store {
         let link = link.or(native_link);
         let duration_ms: Option<i64> = row.try_get("duration_ms")?;
         let size_bytes: Option<i64> = row.try_get("size_bytes")?;
-        let log = sqlx::query("SELECT artifact_path, receipt_url_enc FROM recording_artifacts WHERE session_id = ? AND kind = 'commands' AND state = 'complete'")
-            .bind(session_id).fetch_optional(&self.pool).await?;
-        let (command_log_path, command_log_link) = if status == "trashed" {
-            (None, None)
-        } else if let Some(log) = log {
-            let path: Option<String> = log.try_get("artifact_path")?;
-            let link = log
-                .try_get::<Option<String>, _>("receipt_url_enc")?
-                .map(|encrypted| {
-                    secrets
-                        .ok_or_else(|| corrupt("recording", "encrypted log link requires SecretBox"))?
-                        .open_for(&format!("recording-artifact:{org_id}:{session_id}:commands"), &encrypted)
-                        .map_err(StoreError::Crypto)
-                })
-                .transpose()?;
-            (path, link)
-        } else {
-            (None, None)
-        };
         let delivery_error: Option<String> = if status == "trashed" {
             None
         } else {
-            sqlx::query_scalar("SELECT last_error FROM recording_artifacts WHERE session_id = ? AND last_error IS NOT NULL ORDER BY CASE state WHEN 'failed' THEN 0 ELSE 1 END, kind LIMIT 1")
+            sqlx::query_scalar("SELECT last_error FROM recording_artifacts WHERE session_id = ? AND kind = 'video' AND last_error IS NOT NULL ORDER BY CASE state WHEN 'failed' THEN 0 ELSE 1 END, kind LIMIT 1")
                 .bind(session_id).fetch_optional(&self.pool).await?.flatten()
         };
         Ok(Recording {
@@ -3659,8 +3498,6 @@ impl Store {
                 String::new()
             },
             briefcase_link: link,
-            command_log_path,
-            command_log_link,
             delivery_error,
             duration_seconds: nonnegative(duration_ms.unwrap_or(0), "recording.duration_ms")? / 1_000,
             size_bytes: nonnegative(size_bytes.unwrap_or(0), "recording.size_bytes")?,
@@ -3852,40 +3689,6 @@ impl Store {
         // Accounts grants access to Browser, not billing visibility over other
         // accounts. Only sessions visible through this account's ACLs count.
         usage_total(&self.usage_list(org_id, viewer, filter).await?)
-    }
-
-    /// Privacy-minimal discovery audit. Queries, URLs and result bodies are
-    /// deliberately excluded; operational accounting retains only purpose and
-    /// item count.
-    pub async fn record_discovery(
-        &self,
-        org_id: &str,
-        actor_id: &str,
-        kind: &str,
-        purpose: &str,
-        item_count: usize,
-        now: DateTime<Utc>,
-    ) -> StoreResult<()> {
-        safe_id(org_id, "org_id")?;
-        safe_id(actor_id, "actor_id")?;
-        if !matches!(kind, "search" | "fetch") {
-            return Err(StoreError::Invalid("discovery kind must be search or fetch".into()));
-        }
-        required(purpose, "purpose")?;
-        sqlx::query(
-            "INSERT INTO discovery_log (id, org_id, actor_id, kind, purpose, item_count, created_at) \
-             VALUES (?, ?, ?, ?, ?, ?, ?)",
-        )
-        .bind(Uuid::now_v7().to_string())
-        .bind(org_id)
-        .bind(actor_id)
-        .bind(kind)
-        .bind(purpose.trim())
-        .bind(i64::try_from(item_count).map_err(|_| StoreError::Invalid("item count is too large".into()))?)
-        .bind(timestamp(now))
-        .execute(&self.pool)
-        .await?;
-        Ok(())
     }
 
     async fn usage_unchecked(&self, session_id: &str) -> StoreResult<Usage> {

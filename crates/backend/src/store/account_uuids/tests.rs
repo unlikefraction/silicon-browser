@@ -76,9 +76,13 @@ async fn dry_run_apply_replay_preserve_resources_commands_capabilities_and_histo
     assert!(!store.account_subject_retired(NEW).await.unwrap());
     assert_eq!(store.session("browser", &actor(NEW), &session).await.unwrap().id, session);
     assert!(store.session("browser", &actor("Ab1"), &session).await.is_err());
-    let logs = store.session_logs("browser", &actor(NEW), &session, None, &key).await.unwrap();
-    assert_eq!(logs[0].actor_id, NEW);
-    assert_eq!(logs[0].command, "open https://example.test/Ab1");
+    let (actor, cipher): (String, String) =
+        sqlx::query_as("SELECT actor_id, command_enc FROM commands").fetch_one(&store.pool).await.unwrap();
+    assert_eq!(actor, NEW);
+    assert_eq!(
+        key.open_for(&command_secret_context("browser", &session, 1, NEW), &cipher).unwrap(),
+        "open https://example.test/Ab1"
+    );
     assert_eq!(
         sqlx::query_scalar::<_, String>("SELECT delivery_actor_id FROM commands").fetch_one(&store.pool).await.unwrap(),
         "Ab1"

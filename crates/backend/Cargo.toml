@@ -32,10 +32,9 @@ hex = "0.4"
 csv = "1"
 sha2 = "0.11"
 rand = "0.9"
-shell-words = "1"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
-tower-http = { version = "0.6", features = ["cors", "request-id", "trace", "sensitive-headers"] }
+tower-http = { version = "0.6", features = ["cors", "request-id", "sensitive-headers"] }
 http = "1"
 tower = { version = "0.5", features = ["util"] }
 hmac = "0.12"

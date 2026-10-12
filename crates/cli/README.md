@@ -23,9 +23,8 @@ saved local login. There is no organization selector; ownership and access use
 canonical Accounts UUIDv4s.
 
 Store packages bundle the pinned native controller. Setup verifies it and your
-Accounts session. The CLI streams actions locally and queues command reports;
-a failed report never repeats a browser action. Accounts refresh is one use:
-an uncertain response needs fresh sign-in.
+Accounts session. The CLI streams actions locally without collecting or sending
+command telemetry. Accounts refresh is one use: an uncertain response needs fresh sign-in.
 
 See the [CLI reference](../../docs/CLI.md), [Apps packaging](../../docs/APPS.md),
 and [deployment](../../docs/DEPLOYMENT.md).

@@ -119,7 +119,6 @@ impl FairSearchPool {
             let mut retry_budget = RateLimitBudget::default();
             let batch = FetchRequest {
                 urls: urls.to_vec(),
-                purpose: request.purpose.clone(),
                 format: request.format,
                 links: request.links,
                 image_links: request.image_links,
@@ -622,7 +621,6 @@ mod tests {
     fn search_request() -> SearchRequest {
         SearchRequest {
             query: "browser automation".into(),
-            purpose: "test fair scheduling".into(),
             search_type: SearchType::Web,
             include_domains: vec![],
             exclude_domains: vec![],
@@ -640,7 +638,6 @@ mod tests {
     fn fetch_request(url: &str) -> FetchRequest {
         FetchRequest {
             urls: vec![url.into()],
-            purpose: "test quota accounting".into(),
             format: FetchFormat::Markdown,
             links: false,
             image_links: false,
@@ -893,7 +890,6 @@ mod tests {
                 "alpha",
                 FetchRequest {
                     urls,
-                    purpose: "exercise the aggregate boundary".into(),
                     format: FetchFormat::Markdown,
                     links: false,
                     image_links: false,

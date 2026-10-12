@@ -7,7 +7,6 @@ mod browser;
 mod error;
 mod pool;
 mod proxy;
-mod receipts;
 mod search;
 #[cfg(test)]
 pub(crate) mod test_http;
@@ -25,7 +24,6 @@ pub use proxy::{
     BROWSER_USE_PROXY_LOCATIONS, BROWSER_USE_PROXY_SCHEMA_SNAPSHOT, ProviderProxyLocation, is_proxy_location,
     proxy_locations,
 };
-pub use receipts::BriefcaseEntry;
 pub use search::{
     FetchFormat, FetchItem, FetchRequest, FetchResponse, FetchStatus, SearchProvider, SearchRequest, SearchResponse,
     SearchResult, SearchType, TinyFish,

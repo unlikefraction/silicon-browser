@@ -99,7 +99,7 @@ sign-in. [Frontend setup](../frontend/README.md) describes the UI and tests.
 ## Release
 
 Silicon Apps hosts CLI packages and updates, not the API/frontend. Follow
-[Apps distribution](APPS.md) to build native packages and publish Browser 2.0.0.
+[Apps distribution](APPS.md) to build native packages and publish Browser 3.0.0.
 Do not release a CLI against an API still running the old auth contract.
 Keep secrets, backups and operational data outside packages. Run an actual
 restore check and a provider session smoke test before production cutover.

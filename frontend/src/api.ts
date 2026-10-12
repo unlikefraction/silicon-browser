@@ -112,8 +112,3 @@ export function safeHttps(value?: string, disallowedOrigin?: string): string | n
   try { const url = new URL(value); return url.protocol === 'https:' && !url.username && !url.password && url.origin !== disallowedOrigin ? url.href : null; } catch { return null; }
 }
 export const segment = encodeURIComponent;
-export const shellQuote = (value: string) => `'${value.replaceAll("'", "'\"'\"'")}'`;
-export function dateForApi(value: string) {
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(value) || !Number.isFinite(Date.parse(`${value}T00:00:00Z`)) || new Date(`${value}T00:00:00Z`).toISOString().slice(0, 10) !== value) throw new Error('Choose a valid date.');
-  return value;
-}

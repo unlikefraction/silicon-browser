@@ -163,18 +163,6 @@ impl Client {
         self.post(&format!("/api/v1/sessions/{}/live/redeem", segment(session_id)?), request)
     }
 
-    pub fn session_logs(&self, session_id: &str, date: Option<&str>) -> Result<Vec<SessionLog>, Error> {
-        let mut path = format!("/api/v1/sessions/{}/logs", segment(session_id)?);
-        let date = match date {
-            Some(date) => chrono::NaiveDate::parse_from_str(date, "%d-%m-%Y")
-                .map_err(|_| Error::Local("date must be a valid DD-MM-YYYY value".into()))?,
-            None => chrono::Utc::now().date_naive(),
-        };
-        path.push_str("?date=");
-        path.push_str(&encode(&date.format("%Y-%m-%d").to_string()));
-        self.get(&path)
-    }
-
     /// Obtain a short-lived direct browser connection after authorization. Treat its URL as a
     /// credential. Browser control goes directly from the local controller to this endpoint.
     pub fn session_connection(&self, session_id: &str) -> Result<SessionConnection, Error> {
@@ -186,21 +174,6 @@ impl Client {
         account_id(&connection.principal_id, "principal_id").map_err(protocol)?;
         crate::controller::validate_connection(&connection)?;
         Ok(connection)
-    }
-
-    /// Submit cooperative telemetry for an already executed local command. This endpoint never
-    /// executes browser actions; callers can safely retry the exact report with the same UUID.
-    pub fn report_command(&self, session_id: &str, report: &CommandReport) -> Result<CommandReportReceipt, Error> {
-        report.validate().map_err(validation)?;
-        let receipt: CommandReportReceipt = self.post_with_timeout(
-            &format!("/api/v1/sessions/{}/commands", segment(session_id)?),
-            report,
-            Duration::from_secs(2),
-        )?;
-        if receipt.command_id != report.command_id {
-            return Err(Error::Protocol("command receipt ID did not match its report".into()));
-        }
-        Ok(receipt)
     }
 
     // Recordings and usage ---------------------------------------------------------------
@@ -532,28 +505,6 @@ mod tests {
         assert!(session.validate().is_err());
     }
 
-    /// Test group: the documented log default is today's UTC date, sent explicitly so backend
-    /// locale and timezone cannot change the result.
-    #[test]
-    fn session_logs_default_to_today_in_utc() {
-        let before = chrono::Utc::now().date_naive();
-        let transport = Arc::new(FakeTransport::default());
-        let client = Client::with_transport(
-            "https://backend.example",
-            Auth::new("jwt.secret.signature").unwrap(),
-            transport.clone(),
-        )
-        .unwrap();
-        let logs = client.session_logs("s1", None).unwrap();
-        let after = chrono::Utc::now().date_naive();
-        assert!(logs.is_empty());
-        let url = &transport.0.lock().unwrap()[0].url;
-        assert!(
-            url.ends_with(&format!("?date={before}")) || url.ends_with(&format!("?date={after}")),
-            "unexpected log URL: {url}"
-        );
-    }
-
     #[test]
     fn fetch_uses_the_long_timeout_transport_contract() {
         let transport = Arc::new(TimedFetchTransport::default());
@@ -566,7 +517,6 @@ mod tests {
         let response = client
             .fetch(&FetchRequest {
                 urls: vec!["https://example.com".into()],
-                purpose: "read the page".into(),
                 format: FetchFormat::Markdown,
                 links: false,
                 image_links: false,

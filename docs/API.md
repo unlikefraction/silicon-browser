@@ -78,8 +78,7 @@ URL-encoded `filter` query parameter.
 | Profiles | `GET/POST /api/v1/profiles`; `GET/PATCH /api/v1/profiles/{id}`; `POST /api/v1/profiles/{id}/end` |
 | Sessions | `GET/POST /api/v1/sessions`; `GET /api/v1/sessions/{id}`; `POST /api/v1/sessions/{id}/end` |
 | Live links | `POST /api/v1/sessions/{id}/live`; `POST /api/v1/sessions/{id}/live/redeem` |
-| Local control | `GET /api/v1/sessions/{id}/connection`; `POST /api/v1/sessions/{id}/commands` |
-| Command history | `GET /api/v1/sessions/{id}/logs?date=YYYY-MM-DD` |
+| Local control | `GET /api/v1/sessions/{id}/connection` |
 | Recordings | `GET /api/v1/recordings`; `GET /api/v1/recordings/{session_id}`; `POST /api/v1/recordings/{session_id}/trash` |
 | Usage | `GET /api/v1/usage/limits`; `GET /api/v1/usage`; `GET /api/v1/usage/{session_id}` |
 | Discovery | `POST /api/v1/search`; `POST /api/v1/fetch` |
@@ -92,10 +91,9 @@ a profile or incognito, name, description and TTL. See the
 validation, and [CLI examples](CLI.md) for common operations.
 
 A session connection is a secret direct provider capability. The controller
-executes locally and sends no action output through the API. Command reports
-contain a stable command UUID, command/flags, timestamps and result metadata;
-they never execute actions. Identical report retries acknowledge the original
-receipt. Do not retry a browser action because metadata reporting failed.
+executes locally and sends neither commands nor action output through the API.
+The retired `/sessions/{id}/commands` and `/sessions/{id}/logs` routes return
+`410 Gone`; telemetry payloads are not parsed or stored.
 
 Accounts webhook registration and exact-origin CORS are documented in
 [deployment](DEPLOYMENT.md). Current upstream identity and token rules are

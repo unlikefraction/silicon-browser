@@ -3,7 +3,7 @@ mod download;
 mod upload;
 use crate::{
     Error,
-    shared::{CommandReport, RunEvent, RunResult, SessionConnection},
+    shared::{RunEvent, RunResult, SessionConnection},
 };
 use chrono::Utc;
 use sha2::{Digest, Sha256};
@@ -21,21 +21,6 @@ pub struct LocalController {
 #[derive(Debug)]
 pub struct LocalExecution {
     pub result: RunResult,
-    pub truncated: bool,
-}
-impl LocalExecution {
-    /// Construct one idempotent report; retain this value when retrying delivery.
-    pub fn command_report(&self, command: impl Into<String>, flags: &[String]) -> CommandReport {
-        CommandReport {
-            command_id: uuid::Uuid::now_v7(),
-            command: command.into(),
-            flags: flags.into(),
-            started_at: self.result.started_at,
-            finished_at: self.result.finished_at,
-            exit_code: self.result.exit_code,
-            truncated: self.truncated,
-        }
-    }
 }
 impl LocalController {
     pub fn new(binary: impl Into<PathBuf>) -> Self {
@@ -148,7 +133,7 @@ impl LocalController {
             stderr: err.captured,
         };
         emit(&RunEvent::Finished { result: result.clone() });
-        Ok(LocalExecution { result, truncated: out.truncated || err.truncated })
+        Ok(LocalExecution { result })
     }
 }
 
@@ -298,17 +283,10 @@ struct RedactedOutput {
     pending: Vec<u8>,
     utf8: Vec<u8>,
     captured: String,
-    truncated: bool,
 }
 impl RedactedOutput {
     fn new(secret: &str) -> Self {
-        Self {
-            secret: secret.as_bytes().to_vec(),
-            pending: Vec::new(),
-            utf8: Vec::new(),
-            captured: String::new(),
-            truncated: false,
-        }
+        Self { secret: secret.as_bytes().to_vec(), pending: Vec::new(), utf8: Vec::new(), captured: String::new() }
     }
     fn push(&mut self, bytes: &[u8], finish: bool, emit: &mut impl FnMut(String)) {
         self.pending.extend_from_slice(bytes);
@@ -347,7 +325,6 @@ impl RedactedOutput {
             count -= 1;
         }
         self.captured.push_str(&chunk[..count]);
-        self.truncated |= count < chunk.len();
         emit(chunk);
     }
 }
@@ -437,13 +414,12 @@ mod tests {
         assert!(!output.captured.contains(secret));
     }
     #[test]
-    fn telemetry_capture_is_bounded_without_truncating_terminal_output() {
+    fn result_capture_is_bounded_without_truncating_terminal_output() {
         let mut output = RedactedOutput::new("wss://secret.example/path");
         let mut emitted = 0;
         output.push(&vec![b'x'; 100_000], true, &mut |chunk| emitted += chunk.len());
         assert_eq!(emitted, 100_000);
         assert_eq!(output.captured.len(), 65_536);
-        assert!(output.truncated);
     }
     #[test]
     fn isolation_namespace_is_stable_and_scoped() {

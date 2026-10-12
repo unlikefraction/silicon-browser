@@ -300,7 +300,7 @@
           "HttpEndpoint": "enabled",
           "HttpPutResponseHopLimit": 1
         },
-        "Monitoring": true,
+        "Monitoring": false,
         "BlockDeviceMappings": [
           {
             "DeviceName": "/dev/xvda",
@@ -440,28 +440,6 @@
         "AlarmActions": [
           {
             "Fn::Sub": "arn:aws:automate:${AWS::Region}:ec2:recover"
-          }
-        ]
-      }
-    },
-    "CpuAlarm": {
-      "Type": "AWS::CloudWatch::Alarm",
-      "Properties": {
-        "AlarmDescription": "Browser metadata API sustained CPU pressure",
-        "Namespace": "AWS/EC2",
-        "MetricName": "CPUUtilization",
-        "Statistic": "Average",
-        "Period": 60,
-        "EvaluationPeriods": 10,
-        "Threshold": 80,
-        "ComparisonOperator": "GreaterThanThreshold",
-        "TreatMissingData": "notBreaching",
-        "Dimensions": [
-          {
-            "Name": "InstanceId",
-            "Value": {
-              "Ref": "Instance"
-            }
           }
         ]
       }

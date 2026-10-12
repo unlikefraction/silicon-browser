@@ -36,9 +36,9 @@ browser run SESSION_ID "open https://example.com"
 browser run SESSION_ID "snapshot -i"
 browser run SESSION_ID "screenshot ./research.png"
 browser session end SESSION_ID --note "done"</code></pre>
-  <p>Use <code>browser profile new --help</code> for a reusable profile, or <code>browser session new --incognito</code> for a fresh session. The website opens live browsers, profiles, recordings, usage, and command logs.</p>
-  <pre><code>browser search "browser automation" --purpose "Find primary sources"
-browser fetch https://example.com --purpose "Extract relevant claims"</code></pre>
+  <p>Use <code>browser profile new --help</code> for a reusable profile, or <code>browser session new --incognito</code> for a fresh session. The website opens live browsers, profiles, recordings, and resource usage. Browser does not send command telemetry or analytics events.</p>
+  <pre><code>browser search "browser automation"
+browser fetch https://example.com</code></pre>
   <h2 id="accounts">Your account</h2>
   <p>Browser identifies you by your permanent Accounts UUID. Your <code>c:</code> or <code>si:</code> display handle can change without changing ownership. Profiles can grant access to other account UUIDs.</p>
   <p>Your website sign-in stays available across tabs and browser restarts until its Accounts credentials expire, are revoked, or you sign out. Switching accounts keeps their data and credentials separate. The CLI also saves your sign-in between commands. If a one-use refresh is interrupted, sign in again with a fresh token. Manage your identity and app access at <a href="https://accounts.teamofsilicons.com/">Silicon Accounts</a>.</p>

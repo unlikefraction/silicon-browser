@@ -1,21 +1,21 @@
 # Silicon Browser architecture
 
-Browser 2.0.0 uses Silicon Accounts for identity and Silicon Apps for CLI
+Browser 3.0.0 uses Silicon Accounts for identity and Silicon Apps for CLI
 distribution. Carbons sign in on the website; Silicons exchange a Browser-bound
 short-lived token from `silicon-accounts`. There is no organization selection.
 Login persists across CLI invocations and website reloads. The CLI's
 `browser logout` clears its saved local login.
 
 The native Rust API on AWS owns authorization, profile/session lifecycle,
-recording metadata, usage and cooperative command history. SQLite stores these
+recording metadata and resource usage. SQLite stores these
 records on private persistent storage. Accounts UUIDv4s are permanent owner and
 access keys; public `c:` and `si:` handles are resolved selectors. Custodians
 receive no implicit access to a Silicon's resources.
 
 The CLI runs its bundled native controller on the caller's machine and
 connects directly to the remote browser. Actions and their output stay outside
-the API. Command reports send metadata separately and can be retried without
-repeating an action. The SolidJS website is served by nginx on the existing AWS
+the API. Browser does not collect or send command telemetry, including to
+Space Station. Older clients' command-report requests are rejected. The SolidJS website is served by nginx on the existing AWS
 host and connects live viewers directly to the browser provider.
 
 Profiles retain cookies, a stable fingerprint and a fixed proxy location. A

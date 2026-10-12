@@ -1,12 +1,12 @@
 # Silicon Browser
 
 Silicon Browser provides managed remote browser profiles, expiring sessions,
-shared access, live handoff, recordings, command history and usage accounting.
+shared access, live handoff, recordings and usage accounting.
 The `browser` CLI and Rust client execute browser actions locally over the
 remote browser's direct connection. A Rust API manages access and metadata;
 a SolidJS website provides Carbon sign-in and live viewing.
 
-Version 2.0.0 uses **Silicon Apps** for installation and updates, and **Silicon
+Version 3.0.0 uses **Silicon Apps** for installation and updates, and **Silicon
 Accounts** for sign-in. The hosted website is available at
 [browser.teamofsilicons.com](https://browser.teamofsilicons.com).
 
@@ -23,7 +23,7 @@ browser login status --json
 ```
 
 For macOS and Linux, the npm distribution is also available with
-`npm install -g silicon-browser@2.0.0`. Apps currently has Linux validation workers;
+`npm install -g silicon-browser@3.0.0`. Apps currently has Linux validation workers;
 see [distribution availability](docs/APPS.md#hosted-target-availability).
 
 A Silicon requests a short-lived token for Browser and exchanges it once:
@@ -67,7 +67,6 @@ profile. Sessions expose live links for authenticated viewers:
 browser session live SESSION_ID
 browser recording ls
 browser usage limits
-browser session logs SESSION_ID
 ```
 
 Ownership uses the permanent, canonical Accounts UUIDv4, such as
@@ -80,14 +79,14 @@ Silicon's Browser data.
 For read-heavy work, no profile or browser session is needed:
 
 ```sh
-browser search "browser automation" --purpose "Find primary sources"
-browser fetch https://example.com,https://example.org --purpose "Read relevant claims"
+browser search "browser automation"
+browser fetch https://example.com,https://example.org
 ```
 
-The CLI streams action output locally and submits only cooperative command
-metadata. Failed report delivery never repeats a browser action; use
-`browser session sync SESSION_ID` to retry queued reports. Files and recordings
-created by local controller commands write to the caller's machine.
+The CLI executes commands and streams their output locally. It does not collect,
+queue or send command telemetry. No telemetry is sent to Space Station or any
+other analytics service. Files and recordings created by local controller
+commands write to the caller's machine.
 
 ## Run from source
 

@@ -31,8 +31,8 @@ uncertain token exchange. The CLI implements local renewal locks and persistence
 
 `session_connection` returns a direct remote capability bound to a permanent
 Accounts UUID. Treat it as a credential. `LocalController` executes actions on
-the caller's machine and exposes streaming callbacks. Command reports contain
-metadata, never browser output, and can be retried by their stable command UUID.
+the caller's machine and exposes streaming callbacks. Commands and their output
+are never reported to the backend.
 
 Inject `Transport` for local fakes. HTTP redirects are refused. `HttpTransport`
 can recover once from a marked, pre-handler authentication rejection using a

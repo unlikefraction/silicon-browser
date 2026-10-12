@@ -5,7 +5,7 @@ use chrono::{DateTime, NaiveDate, Utc};
 use serde::{Deserialize, Serialize};
 use url::Url;
 
-use crate::validation::{bounded, collection_len, identifier, purpose, required};
+use crate::validation::{bounded, collection_len, identifier, required};
 use crate::{AccessList, ApiError, IdentityId, ProfileId, SessionId, Validate, ValidationError};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -418,23 +418,6 @@ impl Validate for SessionEnd {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct SessionLog {
-    pub sequence: u64,
-    pub at: DateTime<Utc>,
-    pub actor_id: IdentityId,
-    pub command: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub exit_code: Option<i32>,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct SessionLogs {
-    pub session_id: SessionId,
-    pub date: NaiveDate,
-    pub entries: Vec<SessionLog>,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct LiveLink {
     pub session_id: SessionId,
     pub url: String,
@@ -496,10 +479,6 @@ pub struct Recording {
     pub briefcase_path: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub briefcase_link: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub command_log_link: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub command_log_path: Option<String>,
     /// Stable non-secret delivery diagnostic, when an artifact is waiting or failed.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub delivery_error: Option<String>,
@@ -628,7 +607,6 @@ pub enum SearchType {
 #[serde(deny_unknown_fields)]
 pub struct SearchRequest {
     pub query: String,
-    pub purpose: String,
     #[serde(default, rename = "type")]
     pub search_type: SearchType,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -656,7 +634,6 @@ pub struct SearchRequest {
 impl Validate for SearchRequest {
     fn validate(&self) -> Result<(), ValidationError> {
         bounded(&self.query, "query", 16_384)?;
-        purpose(&self.purpose)?;
         collection_len(self.include_domains.len(), "include_domains", 100)?;
         collection_len(self.exclude_domains.len(), "exclude_domains", 100)?;
         if self.page > 10 {
@@ -730,7 +707,6 @@ pub enum FetchFormat {
 #[serde(deny_unknown_fields)]
 pub struct FetchRequest {
     pub urls: Vec<String>,
-    pub purpose: String,
     #[serde(default)]
     pub format: FetchFormat,
     #[serde(default)]
@@ -762,7 +738,6 @@ impl Validate for FetchRequest {
             return Err(ValidationError::Required { field: "urls" });
         }
         collection_len(self.urls.len(), "urls", 1_000)?;
-        purpose(&self.purpose)?;
         for url in &self.urls {
             validate_http_url(url, "urls")?;
         }
@@ -937,7 +912,6 @@ mod model_tests {
     fn search() -> SearchRequest {
         SearchRequest {
             query: "browser research".into(),
-            purpose: "Find primary sources".into(),
             search_type: SearchType::Web,
             include_domains: Vec::new(),
             exclude_domains: Vec::new(),
@@ -955,7 +929,6 @@ mod model_tests {
     fn fetch(urls: usize) -> FetchRequest {
         FetchRequest {
             urls: (0..urls).map(|index| format!("https://example.com/{index}")).collect(),
-            purpose: "Read the relevant sections".into(),
             format: FetchFormat::Markdown,
             links: false,
             image_links: false,
@@ -987,8 +960,8 @@ mod model_tests {
         }));
         rejects_unknown_field::<SessionEnd>(json!({"note": "done"}));
         rejects_unknown_field::<LiveRedeemRequest>(json!({"grant": "opaque-grant"}));
-        rejects_unknown_field::<SearchRequest>(json!({"query": "browsers", "purpose": "research"}));
-        rejects_unknown_field::<FetchRequest>(json!({"urls": ["https://example.com"], "purpose": "read"}));
+        rejects_unknown_field::<SearchRequest>(json!({"query": "browsers"}));
+        rejects_unknown_field::<FetchRequest>(json!({"urls": ["https://example.com"]}));
         rejects_unknown_field::<RunRequest>(json!({"session_id": "session-1", "command": "snapshot"}));
     }
 
@@ -1128,7 +1101,7 @@ mod model_tests {
         assert!(session.validate().is_err());
     }
 
-    /// Test group: search validates page, date mode, research-only years, and purpose length.
+    /// Test group: search validates page, date mode, research-only years.
     #[test]
     fn search_constraints_match_the_cli_contract() {
         let mut request = search();
@@ -1145,10 +1118,6 @@ mod model_tests {
         assert!(request.validate().is_err());
         request.search_type = SearchType::Research;
         assert!(request.validate().is_ok());
-
-        let mut request = search();
-        request.purpose = "x".repeat(2_001);
-        assert!(request.validate().is_err());
     }
 
     /// Test group: search text and domain collections have generous denial-of-service bounds.
@@ -1339,49 +1308,4 @@ impl std::fmt::Debug for SessionConnection {
             .field("expires_at", &self.expires_at)
             .finish()
     }
-}
-
-/// Cooperative client telemetry, not proof that these were all browser actions.
-/// Retrying this report must never execute the command again. Browser output
-/// remains on the client and has no field in this telemetry protocol.
-#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct CommandReport {
-    pub command_id: uuid::Uuid,
-    pub command: String,
-    #[serde(default)]
-    pub flags: Vec<String>,
-    pub started_at: DateTime<Utc>,
-    pub finished_at: DateTime<Utc>,
-    pub exit_code: i32,
-    #[serde(default)]
-    pub truncated: bool,
-}
-impl std::fmt::Debug for CommandReport {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("CommandReport").field("command_id", &self.command_id).field("content", &"[REDACTED]").finish()
-    }
-}
-impl Validate for CommandReport {
-    fn validate(&self) -> Result<(), ValidationError> {
-        if self.command_id.is_nil() || self.finished_at < self.started_at {
-            return Err(ValidationError::Invalid {
-                field: "command_report",
-                reason: "requires a nonzero ID and ordered timestamps".into(),
-            });
-        }
-        RunRequest { session_id: "report".into(), command: self.command.clone(), flags: self.flags.clone() }
-            .validate()?;
-        if self.command.len() + self.flags.iter().map(String::len).sum::<usize>() > 1_048_576 {
-            return Err(ValidationError::TooLong { field: "command", max: 1_048_576 });
-        }
-        Ok(())
-    }
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct CommandReportReceipt {
-    pub command_id: uuid::Uuid,
-    /// Carbon sessions intentionally do not retain command history.
-    pub sequence: Option<u64>,
 }

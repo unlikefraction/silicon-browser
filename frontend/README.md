@@ -20,7 +20,7 @@ Native Web Locks serialize refresh across tabs. Each waiting tab rereads the sav
 
 Live invitation grants and sign-in codes are removed from the displayed URL before rendering or making API calls. Live viewers connect directly to their returned HTTPS provider URL. Legacy testing or organization-specific invitations are rejected with instructions to obtain a new invitation.
 
-Profiles, sessions, live handoff, command logs, recordings, and usage remain available. Session creation runs directly from the session form.
+Profiles, sessions, live handoff, recordings, and usage remain available. Session creation runs directly from the session form.
 
 ## Build and run
 

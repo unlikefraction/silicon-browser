@@ -42,7 +42,7 @@ Keep `Cargo.toml`, workspace versions in `Cargo.lock` and `apps.yaml` in sync.
 The **Silicon Apps package** GitHub Actions workflow builds and tests the CLI
 natively on Linux, macOS and Windows, each on x86-64 and ARM64. It stages the
 pinned browser controller beside each CLI and assembles
-`apps-browser-2.0.0.tar.gz`. Windows ARM64 builds the controller from its pinned
+`apps-browser-3.0.0.tar.gz`. Windows ARM64 builds the controller from its pinned
 upstream source because that upstream release has no Windows ARM64 asset.
 
 The package's root `apps.yaml` uses this schema:
@@ -50,7 +50,7 @@ The package's root `apps.yaml` uses this schema:
 ```yaml
 schema_version: 1
 app_id: browser
-version: 2.0.0
+version: 3.0.0
 command: browser
 targets:
   linux-x86_64:
@@ -77,7 +77,7 @@ official Apps validator:
 
 ```sh
 mkdir -p target/apps/validate
-tar -xzf target/apps-browser-2.0.0.tar.gz -C target/apps/validate
+tar -xzf target/apps-browser-3.0.0.tar.gz -C target/apps/validate
 silicon-apps validate target/apps/validate
 ```
 
@@ -151,11 +151,11 @@ Use a fresh immutable version for a new release. Version strings are strict
 target, then copy the accepted package IDs into a development release:
 
 ```sh
-silicon-apps upload browser --target linux-x86_64 target/apps-browser-2.0.0.tar.gz
-silicon-apps upload browser --target linux-aarch64 target/apps-browser-2.0.0.tar.gz
+silicon-apps upload browser --target linux-x86_64 target/apps-browser-3.0.0.tar.gz
+silicon-apps upload browser --target linux-aarch64 target/apps-browser-3.0.0.tar.gz
 silicon-apps packages browser
-silicon-apps release browser --version 2.0.0 --package LINUX_X64_PACKAGE_ID --package LINUX_ARM64_PACKAGE_ID
-silicon-apps install 'browser>dev@2.0.0'
+silicon-apps release browser --version 3.0.0 --package LINUX_X64_PACKAGE_ID --package LINUX_ARM64_PACKAGE_ID
+silicon-apps install 'browser>dev@3.0.0'
 browser --version
 browser --help
 browser accounts --json
@@ -166,7 +166,7 @@ Every release starts in development. Promote the tested development release to
 production, then check readiness and publish the app:
 
 ```sh
-silicon-apps promote browser DEVELOPMENT_RELEASE_ID --version 2.0.0
+silicon-apps promote browser DEVELOPMENT_RELEASE_ID --version 3.0.0
 silicon-apps readiness browser
 silicon-apps publish browser
 ```

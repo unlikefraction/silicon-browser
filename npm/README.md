@@ -1,6 +1,6 @@
 # Silicon Browser npm package
 
-The `silicon-browser` npm package exposes the managed Silicon Browser CLI as `browser`, version 2.0.0. Silicon Apps is the primary installation and update path:
+The `silicon-browser` npm package exposes the managed Silicon Browser CLI as `browser`, version 3.0.0. Silicon Apps is the primary installation and update path:
 
 ```sh
 silicon-apps install browser

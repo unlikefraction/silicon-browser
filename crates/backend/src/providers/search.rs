@@ -299,9 +299,6 @@ fn tinyfish_search_url(mut url: Url, query: &TinyFishSearchQuery<'_>) -> Url {
 
 fn tinyfish_search_query(request: &SearchRequest) -> ProviderResult<TinyFishSearchQuery<'_>> {
     validate_search(request)?;
-    // `purpose` is caller intent for Silicon Browser's audit/accounting layer, not a documented
-    // TinyFish search parameter. Appending it to `query` would change retrieval semantics and can
-    // disclose internal task context, so it intentionally remains local-only.
     Ok(TinyFishSearchQuery {
         query: query_with_domain_operators(&request.query, &request.include_domains, &request.exclude_domains)?,
         location: request.location.as_deref(),
@@ -543,7 +540,6 @@ mod tests {
     fn test_group_search_sends_only_documented_fields_and_uses_domain_operators() {
         let request = SearchRequest {
             query: "rust browser automation".into(),
-            purpose: "Find primary docs".into(),
             search_type: SearchType::Web,
             include_domains: vec!["*.example.com".into(), "docs.rs".into()],
             exclude_domains: vec!["spam.example".into()],
@@ -568,7 +564,6 @@ mod tests {
     fn test_group_search_rejects_unsupported_provider_semantics() {
         let request = SearchRequest {
             query: "attention".into(),
-            purpose: "find the paper".into(),
             search_type: SearchType::Research,
             include_domains: vec![],
             exclude_domains: vec![],
@@ -617,7 +612,6 @@ mod tests {
     fn test_group_fetch_validation_rejects_credentials_and_unsupported_options() {
         let credentials = FetchRequest {
             urls: vec!["https://user:pass@example.com".into()],
-            purpose: "read".into(),
             format: FetchFormat::Markdown,
             links: false,
             image_links: false,
@@ -630,7 +624,6 @@ mod tests {
 
         let supported = FetchRequest {
             urls: vec!["https://example.com".into()],
-            purpose: "read".into(),
             format: FetchFormat::Markdown,
             links: false,
             image_links: false,
@@ -694,7 +687,6 @@ mod tests {
         let error = provider
             .fetch(FetchRequest {
                 urls: vec!["https://example.com".into()],
-                purpose: "read safely".into(),
                 format: FetchFormat::Markdown,
                 links: false,
                 image_links: false,
@@ -721,7 +713,6 @@ mod tests {
         let response = provider
             .search(SearchRequest {
                 query: "latest browser research".into(),
-                purpose: "evaluate the primary literature".into(),
                 search_type: SearchType::Web,
                 include_domains: vec!["arxiv.org".into(), "acm.org".into()],
                 exclude_domains: vec!["example.org".into()],
@@ -770,7 +761,6 @@ mod tests {
         let response = provider
             .fetch(FetchRequest {
                 urls: urls.clone(),
-                purpose: "extract article bodies".into(),
                 format: FetchFormat::Markdown,
                 links: true,
                 image_links: false,

@@ -2232,7 +2232,7 @@ dependencies = [
 
 [[package]]
 name = "silicon-browser"
-version = "2.0.0"
+version = "3.0.0"
 dependencies = [
  "base64 0.22.1",
  "chrono",
@@ -2251,7 +2251,7 @@ dependencies = [
 
 [[package]]
 name = "silicon-browser-backend"
-version = "2.0.0"
+version = "3.0.0"
 dependencies = [
  "aes-gcm",
  "async-trait",
@@ -2268,7 +2268,6 @@ dependencies = [
  "serde_json",
  "sha2 0.10.9",
  "sha2 0.11.0",
- "shell-words",
  "silicon-browser-shared",
  "sqlx",
  "tempfile",
@@ -2284,7 +2283,7 @@ dependencies = [
 
 [[package]]
 name = "silicon-browser-cli"
-version = "2.0.0"
+version = "3.0.0"
 dependencies = [
  "assert_cmd",
  "chrono",
@@ -2306,7 +2305,7 @@ dependencies = [
 
 [[package]]
 name = "silicon-browser-shared"
-version = "2.0.0"
+version = "3.0.0"
 dependencies = [
  "chrono",
  "serde",
@@ -2824,7 +2823,6 @@ dependencies = [
  "tower",
  "tower-layer",
  "tower-service",
- "tracing",
  "url",
  "uuid",
 ]

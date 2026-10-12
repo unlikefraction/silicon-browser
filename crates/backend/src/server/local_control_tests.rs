@@ -1,4 +1,4 @@
-// Local-controller contract, archive fencing, and synthetic metadata capacity.
+// Direct browser capabilities and removal of remote command reporting.
 // Every provider is fake: this suite starts no browser and makes no network call.
 use super::*;
 
@@ -116,10 +116,8 @@ async fn connection_renewal_denies_removed_profile_participants_and_ending_or_ex
     let fixture = fixture().await;
     let session = start(&fixture, false, true).await;
     let path = format!("/api/v1/sessions/{}/connection", session.id);
-    let commands = format!("/api/v1/sessions/{}/commands", session.id);
-    let (status, _, _) =
-        request(&fixture.app, "POST", &commands, Some(("oat_viewer", "browser")), Some(report())).await;
-    assert_eq!(status, StatusCode::OK);
+    fixture.store.associate_participant("browser", &session.id, "c:viewer-1",
+        crate::store::ParticipantRole::Runner, Utc::now()).await.unwrap();
     let (status, _, _) = request(&fixture.app, "GET", &path, Some(("oat_viewer", "browser")), None).await;
     assert_eq!(status, StatusCode::OK);
     fixture
@@ -177,118 +175,55 @@ async fn connection_renewal_denies_removed_profile_participants_and_ending_or_ex
 }
 
 #[tokio::test]
-async fn report_endpoint_never_executes_legacy_run_payloads_or_reported_shell_text() {
+async fn retired_command_routes_do_not_collect_execute_or_return_history() {
     let fixture = fixture().await;
     let session = start(&fixture, false, false).await;
-    let (status, _) = send(&fixture, &session, json!({"command":"open https://example.com", "flags":[]})).await;
-    assert_eq!(status, StatusCode::BAD_REQUEST);
-    // Browser output must never cross this boundary, even if an older or
-    // incorrect client attempts to include it in an otherwise valid report.
-    for field in ["stdout", "stderr"] {
-        let mut with_output = report();
-        with_output[field] = json!("private browser output");
-        assert_eq!(send(&fixture, &session, with_output).await.0, StatusCode::BAD_REQUEST);
-    }
     let directory = tempfile::tempdir().unwrap();
     let marker = directory.path().join("must-not-exist");
     let mut payload = report();
     payload["command"] = json!(format!("sh -c 'touch {}'", marker.display()));
-    let (status, _) = send(&fixture, &session, payload).await;
-    assert_eq!(status, StatusCode::OK);
+    payload["stdout"] = json!("private browser output");
+    for body in [payload, json!({}), Value::Null] {
+        let (status, response) = send(&fixture, &session, body).await;
+        assert_eq!(status, StatusCode::GONE);
+        assert_eq!(response["error"]["code"], "command_history_removed");
+    }
+    for table in ["commands", "command_reports"] {
+        let count: i64 = sqlx::query_scalar(sqlx::AssertSqlSafe(format!("SELECT COUNT(*) FROM {table}")))
+            .fetch_one(fixture.store.pool()).await.unwrap();
+        assert_eq!(count, 0);
+    }
+    for auth in [None, Some(("oat_owner", "browser"))] {
+        let (status, _, body) = request(&fixture.app, "GET",
+            &format!("/api/v1/sessions/{}/logs", session.id), auth, None).await;
+        assert_eq!(status, StatusCode::GONE);
+        assert!(!String::from_utf8_lossy(&body).contains("local-secret"));
+    }
     assert!(!marker.exists());
     assert_eq!(fixture.browser.state.lock().unwrap().get_calls, 0);
     assert!(fixture.browser.stopped().is_empty());
 }
 
 #[tokio::test]
-async fn reports_retry_idempotently_and_reject_changed_body_or_different_principal() {
-    let fixture = fixture().await;
-    let session = start(&fixture, false, true).await;
-    let payload = report();
-    let (first_status, first) = send(&fixture, &session, payload.clone()).await;
-    let (again_status, again) = send(&fixture, &session, payload.clone()).await;
-    assert_eq!((first_status, again_status), (StatusCode::OK, StatusCode::OK));
-    assert_eq!(first["data"], again["data"]);
-    let mut changed = payload.clone();
-    changed["exit_code"] = json!(2);
-    let (status, response) = send(&fixture, &session, changed).await;
-    assert_eq!(status, StatusCode::CONFLICT);
-    assert_eq!(response["error"]["code"], "command_report_conflict");
-    let (status, _, _) = request(
-        &fixture.app,
-        "POST",
-        &format!("/api/v1/sessions/{}/commands", session.id),
-        Some(("oat_viewer", "browser")),
-        Some(payload),
-    )
-    .await;
-    assert_eq!(status, StatusCode::CONFLICT);
-    let logs =
-        fixture.store.session_logs("browser", &owner(), &session.id, None, &fixture.state.secrets).await.unwrap();
-    assert_eq!(logs.len(), 1);
-    assert!(logs[0].command.contains("local-secret"));
-    let encrypted: String = sqlx::query_scalar("SELECT command_enc FROM commands WHERE session_id = ?")
-        .bind(&session.id)
-        .fetch_one(fixture.store.pool())
-        .await
-        .unwrap();
-    assert!(!encrypted.contains("local-secret"));
-}
-
-#[tokio::test]
-async fn first_archive_claim_freezes_new_reports_before_hashing_but_acknowledges_replays() {
+async fn historical_command_archives_are_not_exposed_with_recordings() {
     let fixture = fixture().await;
     let session = start(&fixture, false, false).await;
-    let original = report();
-    assert_eq!(send(&fixture, &session, original.clone()).await.0, StatusCode::OK);
-    fixture
-        .store
-        .begin_end_session(
-            "browser",
-            &owner(),
-            &session.id,
-            &SessionEnd { note: "done".into() },
-            &fixture.state.secrets,
-        )
-        .await
-        .unwrap();
-    fixture.store.finalize_end_session("browser", &session.id, Utc::now()).await.unwrap();
-    // A report arriving after the stop is still admitted before archival starts.
-    assert_eq!(send(&fixture, &session, report()).await.0, StatusCode::OK);
-    let now = Utc::now();
-    let claims = fixture.store.claim_recording_deliveries(now, now + TimeDelta::seconds(60), 2).await.unwrap();
-    let logs = claims.iter().find(|claim| claim.kind == crate::store::RecordingArtifactKind::Commands).unwrap();
-    let digest: Option<String> =
-        sqlx::query_scalar("SELECT body_sha256 FROM recording_artifacts WHERE session_id = ? AND kind = 'commands'")
-            .bind(&session.id)
-            .fetch_one(fixture.store.pool())
-            .await
-            .unwrap();
-    assert!(digest.is_none(), "snapshot closes before reading or binding a digest");
-    let before = fixture.store.recording_delivery_logs(logs, 0, 128, &fixture.state.secrets).await.unwrap();
-    let (status, body) = send(&fixture, &session, report()).await;
-    assert_eq!(status, StatusCode::CONFLICT);
-    assert_eq!(body["error"]["code"], "report_window_closed");
-    assert_eq!(send(&fixture, &session, original).await.0, StatusCode::OK);
-    let after = fixture.store.recording_delivery_logs(logs, 0, 128, &fixture.state.secrets).await.unwrap();
-    assert_eq!(serde_json::to_vec(&before).unwrap(), serde_json::to_vec(&after).unwrap());
-    assert_eq!(after.len(), 2);
-}
-
-#[tokio::test]
-async fn report_timestamps_cannot_invent_work_outside_the_session_window() {
-    let fixture = fixture().await;
-    let session = start(&fixture, false, false).await;
-    for time in [session.started_at - TimeDelta::minutes(6), session.expires_at + TimeDelta::minutes(6)] {
-        let mut payload = report();
-        payload["started_at"] = json!(time);
-        payload["finished_at"] = json!(time);
-        assert_eq!(send(&fixture, &session, payload).await.0, StatusCode::BAD_REQUEST);
-    }
+    sqlx::query("INSERT INTO recording_artifacts(session_id,kind,state,next_attempt_at,artifact_path,receipt_url_enc,last_error) VALUES(?,'commands','complete',?,'private/commands.jsonl','unused-old-ciphertext','old-command-error')")
+        .bind(&session.id).bind(Utc::now().to_rfc3339()).execute(fixture.store.pool()).await.unwrap();
+    let (status, _, body) = request(&fixture.app, "GET",
+        &format!("/api/v1/recordings/{}", session.id), Some(("oat_owner", "browser")), None).await;
+    assert_eq!(status, StatusCode::OK, "{}", String::from_utf8_lossy(&body));
+    let recording = data(&body);
+    assert!(recording.get("command_log_link").is_none());
+    assert!(recording.get("command_log_path").is_none());
+    assert!(recording.get("delivery_error").is_none());
+    let state: String = sqlx::query_scalar("SELECT state FROM recording_artifacts WHERE session_id = ? AND kind = 'commands'")
+        .bind(&session.id).fetch_one(fixture.store.pool()).await.unwrap();
+    assert_eq!(state, "complete", "historical records remain untouched");
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-async fn five_hundred_concurrent_clients_read_connections_and_report_without_browser_work() {
+async fn five_hundred_concurrent_clients_read_connections_without_browser_work() {
     let directory = tempfile::tempdir().unwrap();
     let mut fixture = fixture().await;
     let store =
@@ -318,36 +253,22 @@ async fn five_hundred_concurrent_clients_read_connections_and_report_without_bro
             )
             .await;
             assert_eq!(status, StatusCode::OK, "connection {}", String::from_utf8_lossy(&body));
-            let (status, _, body) = request(
-                &app,
-                "POST",
-                &format!("/api/v1/sessions/{}/commands", session.id),
-                Some((&token, "browser")),
-                Some(report()),
-            )
-            .await;
-            assert_eq!(status, StatusCode::OK, "report {}", String::from_utf8_lossy(&body));
-            (data(&body)["sequence"].as_u64().unwrap(), started.elapsed())
+            started.elapsed()
         });
     }
-    let mut sequences = Vec::new();
     let mut timings = Vec::new();
     tokio::time::timeout(Duration::from_secs(60), async {
         while let Some(result) = workers.join_next().await {
-            let (sequence, elapsed) = result.unwrap();
-            sequences.push(sequence);
-            timings.push(elapsed);
+            timings.push(result.unwrap());
         }
     })
     .await
     .expect("500-client metadata burst must not stall");
-    sequences.sort_unstable();
     timings.sort_unstable();
-    assert_eq!(sequences, (1..=500).collect::<Vec<_>>());
     assert_eq!(fixture.browser.state.lock().unwrap().get_calls, 0);
     assert_eq!(fixture.browser.state.lock().unwrap().browsers.len(), 1);
     eprintln!(
-        "500 clients / 1000 authenticated metadata requests: p50={:?} p95={:?} max={:?}; fake Accounts/provider, local SQLite WAL",
+        "500 clients / 500 authenticated connection requests: p50={:?} p95={:?} max={:?}; fake Accounts/provider, local SQLite WAL",
         timings[249], timings[474], timings[499]
     );
 }
