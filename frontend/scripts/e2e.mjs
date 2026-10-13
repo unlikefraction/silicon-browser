@@ -241,7 +241,11 @@ const LIVE_PAGE = `<!doctype html><meta charset="utf-8"><title>Live browser</tit
 const workspaceNav = page => page.getByRole('complementary', { name: 'Browser' }).getByRole('navigation', { name: 'Workspace' });
 const heading = (page, name) => page.getByRole('heading', { level: 1, name, exact: true });
 const main = page => page.getByRole('main');
-const toast = (page, title) => page.getByRole('region', { name: /Notifications/ }).getByText(title, { exact: true });
+const toast = (page, title, description) => {
+  const items = page.getByRole('region', { name: /Notifications/ }).getByRole('listitem');
+  // Fast runs can leave two "Profile saved" toasts visible; match the saved profile too.
+  return (description ? items.filter({ has: page.getByText(description, { exact: true }) }) : items).getByText(title, { exact: true });
+};
 
 /** Waits until no workspace task is running: the rail's buttons are enabled again (they are disabled while busy). */
 async function idle(page) {
@@ -489,7 +493,7 @@ try {
     // must not move the button between mousedown and mouseup (a 300 ms press, like a deliberate click).
     await tags.fill(` ${EXTRA_ACCESS} `);
     await page.getByRole('button', { name: 'Save profile' }).click({ delay: 300 });
-    await toast(page, 'Profile saved').waitFor();
+    await toast(page, 'Profile saved', 'Shopping').waitFor();
     await heading(page, 'Profiles').waitFor();
     await idle(page);
     assert.deepEqual(backend.sent('POST /profiles').map(item => item.body), [{ name: 'Shopping', access: [ATLAS.id, EXTRA_ACCESS], location: 'gb' }], 'one click saves once, with the pending draft');
@@ -503,7 +507,7 @@ try {
     await page.getByRole('button', { name: `Remove ${ATLAS.id}` }).click();
     await page.getByLabel('Profile name').fill('Research desk');
     await page.getByRole('button', { name: 'Save profile' }).click();
-    await toast(page, 'Profile saved').waitFor();
+    await toast(page, 'Profile saved', 'Research desk').waitFor();
     await heading(page, 'Profiles').waitFor();
     await idle(page);
     assert.deepEqual(backend.sent('PATCH /profiles/prf_research').map(item => item.body), [{ name: 'Research desk', access: [] }]);
