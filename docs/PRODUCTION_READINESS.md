@@ -15,6 +15,7 @@ their output. See [deployment](DEPLOYMENT.md), [HTTP API](API.md),
 
 | Record | What it establishes |
 | --- | --- |
+| [Next.js and native Silicon UI frontend](operations/frontend-nextjs-2026-10-13.md) | Pre-deployment validation: 49 unit tests, 38 browser scenarios, 178 screenshots and 53 exact registry files; linked frontend release holds deployment evidence. |
 | [Browser 3.0.0 telemetry removal](operations/browser-3.0.0-2026-10-12.md) | 271 Rust/47 frontend checks, six native proofs, live API retirement and zero new telemetry rows, preserved data, and npm/Cargo/GitHub/Silicon Apps 3.0 publication. |
 | [Browser 2.0.0 release](operations/browser-2.0.0-2026-10-10.md) | Organization-free contract, preserved data, 291 Rust/48 frontend checks, six native artifacts, live account/provider smoke and publication evidence. |
 | [Accounts UUID cutover](ACCOUNT_UUID_CUTOVER.md) | Coordinated migration of the existing Accounts store; stopped-writer backup, authenticated ciphertext, retained resource counts, idempotent replay, integrity/foreign-key checks and preserved IAM backup. |

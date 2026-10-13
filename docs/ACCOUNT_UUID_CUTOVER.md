@@ -14,7 +14,7 @@ apply a local test map or infer identity from a public handle.
 
 Build the native backend from the reviewed commit with `backend-release.yml`.
 It produces an optimized ARM64 GNU/Linux binary with a glibc 2.34 baseline,
-`SHA256SUMS`, and `SOURCE_REVISION`. Build the Vite frontend from the same commit;
+`SHA256SUMS`, and `SOURCE_REVISION`. Build the frontend (`frontend/out`) from the same commit;
 both Rust and frontend validators must accept canonical hyphenated UUIDs.
 The additive 0015 schema can be installed before cutover: the retirement fence
 only activates once the offline migration commits.

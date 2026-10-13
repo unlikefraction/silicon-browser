@@ -1,0 +1,5 @@
+.toolbar { display: flex; flex-wrap: wrap; align-items: flex-end; gap: var(--space-group); margin-bottom: var(--space-section); }
+.search { flex: 1 1 18rem; min-width: 0; max-width: 28rem; }
+.actions { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-group); margin-left: auto; }
+/* Phones: the search keeps its row with the actions beside it, and only wraps when they no longer fit. */
+@media (max-width: 720px) { .search { flex-basis: 10rem; max-width: none; } }

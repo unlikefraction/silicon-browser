@@ -1,0 +1,16 @@
+.shell { display: grid; grid-template-columns: 15.5rem minmax(0, 1fr); min-height: 100dvh; }
+.rail { border-right: 1px solid var(--border); background: var(--surface-muted); }
+.railContent { position: sticky; top: 0; height: 100dvh; padding: var(--space-block) var(--space-inset) var(--space-section); }
+.column { display: flex; min-width: 0; flex-direction: column; }
+.main { flex: 1 0 auto; width: 100%; max-width: 76rem; margin: 0 auto; padding: var(--space-page); }
+.main[data-live] { display: flex; max-width: none; flex-direction: column; padding: var(--space-block) var(--space-page); }
+@media (min-width: 1500px) { .main:not([data-live]) { padding: var(--space-stage) var(--space-stage) var(--space-page); } }
+@media (max-width: 1000px) {
+  .shell { grid-template-columns: 13.5rem minmax(0, 1fr); }
+  .main, .main[data-live] { padding: var(--space-block); }
+}
+@media (max-width: 720px) {
+  .shell { grid-template-columns: minmax(0, 1fr); }
+  .rail { display: none; }
+  .main, .main[data-live] { padding: var(--space-section) var(--space-inset); }
+}

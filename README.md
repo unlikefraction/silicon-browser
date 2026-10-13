@@ -4,7 +4,7 @@ Silicon Browser provides managed remote browser profiles, expiring sessions,
 shared access, live handoff, recordings and usage accounting.
 The `browser` CLI and Rust client execute browser actions locally over the
 remote browser's direct connection. A Rust API manages access and metadata;
-a SolidJS website provides Carbon sign-in and live viewing.
+a Next.js website built with Silicon UI provides Carbon sign-in and live viewing.
 
 Version 3.0.0 uses **Silicon Apps** for installation and updates, and **Silicon
 Accounts** for sign-in. The hosted website is available at
@@ -104,14 +104,19 @@ URI, and configure the website's origin in Accounts. For local development use
 your exact local frontend origin and its `/auth/callback` URI.
 
 ```sh
-cargo run -p silicon-browser-backend
-pnpm --dir frontend install --frozen-lockfile
-pnpm --dir frontend build
-node frontend/dev.mjs
+SB_ORIGIN=http://127.0.0.1:8092 PORT=8091 cargo run -p silicon-browser-backend
+npx --yes pnpm@10.33.0 --dir frontend install --frozen-lockfile
+SB_PUBLIC_BACKEND_URL=http://127.0.0.1:8091 npx --yes pnpm@10.33.0 --dir frontend build
+npx --yes pnpm@10.33.0 --dir frontend preview
 ```
 
-Set `SB_PUBLIC_BACKEND_URL` while building the frontend to select a local API;
-set the backend's `SB_ORIGIN` to the exact frontend origin. See
+The website is a Next.js static export written to `frontend/out`. The preview
+serves it on `http://127.0.0.1:8092` with the production routes and headers.
+`SB_PUBLIC_BACKEND_URL` is fixed at build time and selects the API; without it
+the build targets the production API. Set the backend's `SB_ORIGIN` to the
+exact frontend origin. With the same local build,
+`npx --yes pnpm@10.33.0 --dir frontend e2e` runs the end-to-end suite in
+headless Google Chrome against a mocked API. See
 [deployment](docs/DEPLOYMENT.md), [frontend setup](frontend/README.md), and the
 [CLI reference](docs/CLI.md). The [HTTP API reference](docs/API.md) documents
 the org-free authentication and resource endpoints.
@@ -132,8 +137,9 @@ cargo fmt --all -- --check
 cargo test --workspace --all-targets
 cargo clippy --workspace --all-targets -- -D warnings
 cargo doc --workspace --no-deps
-pnpm --dir frontend test
-pnpm --dir frontend build
+npx --yes pnpm@10.33.0 --dir frontend test
+npx --yes pnpm@10.33.0 --dir frontend build
+node frontend/scripts/sync-silicon-ui.mjs --check
 python3 scripts/test_apps_package.py
 python3 scripts/test_installer.py
 ```

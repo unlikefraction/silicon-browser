@@ -1,0 +1,22 @@
+.screen { min-width: 0; }
+
+/* Cards flow into as many columns as fit; a single column at phone widths. */
+.grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 19rem), 1fr)); gap: var(--space-comfort); margin: 0; padding: 0; list-style: none; }
+.item { display: grid; min-width: 0; }
+.card { height: 100%; }
+/* Long names and account UUIDs wrap instead of widening the card. */
+.card :is(h3, p) { overflow-wrap: anywhere; }
+
+.facts { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-related) var(--space-group); margin-top: var(--space-inset); }
+.code { color: var(--text-secondary); font-family: var(--font-mono); font-size: var(--text-xs); letter-spacing: .08em; }
+
+/* Owner and Access: a compact term/value grid inside the card. */
+.people { display: grid; gap: var(--space-related); margin: var(--space-comfort) 0 0; padding-top: var(--space-inset); border-top: 1px solid var(--border-subtle); font-size: var(--text-sm); line-height: var(--leading-body); }
+.row { display: grid; grid-template-columns: 4.5rem minmax(0, 1fr); align-items: baseline; gap: var(--space-group); }
+.row dt { color: var(--text-secondary); }
+.row dd { min-width: 0; margin: 0; overflow-wrap: anywhere; }
+.mono { font-family: var(--font-mono); font-size: var(--text-xs); }
+
+.actions { margin-top: var(--space-comfort); }
+
+.srOnly { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }

@@ -1,0 +1,25 @@
+.screen { min-width: 0; container-type: inline-size; }
+
+/* Totals: three cards in the Silicon MetricCard style (metric-card.module.css). One column on phones; two with the
+   last card spanning the row in mid-size layouts, so it never sits alone at half width; three once they fit. */
+.metrics { display: grid; grid-template-columns: minmax(0, 1fr); gap: var(--space-comfort); margin: 0 0 var(--space-section); }
+@container (min-width: 30rem) { .metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); } .metric:last-child { grid-column: 1 / -1; } }
+@container (min-width: 48rem) { .metrics { grid-template-columns: repeat(3, minmax(0, 1fr)); } .metric:last-child { grid-column: auto; } }
+.metric { display: flex; min-width: 0; flex-direction: column; padding: var(--space-section); border: 1px solid var(--border); border-radius: var(--radius-overlay); corner-shape: var(--corner-shape); background: var(--surface); box-shadow: var(--shadow-resting); }
+.label { margin: 0 0 var(--space-block); color: var(--text-secondary); font-size: var(--text-sm); line-height: var(--leading-body); }
+.value { margin: 0; min-width: 0; }
+.context { margin: var(--space-inset) 0 0; color: var(--text-secondary); font-size: var(--text-sm); line-height: var(--leading-body); text-wrap: pretty; }
+@media (max-width: 380px) { .metric { padding: var(--space-inset); } }
+
+.capacity { margin: 0 0 var(--space-section); color: var(--text-secondary); font-size: var(--text-sm); line-height: var(--leading-body); text-wrap: pretty; }
+.limit { color: var(--foreground); font-weight: 500; }
+
+/* Silicon's table keeps a 560px minimum and scrolls inside its frame below that; at tablet widths (rail beside the content)
+   that clipped the Usage column, so let the columns wrap to fit instead. */
+.table { min-width: 0; }
+.table table { min-width: 0; }
+/* Rows keep their 52px height; a wrapped id or cost still keeps clear of the row lines. */
+@media (min-width: 621px) { .table td { padding-block: var(--space-related); } }
+
+/* The Session cell: a mono id that wraps rather than widening the table. */
+.id { font-family: var(--font-mono); font-size: var(--text-xs); overflow-wrap: anywhere; }

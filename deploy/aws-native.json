@@ -1,6 +1,6 @@
 {
   "AWSTemplateFormatVersion": "2010-09-09",
-  "Description": "Native Silicon Browser metadata API on dedicated private EC2; frontend on Vercel and all CDP direct from clients",
+  "Description": "Native Silicon Browser metadata API on dedicated private EC2; static frontend served by nginx outside this template; all CDP direct from clients",
   "Parameters": {
     "VpcId": {
       "Type": "AWS::EC2::VPC::Id"

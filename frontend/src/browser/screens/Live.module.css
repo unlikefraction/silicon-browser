@@ -1,0 +1,4 @@
+.live { display: flex; min-height: 100%; flex-direction: column; }
+.viewer { display: flex; flex: 1 1 auto; min-height: max(28rem, calc(100dvh - 17rem)); overflow: hidden; border: 1px solid var(--border); border-radius: var(--radius-container); background: var(--surface-muted); box-shadow: var(--shadow-raised); }
+.frame { display: block; flex: 1 1 auto; width: 100%; min-height: 100%; border: 0; background: var(--surface); }
+@media (max-width: 720px) { .viewer { min-height: calc(100dvh - 14rem); border-radius: var(--radius-control); } }

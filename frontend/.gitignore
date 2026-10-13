@@ -1,3 +1,5 @@
-dist/
+.next/
+out/
 .vercel/
 node_modules/
+*.tsbuildinfo

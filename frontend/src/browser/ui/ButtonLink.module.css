@@ -1,0 +1,15 @@
+/* Mirrors the Silicon Button tokens (button.module.css) for an anchor: ButtonLink and ExternalButtonLink. */
+.link { display: inline-flex; min-height: var(--control-height-md); align-items: center; justify-content: center; gap: var(--space-related); padding: 0 var(--space-inset); border: 1px solid transparent; border-radius: var(--radius-control); font: inherit; font-size: var(--text-sm); font-weight: 500; line-height: var(--leading-body); text-decoration: none; white-space: nowrap; -webkit-tap-highlight-color: transparent; transition: color var(--duration-fast) var(--ease-standard), background var(--duration-fast) var(--ease-standard), border-color var(--duration-fast) var(--ease-standard), opacity var(--duration-fast) var(--ease-standard), box-shadow var(--duration-fast) var(--ease-standard); }
+.primary { color: var(--background); background: var(--foreground); border-color: var(--foreground); }
+.secondary { color: var(--foreground); background: var(--surface); border-color: var(--border); }
+.ghost { color: var(--text-secondary); background: transparent; }
+.sm { min-height: var(--control-height-sm); padding-inline: var(--space-group); }
+@media (hover: hover) and (pointer: fine) {
+  .primary:hover { opacity: .91; box-shadow: var(--shadow-resting); }
+  .secondary:hover { background: var(--surface-muted); box-shadow: var(--shadow-resting); }
+  .ghost:hover { color: var(--foreground); background: var(--surface-muted); }
+}
+.primary:active { opacity: .84; }
+.secondary:active, .ghost:active { color: var(--foreground); background: var(--surface-muted); }
+.hint { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+@media (prefers-reduced-motion: reduce) { .link { transition: none; } }

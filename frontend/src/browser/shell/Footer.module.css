@@ -1,0 +1,4 @@
+.footer { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--space-related) var(--space-section); padding: var(--space-comfort) var(--space-page); border-top: 1px solid var(--border); color: var(--text-secondary); font-size: var(--text-xs); }
+.tagline { font-size: 10px; letter-spacing: .12em; text-transform: uppercase; }
+@media (max-width: 1000px) { .footer { padding-inline: var(--space-block); } }
+@media (max-width: 720px) { .footer { padding-inline: var(--space-inset); } }

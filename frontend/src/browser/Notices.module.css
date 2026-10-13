@@ -1,0 +1,3 @@
+.notices { display: grid; gap: var(--space-group); }
+.notices:has(> *) { margin-bottom: var(--space-section); }
+.cancel { margin-top: var(--space-related); }

@@ -1,8 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { BrowserApi } from '../src/api';
-import { BrowserSession } from '../src/session';
-import type { AuthSession } from '../src/types';
+import { BrowserApi } from '../src/lib/api';
+import { BrowserSession } from '../src/lib/session';
+import type { AuthSession } from '../src/lib/types';
 
 const origin = 'https://backend.browser.teamofsilicons.com';
 const initial: AuthSession = { access_token: 'eyJheader.eyJpayload.original', refresh_token: 'sar_original', expires_at: '2020-01-01T00:00:00Z', identity: { id: '11111111-1111-4111-8111-111111111111', name: 'Owner', kind: 'carbon' } };
@@ -64,7 +64,7 @@ test('malformed saved state is removed, and another API origin cannot load the s
   const { saved, storage, values } = fixture();
   saved.save(initial);
   assert.equal(new BrowserSession('http://127.0.0.1:8091', () => storage).load(), null);
-  const key = [...values.keys()][0];
+  const key = [...values.keys()][0]!;
   for (const bad of ['{', 'null', '{}', JSON.stringify({ ...initial, refresh_token: 'sac_code' }), JSON.stringify({ ...initial, expires_at: 'bad' })]) {
     values.set(key, bad);
     assert.equal(saved.load(), null);

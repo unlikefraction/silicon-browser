@@ -29,20 +29,36 @@ jobs:
 
   frontend:
     runs-on: ubuntu-latest
+    env:
+      NEXT_TELEMETRY_DISABLED: '1'
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: '24'
+      # Installs the pnpm version pinned in package.json (packageManager: pnpm@10.33.0).
       - uses: pnpm/action-setup@v4
         with:
           package_json_file: frontend/package.json
       - name: Frontend dependencies
         run: pnpm --dir frontend install --frozen-lockfile
+      - name: Silicon UI registry files
+        # Downloads every locked registry item and fails if an installed file differs.
+        run: node frontend/scripts/sync-silicon-ui.mjs --check
       - name: Frontend build
         run: pnpm --dir frontend build
       - name: Frontend contracts
         run: pnpm --dir frontend test
+      - name: Frontend end-to-end build
+        # The suite mocks the API at the local backend origin, so it needs a build pinned to it.
+        env:
+          SB_PUBLIC_BACKEND_URL: http://127.0.0.1:8091
+        run: pnpm --dir frontend build
+      - name: Frontend end-to-end
+        # Headless Google Chrome, preinstalled on GitHub's Ubuntu runners.
+        env:
+          CHROME_PATH: /usr/bin/google-chrome
+        run: pnpm --dir frontend e2e
 
   rust:
     runs-on: ubuntu-latest

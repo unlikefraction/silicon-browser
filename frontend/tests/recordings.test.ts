@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { recordingStatusMessage } from '../src/recordings';
-import type { Recording } from '../src/types';
+import { recordingStatusMessage } from '../src/lib/recordings';
+import type { Recording } from '../src/lib/types';
 
 const pending: Recording = { session_id: 'session-1', owner_id: 'owner', session_name: 'Example', session_description: 'Example recording', status: 'pending', created_at: '2026-09-06T00:00:00Z', duration_seconds: 114, size_bytes: 0, delivery_error: 'recording_authorization_required' };
 

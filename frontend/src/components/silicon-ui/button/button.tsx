@@ -1,4 +1,3 @@
-/** @jsxImportSource react */
 "use client";
 
 import { forwardRef, isValidElement, useCallback, useEffect, useLayoutEffect, useRef } from "react";

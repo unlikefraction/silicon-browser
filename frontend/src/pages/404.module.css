@@ -1,0 +1,6 @@
+.page { display: grid; justify-items: start; gap: var(--space-inset); width: min(100% - 2 * var(--space-inset), 40rem); margin: clamp(var(--space-block), 14vh, var(--space-screen)) auto; }
+.brand { display: inline-flex; align-items: center; gap: var(--space-group); margin-bottom: var(--space-block); color: var(--foreground); font-family: var(--font-display); font-size: var(--text-xl); font-weight: 600; letter-spacing: var(--tracking-display); text-decoration: none; }
+.code { margin: 0; color: var(--text-secondary); font-family: var(--font-mono); font-size: var(--text-sm); letter-spacing: .1em; }
+.title { margin: 0; font-family: var(--font-display); font-size: var(--text-3xl); font-weight: 600; letter-spacing: var(--tracking-display); line-height: var(--leading-display); }
+.text { margin: 0; color: var(--text-secondary); font-size: var(--text-base); }
+.home { margin-top: var(--space-related); }

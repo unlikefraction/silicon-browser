@@ -1,4 +1,4 @@
-// Ship the repository's Markdown alongside the instructive HTML landing page.
+// Ship the repository's Markdown alongside the instructive HTML landing page (run after `next build`).
 import { copyFile, mkdir, readdir } from 'node:fs/promises';
 async function publish(source, destination) {
   await mkdir(destination, { recursive: true });
@@ -10,4 +10,4 @@ async function publish(source, destination) {
     }
   }
 }
-await publish(new URL('../docs/', import.meta.url), new URL('dist/docs/', import.meta.url));
+await publish(new URL('../docs/', import.meta.url), new URL('out/docs/', import.meta.url));

@@ -1,0 +1,17 @@
+.topbar { position: sticky; top: 0; z-index: 20; display: flex; min-height: 4.25rem; align-items: center; justify-content: space-between; gap: var(--space-group); padding: var(--space-group) var(--space-page); border-bottom: 1px solid var(--border); background: color-mix(in oklab, var(--background) 88%, transparent); backdrop-filter: saturate(1.4) blur(12px); }
+.start { display: flex; min-width: 0; align-items: center; gap: var(--space-group); }
+.mobile { display: none; align-items: center; gap: var(--space-related); }
+/* Silicon's Breadcrumb draws its plain (non-link) crumbs in --text-muted, under 4.5:1 on the light top bar; the root crumb is text to read. */
+.start nav li { color: var(--text-secondary); }
+.brand { display: inline-flex; align-items: center; gap: var(--space-related); color: var(--foreground); font-family: var(--font-display); font-size: var(--text-lg); font-weight: 600; letter-spacing: var(--tracking-display); text-decoration: none; }
+.brand svg { width: 22px; height: 22px; }
+.account { min-width: 0; margin: 0; padding: 0; border: 0; }
+.account:disabled { opacity: .6; }
+.legend { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+.drawer { width: min(20rem, 86vw); }
+@media (max-width: 1000px) { .topbar { padding-inline: var(--space-block); } }
+@media (max-width: 720px) {
+  .topbar { min-height: 3.75rem; padding: var(--space-related) var(--space-inset); }
+  .mobile { display: flex; }
+  .start nav { display: none; }
+}

@@ -1,0 +1,6 @@
+.options { display: grid; gap: var(--space-inset); min-width: 0; }
+/* Clipped only while the height animates (SignInOptions marks it settled once open), so focus outlines inside are never cut off. */
+.reveal { overflow: hidden; }
+.reveal[data-settled] { overflow: visible; }
+.form { display: grid; gap: var(--space-inset); padding-top: var(--space-tight); }
+.lead { margin: 0; color: var(--text-secondary); font-size: var(--text-sm); }

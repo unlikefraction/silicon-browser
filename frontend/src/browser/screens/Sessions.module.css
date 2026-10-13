@@ -1,0 +1,26 @@
+.screen { min-width: 0; }
+
+/* Silicon's table keeps a 560px minimum and scrolls inside its frame below that. Between the 620px stacking breakpoint and
+   about 830px (rail beside the content) that clipped the Open buttons, so let the columns wrap to fit instead. */
+.table { min-width: 0; }
+.table table { min-width: 0; }
+
+/* The Session cell: the name over its mono id. */
+.session { display: grid; gap: 2px; min-width: 0; }
+.name { font-weight: 600; overflow-wrap: break-word; }
+.id { color: var(--text-secondary); font-family: var(--font-mono); font-size: var(--text-xs); font-weight: 400; overflow-wrap: anywhere; }
+
+/* The Actions header is for assistive technology only: keep the cell (and its width), hide the word. */
+.table th[data-key="actions"] { color: transparent; }
+
+/* Tablet widths, with the rail beside a ~490-600px table: five columns leave the Session column too narrow for a 36-character
+   id, which broke every few characters. The id stays on the session's page (with a copy button) and still matches the search. */
+@media (min-width: 621px) and (max-width: 900px) { .id { display: none; } }
+/* Rows keep their 52px height; when a name, id, or date wraps, the text still keeps clear of the row lines. */
+@media (min-width: 621px) { .table td { padding-block: var(--space-related); } }
+
+@media (max-width: 620px) {
+  /* Stacked rows: the action sits at the end of the details line, and the header strip drops the empty slot. */
+  .table th[data-key="actions"] { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+  .table td:last-child { margin-left: auto; }
+}

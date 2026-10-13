@@ -1,0 +1,18 @@
+.screen { min-width: 0; }
+
+/* Cards flow into as many columns as fit; a single column at phone widths. */
+.grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 19rem), 1fr)); gap: var(--space-comfort); margin: 0; padding: 0; list-style: none; }
+.item { display: grid; min-width: 0; }
+.card { height: 100%; }
+/* Long names, descriptions and ids wrap instead of widening the card. */
+.card :is(h3, p) { overflow-wrap: anywhere; }
+
+/* The status badge over the summary line, so every card lines up the same way whatever the summary's length. */
+.facts { display: grid; justify-items: start; gap: var(--space-related); margin-top: var(--space-inset); }
+.summary { color: var(--text-secondary); font-size: var(--text-xs); line-height: var(--leading-body); font-variant-numeric: tabular-nums; }
+
+/* Why a recording is not ready yet: a quiet warning tint, readable in both themes. */
+.message { margin: var(--space-inset) 0 0; padding: var(--space-group) var(--space-inset); border: 1px solid color-mix(in oklab, var(--warning) 28%, transparent); border-radius: var(--radius-control); background: color-mix(in oklab, var(--warning) 10%, transparent); color: var(--foreground); font-size: var(--text-sm); line-height: var(--leading-body); text-wrap: pretty; }
+
+.actions { margin-top: var(--space-comfort); }
+.fine { margin-top: var(--space-inset); }

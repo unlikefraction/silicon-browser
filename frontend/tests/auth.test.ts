@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { loginUrl, readEntry, matchingCallback, matchingRedirect, signInPopup, ACCOUNTS_ORIGIN } from '../src/auth';
+import { loginUrl, readEntry, matchingCallback, matchingRedirect, signInPopup, ACCOUNTS_ORIGIN } from '../src/lib/auth';
 
 const origin = 'https://browser.teamofsilicons.com';
 function attempt() {

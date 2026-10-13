@@ -1,14 +1,106 @@
 [
   {
-    "url": "https://ui.teamofsilicons.com/r/button.json",
-    "sha256": "8c2f211832101efdb093e86f1c5ed961c709e5cb9f8f4d1cca318106a89c4757"
-  },
-  {
     "url": "https://ui.teamofsilicons.com/r/silicon-foundation.json",
     "sha256": "ed37f564f009c1d755103105236eaa1f51fc72899a6789bb4e8c3f6136e58b52"
   },
   {
     "url": "https://ui.teamofsilicons.com/r/silicon-motion-tokens.json",
     "sha256": "f37a4de2db5545c5c03ea2641ecd4a5ed6b8583aeefc674c9dded2a931b8af1c"
+  },
+  {
+    "url": "https://ui.teamofsilicons.com/r/button.json",
+    "sha256": "8c2f211832101efdb093e86f1c5ed961c709e5cb9f8f4d1cca318106a89c4757"
+  },
+  {
+    "url": "https://ui.teamofsilicons.com/r/input.json",
+    "sha256": "2a3afee4c16f25a1201066b0a8f29910785cf13c5b9b895d0fd455acaa0fe3ff"
+  },
+  {
+    "url": "https://ui.teamofsilicons.com/r/textarea.json",
+    "sha256": "4a8dd27b97294c9d0d6d7bf235121dbd504b0135e8bae6ed8d126ea0442c3302"
+  },
+  {
+    "url": "https://ui.teamofsilicons.com/r/password-field.json",
+    "sha256": "9ad4c111e84f104e6e6c026396b415a2b48b054656fd4201da8cabd79bbef69b"
+  },
+  {
+    "url": "https://ui.teamofsilicons.com/r/search-field.json",
+    "sha256": "71e7e4928b8b528afa376250b25fd949a56cfb53f030b44fbe6939cbe4e08b8f"
+  },
+  {
+    "url": "https://ui.teamofsilicons.com/r/morph-select.json",
+    "sha256": "715483af3c3c88032970236615b09f13a5b5c86f9bacf5aad5a823d7c9ae2741"
+  },
+  {
+    "url": "https://ui.teamofsilicons.com/r/tag-input.json",
+    "sha256": "1d640141927303645740e264771f0c53a9967ef6b85eda1052e74faae7d97734"
+  },
+  {
+    "url": "https://ui.teamofsilicons.com/r/badge.json",
+    "sha256": "d3e9b030c7c4e0c3a5619c36ae548f829c23f6521b653a0cf4210f89968ca70f"
+  },
+  {
+    "url": "https://ui.teamofsilicons.com/r/alert.json",
+    "sha256": "b4c6131135312e24c9aeef6b434417382963a9a3ba7b2910364789bf09e9a4c8"
+  },
+  {
+    "url": "https://ui.teamofsilicons.com/r/toast-stack.json",
+    "sha256": "a187add67d5ca81e07b3d428f5d0f43be299f22c81252f262b178222297fd3c6"
+  },
+  {
+    "url": "https://ui.teamofsilicons.com/r/skeleton.json",
+    "sha256": "c34fe037b02ce494671c956bd386dadfa03ca8168479ef835540be7f7b2cc929"
+  },
+  {
+    "url": "https://ui.teamofsilicons.com/r/empty-state.json",
+    "sha256": "f8ca00818611fc300e143e9242d49e2ac1373bfc8a34d87f85015813b62efe7d"
+  },
+  {
+    "url": "https://ui.teamofsilicons.com/r/card.json",
+    "sha256": "9c249ea9aa39a190c53d1d2759982081f8a56e935a0bb207f3c8a7b754355aca"
+  },
+  {
+    "url": "https://ui.teamofsilicons.com/r/metric-card.json",
+    "sha256": "a5caf3cf7655e6e898bfd4bfe1a15f9f5fc7b5cb5d0f45109240df771a8a75ac"
+  },
+  {
+    "url": "https://ui.teamofsilicons.com/r/animated-counter.json",
+    "sha256": "9744d3cfd27826175f6aa3d06a82673cdbecf9ed5445659e886408dbc0b45b94"
+  },
+  {
+    "url": "https://ui.teamofsilicons.com/r/sortable-data-table.json",
+    "sha256": "eb6aa6282646e7b07cdf56de8aae43bbfb3ddfca10450dd05a9543189a1249e4"
+  },
+  {
+    "url": "https://ui.teamofsilicons.com/r/code-block.json",
+    "sha256": "b7b5c6d2c690965343c9a74ac4fbbdaa05a1134935568be6eaaa6c2404d93a94"
+  },
+  {
+    "url": "https://ui.teamofsilicons.com/r/copy-button.json",
+    "sha256": "cc3eee3351dfabd11732eaa28ab03ce64e773eca371212b0af45e6f0658d1f3a"
+  },
+  {
+    "url": "https://ui.teamofsilicons.com/r/avatar.json",
+    "sha256": "1563f778a80f6961bc1a7c44443771831eba71e5d0577350a821b183b5706b4c"
+  },
+  {
+    "url": "https://ui.teamofsilicons.com/r/user-menu.json",
+    "sha256": "617b47428a0beadfc0768aca77cfea67967dd4d41c6f544ddf4ae165d5d923b9"
+  },
+  {
+    "url": "https://ui.teamofsilicons.com/r/breadcrumb.json",
+    "sha256": "26d6d242d57f028897fe3e96b9ff89fe78005749ec8aad7d157a9f2b2c2ac79c"
+  },
+  {
+    "url": "https://ui.teamofsilicons.com/r/tooltip.json",
+    "sha256": "5d2d5cd5d87842c22b8f1ff6a67f62e6feaa9903203e740475a8358e8904ebe2"
+  },
+  {
+    "url": "https://ui.teamofsilicons.com/r/scroll-area.json",
+    "sha256": "1cd4b842806ea7f37cf0021c54cb1028927f1b12982c3ff0e8e8d14b4057ee04"
+  },
+  {
+    "url": "https://ui.teamofsilicons.com/r/drawer.json",
+    "sha256": "a563131b88ebb70ecf81588bc41629f8571549a904df93672d5b67a585cb2387"
   }
 ]

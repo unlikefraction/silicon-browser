@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { BrowserApi, acceptAuth, publicError, safeHttps } from '../src/api';
-import type { AuthSession } from '../src/types';
+import { BrowserApi, acceptAuth, publicError, safeHttps } from '../src/lib/api';
+import type { AuthSession } from '../src/lib/types';
 const session = (access = 'eyJheader.eyJpayload.initial'): AuthSession => ({ access_token: access, refresh_token: 'sar_refresh', expires_at: new Date(Date.now() + 900000).toISOString(), identity: { id: '11111111-1111-4111-8111-111111111111', name: 'Tester', kind: 'carbon' } });
 const response = (data: unknown, status = 200, headers: Record<string, string> = {}) => new Response(JSON.stringify(status === 200 ? {data} : {error: {message: 'Unauthorized'}}), {status, headers});
 function client(handler: (url: string, options: RequestInit) => Promise<Response>) { const api = new BrowserApi('https://backend.browser.teamofsilicons.com', ((url, options) => handler(String(url), options || {})) as typeof fetch); api.setSession(session()); return api; }

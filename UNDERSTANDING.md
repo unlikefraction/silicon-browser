@@ -15,7 +15,7 @@ receive no implicit access to a Silicon's resources.
 The CLI runs its bundled native controller on the caller's machine and
 connects directly to the remote browser. Actions and their output stay outside
 the API. Browser does not collect or send command telemetry, including to
-Space Station. Older clients' command-report requests are rejected. The SolidJS website is served by nginx on the existing AWS
+Space Station. Older clients' command-report requests are rejected. The Next.js website, a static export built with Silicon UI, is served by nginx on the existing AWS
 host and connects live viewers directly to the browser provider.
 
 Profiles retain cookies, a stable fingerprint and a fixed proxy location. A
